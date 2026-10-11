@@ -64,7 +64,7 @@ import { validateCompetitionContract } from "../core/competition-contract.js";
 import { learnPromotionPolicy, promotionObservations } from "../core/promotion-learning.js";
 import { captureProtectedFiles, changedProtectedFiles } from "../core/integrity.js";
 import { candidateChangePath } from "../core/hypothesis-path.js";
-import { withExecutionHeartbeat } from "../core/execution-heartbeat.js";
+import { recordRemoteExecution, withExecutionHeartbeat } from "../core/execution-heartbeat.js";
 import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, verificationSourcePinError, type ExecutionStage } from "../core/execution-stages.js";
 import { runReducedValidation } from "../core/stage-executor.js";
@@ -1913,7 +1913,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
     contractStore.close();
     executionPlan = advanceExecutionStage(executionPlan, "feasibility", contract.valid ? "completed" : "failed");
     if (!contract.valid) throw new Error(`Experiment feasibility check failed:\n${contract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
-    const executor = executorFor(manifest.resources.executor, root);
+    const executor = executorFor(manifest.resources.executor, root, (event) => recordRemoteExecution(join(root, ".sota", "database.sqlite"), event));
     const smokeCommand = adapter.config.execution?.smokeCommand;
     if (smokeCommand) {
       setProgress(`Experiment ${id} · running smoke gate...`);

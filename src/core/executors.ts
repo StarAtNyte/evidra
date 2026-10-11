@@ -4,6 +4,20 @@ import { redactStructured } from "./redaction.js";
 import { constants, openSync, closeSync, fstatSync, readSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ExperimentExecutorKind, ExperimentManifest, ProcessResult, RunResult } from "./types.js";
+import { randomUUID } from "node:crypto";
+
+export interface RemoteExecutionEvent {
+  executor: "slurm";
+  experimentId: string;
+  submissionId: string;
+  phase: "submitting" | "submitted" | "terminal";
+  at: string;
+  jobId?: string;
+  cluster?: string;
+  state?: string;
+  exitCode?: number;
+}
+export type RemoteExecutionObserver = (event: RemoteExecutionEvent) => void;
 
 export interface ExperimentExecutor {
   readonly kind: ExperimentExecutorKind;
@@ -524,7 +538,7 @@ export function parseSlurmAccounting(output: string, jobId: string): { state: st
 export class SlurmExecutor implements ExperimentExecutor {
   readonly kind = "slurm" as const;
 
-  constructor(private readonly workspaceRoot?: string) {}
+  constructor(private readonly workspaceRoot?: string, private readonly onRemoteExecution?: RemoteExecutionObserver) {}
 
   async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
     const launchRoot = resolve(this.workspaceRoot ?? cwd);
@@ -538,6 +552,13 @@ export class SlurmExecutor implements ExperimentExecutor {
     const stderrPath = join(logRoot, `${suffix}.err`);
     const submit = slurmCommand(manifest.id, cwd, command, stdoutPath, stderrPath, manifest.resources.timeoutMinutes, manifest.resources.gpu);
     const started = Date.now();
+    const submissionId = randomUUID();
+    const observe = (phase: RemoteExecutionEvent["phase"], details: Partial<RemoteExecutionEvent> = {}): void => {
+      this.onRemoteExecution?.({ ...details, executor: "slurm", experimentId: manifest.id, submissionId, phase, at: new Date().toISOString() });
+    };
+    // Persist intent before any RPC: controller loss during sbatch may leave
+    // an accepted allocation even when no receipt reaches the client.
+    observe("submitting");
     let submission: ProcessResult;
     try {
       submission = await runProcess(submit, launchRoot, Math.max(1, Math.min(30_000, manifest.resources.timeoutMinutes * 60_000)), undefined, onProcess, experimentEnvironment);
@@ -571,6 +592,7 @@ export class SlurmExecutor implements ExperimentExecutor {
       return cancellation ??= remoteCommand(["scancel", ...clusterArgs, jobId], 10_000);
     };
     try {
+      observe("submitted", { jobId, ...(receipt[2] ? { cluster: receipt[2] } : {}) });
       onProcess?.({
         pause: () => activeControl?.pause(),
         resume: () => activeControl?.resume(),
@@ -600,6 +622,10 @@ export class SlurmExecutor implements ExperimentExecutor {
     const accounting = await remoteCommand(["sacct", ...clusterArgs, "--noheader", "--parsable2", "--allocations", "--jobs", jobId, "--format=JobIDRaw,State%40,ExitCode"], 15_000);
     const remote = parseSlurmAccounting(accounting.stdout, jobId);
     const unconfirmed = accounting.exitCode !== 0 || !remote.terminal;
+    if (!unconfirmed) {
+      try { observe("terminal", { jobId, ...(receipt[2] ? { cluster: receipt[2] } : {}), state: remote.state, exitCode: remote.exitCode }); }
+      catch (error) { monitoringError = `Remote accounting could not be persisted: ${error instanceof Error ? error.message : String(error)}`; }
+    }
     const output = boundedFile(cwd, relative(cwd, stdoutPath));
     const error = boundedFile(cwd, relative(cwd, stderrPath));
     const exitCode = timedOut ? 124 : interrupted ? 130 : monitoringError || unconfirmed ? 1 : remote.exitCode;
@@ -667,9 +693,9 @@ export class ModalExecutor implements ExperimentExecutor {
   }
 }
 
-export function executorFor(kind: ExperimentManifest["resources"]["executor"], workspaceRoot?: string): ExperimentExecutor {
+export function executorFor(kind: ExperimentManifest["resources"]["executor"], workspaceRoot?: string, onRemoteExecution?: RemoteExecutionObserver): ExperimentExecutor {
   if (kind === "modal") return new ModalExecutor(workspaceRoot);
   if (kind === "container") return new ContainerExecutor(workspaceRoot);
-  if (kind === "slurm") return new SlurmExecutor(workspaceRoot);
+  if (kind === "slurm") return new SlurmExecutor(workspaceRoot, onRemoteExecution);
   return new LocalExecutor();
 }

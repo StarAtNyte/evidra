@@ -58,6 +58,16 @@ external evaluator.
 
 ## Latest repository state
 
+- Slurm execution now persists unique submission intents before launch,
+  accepted allocation/cluster receipts before polling, and exact terminal
+  accounting afterward. CLI/TUI wire mandatory ledger persistence. The
+  `experiment reconcile <id>` command releases a restart fence only with a
+  valid event chain and complete matching evidence for every intent, without
+  promoting a measurement. Live post-restart cluster queries, ambiguous
+  submissions, and container/Modal reconciliation remain required follow-up.
+- Restart quarantine at `d8a3198` passed hosted CI on both Node versions,
+  including package checks: run 38118010430; all 701 local tests passed.
+
 - Restart recovery quarantines stale container/Modal/Slurm work instead of
   treating controller loss as a retryable failure. Durable reconciliation flags
   block replay and normal reschedule/completion updates, and retain compute

@@ -1,4 +1,12 @@
 import { ResearchStore } from "./store.js";
+import type { RemoteExecutionEvent } from "./executors.js";
+
+/** Allocation evidence is mandatory durability, unlike best-effort liveness. */
+export function recordRemoteExecution(storePath: string, event: RemoteExecutionEvent): void {
+  const store = new ResearchStore(storePath);
+  try { store.appendEvent(`run.remote.${event.phase}`, event); }
+  finally { store.close(); }
+}
 
 export interface ExecutionHeartbeatOptions {
   storePath: string;

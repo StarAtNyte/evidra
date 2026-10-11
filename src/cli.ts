@@ -88,7 +88,7 @@ import { evaluateReducedPromotion, retryRouteIsNew, type ExperimentRetryRoute } 
 import { validateCompetitionContract } from "./core/competition-contract.js";
 import { assessForecast, summarizeForecastAssessments } from "./core/forecast-calibration.js";
 import { candidateChangePath } from "./core/hypothesis-path.js";
-import { withExecutionHeartbeat } from "./core/execution-heartbeat.js";
+import { recordRemoteExecution, withExecutionHeartbeat } from "./core/execution-heartbeat.js";
 import { researchFailureRecord } from "./core/research-failure.js";
 import { DEFAULT_SEARCH_OPERATORS, DEFAULT_SEARCH_OPERATOR_COSTS, DEFAULT_SEARCH_OPERATOR_NOVELTY, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "./core/search-policy.js";
 import { planPortfolio } from "./core/portfolio.js";
@@ -7121,6 +7121,16 @@ experiment.command("gate")
     store.close();
     console.log(`Experiment ${experimentId} gates\n  leakage audit: ${gates.leakageAuditPassed ? "approved" : "pending"}\n  reviewer: ${gates.reviewerApproved ? "approved" : "pending"}`);
   });
+experiment.command("reconcile")
+  .argument("<id>", "experiment identifier")
+  .description("Release a restart quarantine only when every recorded Slurm allocation has durable terminal accounting")
+  .action((id: string) => {
+    const store = new ResearchStore(statePath);
+    try {
+      if (!store.reconcileRemoteExperiment(id)) throw new Error(`Experiment ${id} has no complete terminal allocation evidence; quarantine remains in place.`);
+      console.log(`Experiment ${id}: remote termination reconciled; measurement remains unvalidated.`);
+    } finally { store.close(); }
+  });
 experiment.command("run")
   .argument("<id>", "experiment identifier")
   .option("--reduced-only", "stop after the reduced validation gate and persist its metric")
@@ -7226,7 +7236,7 @@ experiment.command("run")
     }
     const candidateEstimator = (manifest.change.configPatch as { estimatorPath?: unknown }).estimatorPath;
     const isCandidateEvaluation = typeof candidateEstimator === "string" && candidateEstimator !== adapter.config.evaluator.estimatorPath;
-    const executor = executorFor(manifest.resources.executor, root);
+    const executor = executorFor(manifest.resources.executor, root, (event) => recordRemoteExecution(statePath, event));
     const smokeCommand = !verificationPlan.standalone && adapter.config.execution?.smokeCommand
       ? commandForCandidate(adapter.config.execution.smokeCommand, hypothesis?.payload)
       : undefined;

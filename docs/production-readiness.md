@@ -90,6 +90,23 @@ path for quarantine are still required. It prevents replay of the quarantined
 experiment; it does not establish that remote workers have stopped or prohibit
 all new experiments in an unlimited-budget campaign.
 
+The Slurm route now records `run.remote.submitting` before launch,
+`run.remote.submitted` with job/cluster identity before polling, and
+`run.remote.terminal` only after exact terminal allocation accounting. All
+three share a unique submission ID. Ledger-write failure before launch aborts
+submission; failure to persist a receipt triggers cancellation and fails the
+run. Both CLI and TUI execution wire this mandatory ledger independently of
+best-effort heartbeats.
+
+`evidra experiment reconcile <id>` can release a Slurm restart quarantine
+when the event chain is valid and every recorded intent has exactly one
+matching receipt and terminal record. Extra, missing, mismatched, and ambiguous
+records retain quarantine. Reconciliation releases reserved compute and leaves
+the measurement failed/unvalidated with its bounded recovery path available.
+It currently reads existing durable accounting evidence; it does not query the
+cluster after restart. Controller loss before terminal evidence, submission
+ambiguity, legacy records, and container/Modal reconciliation remain open.
+
 ## Release checks
 
 The local Ollama route shares one endpoint resolver for discovery, health,

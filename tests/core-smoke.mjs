@@ -97,7 +97,7 @@ import { agentBudgetLedger, campaignAgentTokens, campaignRoleAgentTokens, roleBu
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { assessForecast, summarizeForecastAssessments } from "../dist/core/forecast-calibration.js";
-import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
+import { recordRemoteExecution, withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, estimatePassAtK, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, evaluateProviderGeneralization, harnessParetoFrontier, parseHarnessTrial, passAtKCurve, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
 import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
@@ -8813,6 +8813,78 @@ async function withFakeSlurm(scripts, execute) {
 
 const slurmReceipt = "console.log('123')";
 const slurmQueueEmpty = "process.exit(0)";
+
+test("Slurm allocation ledger persists intent before submission and gates restart reconciliation", async () => {
+  for (const accounting of ["123|COMPLETED|0:0", "123|RUNNING|0:0"]) {
+    await withFakeSlurm({
+      sbatch: "if (!require('node:fs').existsSync('intent-persisted')) process.exit(9); console.log('123;gpu-east');",
+      squeue: slurmQueueEmpty, sacct: `console.log(${JSON.stringify(accounting)})`,
+    }, async ({ root, manifest }) => {
+      const db = join(root, "state.sqlite");
+      const store = new ResearchStore(db);
+      store.saveExperiment({ id: manifest.id, payload: { ...manifest, status: "running" } });
+      store.reserveComputeBudget({ experimentId: manifest.id, budgetGpuHours: 10, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" });
+      store.close();
+      const executor = new SlurmExecutor(root, (event) => {
+        recordRemoteExecution(db, event);
+        if (event.phase === "submitting") writeFileSync(join(root, "intent-persisted"), "durable");
+      });
+      await executor.run(manifest, root, ["train"]);
+      const reopened = new ResearchStore(db);
+      const intent = reopened.eventsByType("run.remote.submitting")[0].payload;
+      const receipt = reopened.eventsByType("run.remote.submitted")[0].payload;
+      assert.equal(receipt.submissionId, intent.submissionId);
+      assert.equal(receipt.jobId, "123");
+      assert.equal(receipt.cluster, "gpu-east");
+      reopened.recoverStaleExperiments(0);
+      assert.equal(reopened.reconcileRemoteExperiment(manifest.id), accounting.includes("COMPLETED"));
+      const payload = reopened.experiments()[0].payload;
+      assert.equal(payload.status, accounting.includes("COMPLETED") ? "failed" : "blocked");
+      assert.equal(reopened.reservedComputeGpuHours(), accounting.includes("COMPLETED") ? 0 : 2);
+      if (accounting.includes("COMPLETED")) assert.equal(payload.remoteReconciliationRequired, false);
+      else assert.equal(reopened.eventsByType("run.remote.terminal").length, 0);
+      assert.equal(reopened.verifyEventChain().status, "valid");
+      reopened.close();
+    });
+  }
+});
+
+test("Slurm does not launch when submission intent cannot be persisted", async () => {
+  await withFakeSlurm({ sbatch: "require('node:fs').writeFileSync('launched','yes'); console.log('123');" }, async ({ root, manifest }) => {
+    const executor = new SlurmExecutor(root, () => { throw new Error("ledger unavailable"); });
+    await assert.rejects(() => executor.run(manifest, root, ["train"]), /ledger unavailable/);
+    assert.equal(existsSync(join(root, "launched")), false);
+  });
+});
+
+test("remote reconciliation rejects partial and contradictory allocation ledgers", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-ledger-gates-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    const valid = [
+      { phase: "submitting" },
+      { phase: "submitted", jobId: "123", cluster: "east" },
+      { phase: "terminal", jobId: "123", cluster: "east", state: "FAILED", exitCode: 7 },
+    ];
+    const ledgers = [
+      valid.slice(1), valid.slice(0, 2),
+      [valid[0], valid[1], { ...valid[2], jobId: "456" }],
+      [valid[0], valid[1], { ...valid[2], cluster: "west" }],
+      [valid[0], valid[1], { ...valid[2], state: "RUNNING" }],
+      [...valid, valid[2]], [...valid, { phase: "submitting", submissionId: "unconfirmed" }],
+    ];
+    for (const [index, ledger] of ledgers.entries()) {
+      const id = `uncertain-${index}`;
+      store.saveExperiment({ id, payload: { id, status: "running", resources: { executor: "slurm" } } });
+      store.reserveComputeBudget({ experimentId: id, budgetGpuHours: 20, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+      for (const event of ledger) store.appendEvent(`run.remote.${event.phase}`, { executor: "slurm", experimentId: id, submissionId: id, at: new Date().toISOString(), ...event });
+    }
+    store.recoverStaleExperiments(0);
+    for (const index of ledgers.keys()) assert.equal(store.reconcileRemoteExperiment(`uncertain-${index}`), false);
+    assert.equal(store.reservedComputeGpuHours(), ledgers.length);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test("Slurm executor does not promote completed jobs with failed exit status", async () => {
   await withFakeSlurm({ sbatch: slurmReceipt, squeue: slurmQueueEmpty, sacct: "console.log('123|COMPLETED|7:0')" }, async ({ root, manifest, executor }) => {
