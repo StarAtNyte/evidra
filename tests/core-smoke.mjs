@@ -32,7 +32,7 @@ import { competitionResearchClaimType, competitionResearchSources, competitionSo
 import { extractCompetitionInsights } from "../dist/core/competition-insights.js";
 import { dashboardHtml, dashboardSnapshot } from "../dist/core/dashboard.js";
 import { workbenchHtml } from "../dist/core/dashboard-web.js";
-import { processFailureResult, runProcess } from "../dist/core/process.js";
+import { boundProcessOutput, processFailureResult, runProcess } from "../dist/core/process.js";
 import { competitionIdForMode, competitionManifestForInitialization, declaredEvaluatorCommand, loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { whestbenchConfig } from "../dist/competitions/whestbench.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
@@ -8984,6 +8984,13 @@ test("Modal result parser ignores progress and rejects malformed worker payloads
   assert.equal(parseModalWorkerResult("Modal failed before the worker returned"), undefined);
 });
 
+test("Modal transport envelope survives controller capture after verbose progress", () => {
+  const payload = { exitCode: 0, stdout: "x".repeat(7 * 1024 * 1024 - 1024), stderr: "", artifacts: {} };
+  const captured = boundProcessOutput(`${"progress\n".repeat(2 * 1024 * 1024)}\n${JSON.stringify(payload)}\n`);
+  assert.match(captured, /output truncated by Evidra/);
+  assert.equal(parseModalWorkerResult(captured)?.stdout.length, payload.stdout.length);
+});
+
 test("Modal completion envelopes reject ambiguity and malformed terminal evidence", () => {
   const valid = { exitCode: 0, stdout: '{"accuracy":0.9}', stderr: "", artifacts: {} };
   const success = JSON.stringify(valid);
@@ -9099,6 +9106,19 @@ if mode == 'artifacts':
     assert read(root, 'normal') == b'verified artifact'
     assert read(root, 'large') is None
     assert read(root, 'missing') is None
+    assert read(root, 'normal', 2) is None
+    namespace['MAX_ENVELOPE_BYTES'] = 512
+    valid = dict(exitCode=0, stdout='metric', stderr='', artifacts={})
+    assert json.loads(worker['completion_envelope'](valid)) == valid
+    for oversized in (dict(valid, stdout=chr(0)*512), dict(valid, artifacts={'file': 'x'*512}), dict(valid, stderr='न'*512)):
+        envelope = worker['completion_envelope'](oversized)
+        assert len(envelope.encode()) <= 512
+        rejected = json.loads(envelope)
+        assert rejected['exitCode'] == 65 and rejected['stdout'] == '' and rejected['artifacts'] == {}
+    namespace['MAX_ARTIFACT_TOTAL_BYTES'] = 20
+    (root / 'second').write_bytes(b'1234567890')
+    result = worker['execute'](json.dumps([sys.executable, '-c', 'pass']), '.', json.dumps(['normal', 'second']))
+    assert result['exitCode'] == 65 and result['artifacts'] == {} and result['stdout'] == ''
     for name in ('fifo', 'link', 'parent/normal', '../normal', '/etc/passwd'):
         try: read(root, name)
         except (OSError, ValueError): pass

@@ -35,11 +35,15 @@ WORKER_ENV_KEYS = {
 MAX_CAPTURE_BYTES = 16 * 1024 * 1024
 STREAM_CHUNK_BYTES = 64 * 1024
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+MAX_ARTIFACT_TOTAL_BYTES = 64 * 1024 * 1024
+# The controller retains an approximately 8 MiB output tail after truncation.
+MAX_ENVELOPE_BYTES = 7 * 1024 * 1024
 
 
-def read_worker_artifact(root: Path, name: str) -> bytes | None:
+def read_worker_artifact(root: Path, name: str, remaining_bytes: int | None = None) -> bytes | None:
     """Read a bounded, stable regular file through workspace-relative handles."""
     path = Path(name)
+    limit = MAX_ARTIFACT_BYTES if remaining_bytes is None else min(MAX_ARTIFACT_BYTES, remaining_bytes)
     if path.is_absolute() or ".." in path.parts or not path.parts:
         raise ValueError(f"Invalid declared artifact path: {name}")
     with ExitStack() as handles:
@@ -56,20 +60,37 @@ def read_worker_artifact(root: Path, name: str) -> bytes | None:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
             raise ValueError(f"Declared artifact must be a regular file: {name}")
-        if before.st_size > MAX_ARTIFACT_BYTES:
+        if before.st_size > limit:
             return None
         data = bytearray()
-        while len(data) <= MAX_ARTIFACT_BYTES:
-            chunk = os.read(descriptor, min(STREAM_CHUNK_BYTES, MAX_ARTIFACT_BYTES + 1 - len(data)))
+        while len(data) <= limit:
+            chunk = os.read(descriptor, min(STREAM_CHUNK_BYTES, limit + 1 - len(data)))
             if not chunk:
                 break
             data.extend(chunk)
         after = os.fstat(descriptor)
-        if len(data) > MAX_ARTIFACT_BYTES:
+        if len(data) > limit:
             return None
         if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns) or len(data) != after.st_size:
             raise ValueError(f"Declared artifact changed during capture: {name}")
         return bytes(data)
+
+
+def completion_envelope(result: dict[str, object]) -> str:
+    """Keep terminal evidence inside the controller's retained output tail."""
+    pieces: list[str] = []
+    size = 0
+    for piece in json.JSONEncoder(ensure_ascii=True).iterencode(result):
+        size += len(piece)
+        if size > MAX_ENVELOPE_BYTES:
+            return json.dumps({
+                "exitCode": 65,
+                "stdout": "",
+                "stderr": "Modal worker completed, but its inline result exceeded the transport budget; metrics and artifacts were discarded. Large-artifact transport is required.",
+                "artifacts": {},
+            })
+        pieces.append(piece)
+    return "".join(pieces)
 
 
 def worker_environment() -> dict[str, str]:
@@ -192,10 +213,14 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]", timeout_sec
     completed_stdout = captured["stdout"].decode("utf-8", errors="replace")
     completed_stderr = captured["stderr"].decode("utf-8", errors="replace")
     artifact_payload: dict[str, str] = {}
+    captured_artifact_bytes = 0
     for artifact in json.loads(artifacts_json):
-        data = read_worker_artifact(working_directory, artifact)
+        data = read_worker_artifact(working_directory, artifact, MAX_ARTIFACT_TOTAL_BYTES - captured_artifact_bytes)
         if data is not None:
+            captured_artifact_bytes += len(data)
             artifact_payload[str(Path(artifact))] = base64.b64encode(data).decode("ascii")
+        elif (working_directory / artifact).exists():
+            return {"exitCode": 65, "stdout": "", "stderr": "Modal worker completed, but declared artifacts exceeded the capture budget; metrics and artifacts were discarded.", "artifacts": {}}
     return {
         # Match the controller's portable 0..255 process-exit contract.
         "exitCode": process.returncode if process.returncode >= 0 else 128 - process.returncode,
@@ -208,6 +233,6 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]", timeout_sec
 @app.local_entrypoint()
 def run(command_json: str, cwd: str = ".", artifacts_json: str = "[]", timeout_seconds: int = 3600) -> None:
     result = execute.remote(command_json, cwd, artifacts_json, timeout_seconds)
-    print(json.dumps(result))
+    print(completion_envelope(result))
     # Returning an envelope completes the runtime-client contract. Worker
     # failure is represented inside it; RPC/client errors must still propagate.

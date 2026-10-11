@@ -58,11 +58,18 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal bounds aggregate artifact capture at 64 MiB and serialized completion
+  envelopes at 7 MiB so terminal evidence fits the controller's retained tail.
+  Exceeding either returns a small failed-result envelope (65) with no metrics
+  or artifacts, avoiding false success or an unparseable completion. Tests cover
+  aggregate exhaustion and JSON escaping/Unicode expansion. Large-artifact
+  transport remains unimplemented; oversized results are explicitly rejected.
+
 - Modal artifact collection now walks workspace-relative directory descriptors
   with no-follow opens, rejects special files, reads at most the per-file cap
   plus one byte, and rejects files that change during capture. Python tests
   cover normal, missing, oversized, FIFO, symlink, parent-symlink and mutated
-  files. Aggregate artifact/envelope transport budgets remain follow-up work.
+  files. Large-artifact transport remains follow-up work.
 
 - Modal forwards the declared timeout to the Python subprocess worker, which
   enforces a monotonic deadline even after both output pipes close. Each command
