@@ -43,6 +43,7 @@ export async function reconcileModalExperiment(storePath: string, cwd: string, e
       const receipt = receipts[0].payload;
       const callId = receipt.callId;
       if (receipt.phase !== "submitted" || intent.payload.phase !== "submitting" || receipt.protocol !== protocol || receipt.allocationName !== allocationName || typeof callId !== "string" || !/^fc-[A-Za-z0-9]{1,128}$/.test(callId)) continue;
+      if (!store.modalCallOwnershipConfirmed(experimentId, submissionId, callId)) continue;
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
       queried += 1;

@@ -58,6 +58,12 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal call IDs now require one receipt owner across the durable store before
+  querying or recording completion, and before releasing a fence. Reused IDs
+  across launch intents or experiments retain reservations even if each copied
+  ledger appears complete. Recovery and ledger tests cover both aliasing and
+  copied terminal proofs. Live Modal recovery/cancellation remain unverified.
+
 - Modal reconciliation now polls recorded call IDs with SDK `get(timeout=0)`
   through a packaged Python helper. Completed valid worker envelopes produce
   idempotent terminal evidence and release quarantine without importing metrics

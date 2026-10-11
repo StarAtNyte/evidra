@@ -9252,7 +9252,7 @@ class FunctionCall:
 `);
     process.env.PYTHONPATH = root;
     process.env.EVIDRA_MODAL_PYTHON = "python3";
-    for (const mode of ["completed", "failed", "pending", "expired", "malformed", "missing-receipt", "multiple"]) {
+    for (const mode of ["completed", "failed", "pending", "expired", "malformed", "missing-receipt", "multiple", "shared-intent", "shared-experiment"]) {
       process.env.EVIDRA_MODAL_TEST_MODE = mode;
       const db = join(root, `${mode}.sqlite`), id = `recover-${mode}`;
       const store = new ResearchStore(db);
@@ -9261,22 +9261,27 @@ class FunctionCall:
       store.reserveComputeBudget({ experimentId: id, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
       store.appendEvent("run.remote.submitting", { ...common, phase: "submitting" });
       if (mode !== "missing-receipt") store.appendEvent("run.remote.submitted", { ...common, callId: "fc-owned", phase: "submitted" });
-      if (mode === "multiple") {
-        const second = { ...common, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" };
+      if (["multiple", "shared-intent", "shared-experiment"].includes(mode)) {
+        const second = { ...common, experimentId: mode === "shared-experiment" ? `${id}-other` : id, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" };
+        if (mode === "shared-experiment") {
+          store.saveExperiment({ id: second.experimentId, payload: { id: second.experimentId, status: "running", resources: { executor: "modal" } } });
+          store.reserveComputeBudget({ experimentId: second.experimentId, budgetGpuHours: 2, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+        }
         store.appendEvent("run.remote.submitting", { ...second, phase: "submitting" });
-        store.appendEvent("run.remote.submitted", { ...second, callId: "fc-pending", phase: "submitted" });
+        store.appendEvent("run.remote.submitted", { ...second, callId: mode === "multiple" ? "fc-pending" : "fc-owned", phase: "submitted" });
       }
       store.recoverStaleExperiments(0);
       store.close();
       const completed = ["completed", "failed"].includes(mode);
-      assert.deepEqual(await reconcileRemoteExperiment(db, root, id), { released: completed, queried: mode === "missing-receipt" ? 0 : mode === "multiple" ? 2 : 1 }, mode);
+      assert.deepEqual(await reconcileRemoteExperiment(db, root, id), { released: completed, queried: ["missing-receipt", "shared-intent", "shared-experiment"].includes(mode) ? 0 : mode === "multiple" ? 2 : 1 }, mode);
       const reopened = new ResearchStore(db);
       try {
-        assert.equal(reopened.reservedComputeGpuHours(), completed ? 0 : 1);
+        assert.equal(reopened.reservedComputeGpuHours(), completed ? 0 : mode === "shared-experiment" ? 2 : 1);
         assert.equal(reopened.experiments()[0].payload.status, completed ? "failed" : "blocked");
         assert.equal(reopened.runs().length, 0);
         assert.equal(existsSync(join(root, "result.json")), false);
         const terminals = reopened.eventsByType("run.remote.terminal");
+        if (mode.startsWith("shared-")) assert.equal(reopened.recordModalTerminalEvidence({ ...common, callId: "fc-owned", state: "COMPLETED", exitCode: 0, completionEvidence: "sdk-result", at: new Date().toISOString() }), false);
         assert.equal(terminals.length, completed || mode === "multiple" ? 1 : 0);
         if (completed || mode === "multiple") {
           const proof = terminals[0].payload;
@@ -9297,7 +9302,7 @@ class FunctionCall:
 test("Modal reconciliation requires ordered completion evidence for every invocation", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-modal-ledger-"));
   try {
-    for (const mode of ["confirmed", "missing", "duplicate", "reordered", "wrong-receipt", "wrong-exit", "extra-intent", "call-confirmed", "call-mismatched", "call-missing"]) {
+    for (const mode of ["confirmed", "missing", "duplicate", "reordered", "wrong-receipt", "wrong-exit", "extra-intent", "call-confirmed", "call-mismatched", "call-missing", "call-reused"]) {
       const confirmed = ["confirmed", "call-confirmed"].includes(mode);
       const db = join(root, `${mode}.sqlite`);
       const store = new ResearchStore(db);
@@ -9316,6 +9321,7 @@ test("Modal reconciliation requires ordered completion evidence for every invoca
       const records = mode === "missing" ? [intent] : mode === "reordered" ? [terminal, intent, receipt] : [intent, receipt, terminal];
       if (mode === "duplicate") records.push(terminal);
       if (mode === "extra-intent") records.push({ ...intent, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" });
+      if (mode === "call-reused") records.push(...[intent, receipt, terminal].map((event) => ({ ...event, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" })));
       for (const event of records) store.appendEvent(`run.remote.${event.phase}`, event);
       store.recoverStaleExperiments(0);
       store.close();
