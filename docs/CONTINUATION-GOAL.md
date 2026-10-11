@@ -58,6 +58,13 @@ external evaluator.
 
 ## Latest repository state
 
+- Local Ollama transport now enforces 1 MiB serialized request, 4 MiB decoded
+  response/metadata, and 16 KiB error-diagnostic byte limits. Oversized input
+  never reaches HTTP; oversized streams are cancelled and error text redacted.
+  Regressions cover chunked/compressed bodies, Unicode, JSON escaping, and
+  metadata probes. Model token-window budgeting, output headroom, provider
+  transcript growth, and inference-budget coverage remain open gates.
+
 - `experiment reconcile <id> --cancel-container` now supports explicit removal
   of unresolved owned Docker workers after controller loss. It persists the
   receipt and cleanup request before the exact-ID RPC, then verifies removal

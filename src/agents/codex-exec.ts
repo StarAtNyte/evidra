@@ -8,6 +8,7 @@ import type { ProcessControl } from "../core/process.js";
 import { redactSecrets } from "../core/redaction.js";
 import { evidraVersion } from "../version.js";
 import { serializeResearchContext } from "../core/context-budget.js";
+import { boundedLocalResponseText, LOCAL_REQUEST_MAX_BYTES, LOCAL_ERROR_MAX_BYTES } from "./local-http.js";
 
 export type AgentProvider = "codex" | "local";
 
@@ -546,12 +547,18 @@ async function probeOllama(endpoint: "tags" | "show", options: ProviderProbeOpti
   options.interruptSignal?.addEventListener("abort", interrupt, { once: true });
   try {
     if (options.interruptSignal?.aborted) abort.abort();
+    if (model && Buffer.byteLength(model, "utf8") > LOCAL_REQUEST_MAX_BYTES) throw new Error(`Local Ollama request exceeds the ${LOCAL_REQUEST_MAX_BYTES}-byte limit.`);
+    const body = model ? JSON.stringify({ name: model }) : undefined;
+    if (body && Buffer.byteLength(body, "utf8") > LOCAL_REQUEST_MAX_BYTES) throw new Error(`Local Ollama request exceeds the ${LOCAL_REQUEST_MAX_BYTES}-byte limit.`);
     const response = await fetch(ollamaEndpoint(endpoint), {
-      ...(model ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: model }) } : {}),
+      ...(body ? { method: "POST", headers: { "content-type": "application/json" }, body } : {}),
       signal: abort.signal,
     });
-    if (!response.ok) throw new Error(`Local Ollama ${endpoint} probe failed its health check (${response.status}).`);
-    const payload: unknown = await response.json();
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`Local Ollama ${endpoint} probe failed its health check (${response.status}).`);
+    }
+    const payload: unknown = JSON.parse(await boundedLocalResponseText(response));
     if (!payload || typeof payload !== "object" || Array.isArray(payload) || "error" in payload) throw new Error(`Local Ollama ${endpoint} returned invalid health metadata.`);
     return payload as Record<string, unknown>;
   } catch (error) {
@@ -819,26 +826,29 @@ export class CodexExecAgent {
     try {
       if (this.options.interruptSignal?.aborted) abort.abort();
       onProcess?.(control);
+      if (Buffer.byteLength(prompt, "utf8") > LOCAL_REQUEST_MAX_BYTES || Buffer.byteLength(this.options.model, "utf8") > LOCAL_REQUEST_MAX_BYTES || outputSchemaText && Buffer.byteLength(outputSchemaText, "utf8") > LOCAL_REQUEST_MAX_BYTES) throw new Error(`Local Ollama request exceeds the ${LOCAL_REQUEST_MAX_BYTES}-byte limit.`);
       let format: unknown;
       if (outputSchemaText) {
         try { format = JSON.parse(outputSchemaText); }
         catch { throw new Error("The configured local output schema is invalid JSON."); }
         if (!format || typeof format !== "object" || Array.isArray(format)) throw new Error("The configured local output schema must be a JSON object.");
       }
+      const body = JSON.stringify({
+        model: this.options.model,
+        stream: false,
+        messages: [{ role: "user", content: prompt }],
+        options: { temperature: 0.2 },
+        ...(format ? { format } : {}),
+      });
+      if (Buffer.byteLength(body, "utf8") > LOCAL_REQUEST_MAX_BYTES) throw new Error(`Local Ollama request exceeds the ${LOCAL_REQUEST_MAX_BYTES}-byte limit.`);
       const response = await fetch(ollamaEndpoint("chat"), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          model: this.options.model,
-          stream: false,
-          messages: [{ role: "user", content: prompt }],
-          options: { temperature: 0.2 },
-          ...(format ? { format } : {}),
-        }),
+        body,
         signal: abort.signal,
       });
-      if (!response.ok) throw new Error(`Ollama request failed: ${response.status} ${await response.text()}`);
-      const payload = await response.json() as { done?: boolean; done_reason?: string; error?: unknown; message?: { content?: unknown }; prompt_eval_count?: unknown; eval_count?: unknown; prompt_eval_cached_count?: unknown };
+      if (!response.ok) throw new Error(`Ollama request failed: ${response.status} ${redactSecrets(await boundedLocalResponseText(response, LOCAL_ERROR_MAX_BYTES))}`);
+      const payload = JSON.parse(await boundedLocalResponseText(response)) as { done?: boolean; done_reason?: string; error?: unknown; message?: { content?: unknown }; prompt_eval_count?: unknown; eval_count?: unknown; prompt_eval_cached_count?: unknown };
       const count = (value: unknown): number | undefined => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
       const counts = { inputTokens: count(payload.prompt_eval_count), outputTokens: count(payload.eval_count), cachedInputTokens: count(payload.prompt_eval_cached_count) };
       const usage = Object.values(counts).some((value) => value !== undefined) ? counts : undefined;

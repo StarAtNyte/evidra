@@ -1,3 +1,4 @@
+import { boundedLocalResponseText, LOCAL_REQUEST_MAX_BYTES, LOCAL_RESPONSE_MAX_BYTES, LOCAL_ERROR_MAX_BYTES } from "../dist/agents/local-http.js";
 import { reconcileRemoteExperiment, reconcileSlurmExperiment } from "../dist/core/remote-reconciliation.js";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -6,7 +7,7 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { sha256File } from "../dist/core/evidence.js";
-import { deflateSync } from "node:zlib";
+import { deflateSync, gzipSync } from "node:zlib";
 import { execFileSync, spawnSync } from "node:child_process";
 import test from "node:test";
 import Database from "better-sqlite3";
@@ -7879,6 +7880,90 @@ test("local provider preserves the endpoint, schema, completion, and usage contr
     if (previousHost === undefined) delete process.env.OLLAMA_HOST;
     else process.env.OLLAMA_HOST = previousHost;
     await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("local response byte bounds preserve split Unicode and cancel oversized streams", async () => {
+  const content = "🙂verified", bytes = new TextEncoder().encode(content);
+  const exact = new Response(new ReadableStream({ start(controller) { controller.enqueue(bytes.subarray(0, 2)); controller.enqueue(bytes.subarray(2)); controller.close(); } }));
+  assert.equal(await boundedLocalResponseText(exact, bytes.length), content);
+  assert.equal(exact.body.locked, false);
+  for (const declared of [false, true]) {
+    let cancelled = false;
+    const oversized = new Response(new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array(8)); }, cancel() { cancelled = true; } }), { headers: declared ? { "content-length": "1000" } : {} });
+    await assert.rejects(() => boundedLocalResponseText(oversized, 4), /4-byte limit/);
+    assert.equal(cancelled, true);
+    assert.equal(oversized.body.locked, false);
+  }
+  await assert.rejects(() => boundedLocalResponseText(new Response(new Uint8Array([0xc3])), 4), /encoded data|encoding/i);
+});
+
+test("local provider bounds serialized request bytes before sending HTTP", async () => {
+  const previousHost = process.env.OLLAMA_HOST;
+  let requests = 0;
+  const server = createServer((_request, response) => { requests += 1; response.end(JSON.stringify({ done: true, message: { content: "ok" } })); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const agent = new CodexExecAgent({ provider: "local", model: "test", cwd: process.cwd() });
+    const task = { role: "conversation assistant", objective: "verify", context: {} };
+    for (const oversized of [
+      { ...task, objective: "🙂".repeat(LOCAL_REQUEST_MAX_BYTES / 4 + 1) },
+      { ...task, objective: String.fromCharCode(0).repeat(LOCAL_REQUEST_MAX_BYTES / 5) },
+      { ...task, outputSchema: JSON.stringify({ type: "object", description: "x".repeat(LOCAL_REQUEST_MAX_BYTES) }) },
+    ]) await assert.rejects(() => agent.run(oversized), /request exceeds.*byte limit/);
+    assert.equal(requests, 0);
+    assert.equal((await agent.run(task)).output, "ok");
+    assert.equal(requests, 1);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST; else process.env.OLLAMA_HOST = previousHost;
+    server.closeAllConnections(); await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("local generation and metadata reject oversized chunked and decompressed bodies", async () => {
+  const previousHost = process.env.OLLAMA_HOST;
+  let mode = "declared", probeTarget = "tags", delivered = 0, streamClosed;
+  let assistantCalls = 0;
+  const chunk = Buffer.alloc(64 * 1024, 120);
+  const compressed = gzipSync(Buffer.alloc(LOCAL_RESPONSE_MAX_BYTES + 1, 120));
+  const server = createServer((request, response) => {
+    if (probeTarget === "show" && request.url.endsWith("/tags")) { response.end(JSON.stringify({models:[{name:"test"}]})); return; }
+    if (mode === "chunked") {
+      response.writeHead(200, { "content-type": "application/json" });
+      const timer = setInterval(() => { delivered += 1; response.write(chunk); if (delivered >= 100) { clearInterval(timer); response.end(); } }, 1);
+      response.on("close", () => { clearInterval(timer); streamClosed?.(); });
+    } else if (mode === "gzip") {
+      response.writeHead(200, { "content-encoding": "gzip", "content-length": compressed.length }); response.end(compressed);
+    } else if (mode === "error") { response.statusCode = 500; response.end("x".repeat(LOCAL_ERROR_MAX_BYTES + 1)); }
+    else if (mode === "redacted-error") { response.statusCode = 500; response.end("OPENAI_API_KEY=sk-1234567890123456789012345678901234567890"); }
+    else response.end("x".repeat(LOCAL_RESPONSE_MAX_BYTES + 1));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
+  const task = { role: "conversation assistant", objective: "verify", context: {} };
+  const agent = new CodexExecAgent({ provider: "local", model: "test", cwd: process.cwd(), timeoutMs: 5000, onAssistant: () => { assistantCalls += 1; } });
+  try {
+    for (const selected of ["declared", "gzip", "error", "chunked"]) {
+      mode = selected; delivered = 0;
+      let closed;
+      if (mode === "chunked") closed = new Promise((resolve) => { streamClosed = resolve; });
+      await assert.rejects(() => agent.run(task), /response exceeds.*byte limit/, selected);
+      if (closed) { await closed; assert.ok(delivered < 100); }
+    }
+    for (const selected of ["declared", "gzip"]) {
+      mode = selected;
+      probeTarget = "tags";
+      await assert.rejects(() => listLocalModels({ timeoutMs: 5000 }), /response exceeds.*byte limit/);
+      probeTarget = "show";
+      await assert.rejects(() => checkProvider({ provider: "local", model: "test", cwd: process.cwd(), timeoutMs: 5000 }), /response exceeds.*byte limit/);
+    }
+    mode = "redacted-error";
+    await assert.rejects(() => agent.run(task), (error) => { assert.match(error.message, /500/); assert.doesNotMatch(error.message, /12345678901234567890/); return true; });
+    assert.equal(assistantCalls, 0);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST; else process.env.OLLAMA_HOST = previousHost;
+    server.closeAllConnections(); await new Promise((resolve) => server.close(resolve));
   }
 });
 

@@ -229,6 +229,16 @@ This does not establish Podman behavior or controller-crash recovery. Durable
 container identity/reconciliation and retention of compute for unconfirmed
 active container outcomes remain required follow-up work.
 
+Local Ollama transport now limits serialized requests to 1 MiB, generation and
+metadata response bodies to 4 MiB, and HTTP error diagnostics to 16 KiB.
+Limits count UTF-8 bytes, including request JSON escaping and decoded response
+streams. Oversized input is rejected before sending; oversized response bodies
+are cancelled without emitting a partial assistant response. Error diagnostics
+are redacted. Regressions cover missing Content-Length, compressed responses,
+Unicode across chunk boundaries, exact byte bounds, schema/objective overflow,
+and both inventory and model-health metadata. These are controller memory
+bounds; they do not prove model token-window fit or inference-budget coverage.
+
 The local Ollama route shares one endpoint resolver for discovery, health,
 and chat, including base hosts, trailing slashes, proxy prefixes, and legacy
 `/api/chat` URLs. Structured schemas are sent as `format`; invalid schema JSON
