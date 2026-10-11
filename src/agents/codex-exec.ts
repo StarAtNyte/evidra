@@ -158,6 +158,8 @@ export interface ExecAgentOptions {
   onThread?: (threadId: string) => void;
   limitPolicy?: "auto" | "wait" | "fallback" | "stop";
   timeoutMs?: number;
+  /** Finite Ollama generation limit; defaults to 4096 tokens. */
+  localMaxOutputTokens?: number;
   /** Abort autonomous turns that repeat the exact same shell command. Zero disables it. */
   maxRepeatedCommands?: number;
   /** Abort autonomous turns after this many consecutive failed shell commands. Zero disables it. */
@@ -826,6 +828,11 @@ export class CodexExecAgent {
     try {
       if (this.options.interruptSignal?.aborted) abort.abort();
       onProcess?.(control);
+      const configuredOutputLimit = this.options.localMaxOutputTokens ?? process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS;
+      let outputLimit = 4096;
+      if (typeof configuredOutputLimit === "number") outputLimit = configuredOutputLimit;
+      else if (configuredOutputLimit !== undefined) outputLimit = /^[1-9]\d*$/.test(configuredOutputLimit.trim()) ? Number(configuredOutputLimit.trim()) : NaN;
+      if (!Number.isSafeInteger(outputLimit) || outputLimit < 1 || outputLimit > 65_536) throw new Error("Local output token limit must be an integer from 1 to 65536.");
       if (Buffer.byteLength(prompt, "utf8") > LOCAL_REQUEST_MAX_BYTES || Buffer.byteLength(this.options.model, "utf8") > LOCAL_REQUEST_MAX_BYTES || outputSchemaText && Buffer.byteLength(outputSchemaText, "utf8") > LOCAL_REQUEST_MAX_BYTES) throw new Error(`Local Ollama request exceeds the ${LOCAL_REQUEST_MAX_BYTES}-byte limit.`);
       let format: unknown;
       if (outputSchemaText) {
@@ -837,7 +844,7 @@ export class CodexExecAgent {
         model: this.options.model,
         stream: false,
         messages: [{ role: "user", content: prompt }],
-        options: { temperature: 0.2 },
+        options: { temperature: 0.2, num_predict: outputLimit },
         ...(format ? { format } : {}),
       });
       if (Buffer.byteLength(body, "utf8") > LOCAL_REQUEST_MAX_BYTES) throw new Error(`Local Ollama request exceeds the ${LOCAL_REQUEST_MAX_BYTES}-byte limit.`);
@@ -854,6 +861,7 @@ export class CodexExecAgent {
       const usage = Object.values(counts).some((value) => value !== undefined) ? counts : undefined;
       // A truncated or failed response still consumed inference budget.
       this.options.onUsage?.(usage, "local", this.options.model, role);
+      if (counts.outputTokens !== undefined && counts.outputTokens > outputLimit) throw new Error("Ollama exceeded the configured output token limit.");
       if (payload.error) throw new Error("Ollama returned an error response.");
       if (payload.done !== true || (payload.done_reason !== undefined && payload.done_reason !== "stop")) throw new Error("Ollama did not complete the response successfully.");
       const text = payload.message?.content;

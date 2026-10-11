@@ -58,6 +58,13 @@ external evaluator.
 
 ## Latest repository state
 
+- Local calls now request a finite output-token limit (4096 by default), with
+  validated environment/adapter overrides from 1 to 65536. Reported output
+  above the limit is rejected after usage attribution. Tests cover precedence,
+  invalid configuration, bounds, and rejection without assistant emission.
+  Input tokenizer budgeting, context/output headroom, live server conformance,
+  unknown usage, and provider transcript growth remain open release gates.
+
 - Local Ollama transport now enforces 1 MiB serialized request, 4 MiB decoded
   response/metadata, and 16 KiB error-diagnostic byte limits. Oversized input
   never reaches HTTP; oversized streams are cancelled and error text redacted.

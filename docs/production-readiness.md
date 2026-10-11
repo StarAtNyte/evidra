@@ -249,6 +249,14 @@ are attributed even when the completion gate rejects the response. Missing
 usage stays unknown. Pre-aborted calls send no request, and callback exceptions
 release signal listeners and timers.
 
+Local calls now send a finite `num_predict` limit: 4096 output tokens by default,
+overridden by `EVIDRA_LOCAL_MAX_OUTPUT_TOKENS` or the adapter's
+`localMaxOutputTokens` option (which takes precedence). Values must be integers
+from 1 to 65536; invalid configuration fails before HTTP. Reported output counts
+above the requested limit reject the response after recording consumed usage.
+Missing counts remain unknown. The runtime control follows
+[Ollama's parameter contract](https://docs.ollama.com/modelfile).
+
 These contracts do not establish local tokenizer limits or prevent server-side
 input truncation. Explicit model/context metadata, generation headroom, and
 provider-owned transcript growth remain part of the next token-budget gate.

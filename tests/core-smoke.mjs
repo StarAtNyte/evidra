@@ -7967,6 +7967,51 @@ test("local generation and metadata reject oversized chunked and decompressed bo
   }
 });
 
+test("local provider sends finite output limits and accounts rejected over-budget responses", async () => {
+  const previousHost = process.env.OLLAMA_HOST, previousLimit = process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS;
+  const requests = [];
+  let generated = 24, usage, assistants = 0;
+  const server = createServer((request, response) => {
+    let body = ""; request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      requests.push(JSON.parse(body));
+      response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: "verified" }, prompt_eval_count: 100, eval_count: generated }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`; delete process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS;
+  const options = { provider: "local", model: "test", cwd: process.cwd(), onUsage: (value) => { usage = value; }, onAssistant: () => { assistants += 1; } };
+  const task = { role: "conversation assistant", objective: "verify", context: {} };
+  try {
+    assert.equal((await new CodexExecAgent(options).run(task)).output, "verified");
+    assert.equal(requests.at(-1).options.num_predict, 4096);
+    process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS = " 32 ";
+    await new CodexExecAgent(options).run(task); assert.equal(requests.at(-1).options.num_predict, 32);
+    await new CodexExecAgent({ ...options, localMaxOutputTokens: 64 }).run(task); assert.equal(requests.at(-1).options.num_predict, 64);
+    const accepted = assistants;
+    process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS = "16";
+    await assert.rejects(() => new CodexExecAgent(options).run(task), /exceeded.*output token limit/);
+    assert.equal(usage.outputTokens, 24); assert.equal(usage.inputTokens, 100);
+    assert.equal(assistants, accepted);
+    const before = requests.length;
+    for (const value of ["", "0", "-1", "1.5", "1e3", "65537", "Infinity", "not a limit"]) {
+      process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS = value;
+      await assert.rejects(() => new CodexExecAgent(options).run(task), /output token limit must be/);
+    }
+    for (const localMaxOutputTokens of [0, -1, 1.5, Infinity, NaN, 65537]) await assert.rejects(() => new CodexExecAgent({ ...options, localMaxOutputTokens }).run(task), /output token limit must be/);
+    assert.equal(requests.length, before);
+    generated = 1;
+    for (const localMaxOutputTokens of [1, 65536]) {
+      await new CodexExecAgent({ ...options, localMaxOutputTokens }).run(task);
+      assert.equal(requests.at(-1).options.num_predict, localMaxOutputTokens);
+    }
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST; else process.env.OLLAMA_HOST = previousHost;
+    if (previousLimit === undefined) delete process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS; else process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS = previousLimit;
+    server.closeAllConnections(); await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("local provider enforces the configured turn timeout", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-local-timeout-"));
   const previousHost = process.env.OLLAMA_HOST;
