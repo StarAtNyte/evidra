@@ -221,13 +221,13 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]", timeout_sec
             artifact_payload[str(Path(artifact))] = base64.b64encode(data).decode("ascii")
         elif (working_directory / artifact).exists():
             return {"exitCode": 65, "stdout": "", "stderr": "Modal worker completed, but declared artifacts exceeded the capture budget; metrics and artifacts were discarded.", "artifacts": {}}
-    return {
+    return json.loads(completion_envelope({
         # Match the controller's portable 0..255 process-exit contract.
         "exitCode": process.returncode if process.returncode >= 0 else 128 - process.returncode,
         "stdout": completed_stdout,
         "stderr": completed_stderr,
         "artifacts": artifact_payload,
-    }
+    }))
 
 
 @app.local_entrypoint()

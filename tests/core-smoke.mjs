@@ -9095,6 +9095,7 @@ mode = sys.argv[3]
 if mode == 'artifacts':
     import os
     namespace = worker['execute'].__globals__
+    namespace['print'] = lambda *args, **kwargs: None
     namespace['MAX_ARTIFACT_BYTES'] = 128
     root = pathlib.Path(sys.argv[2])
     (root / 'normal').write_bytes(b'verified artifact')
@@ -9119,6 +9120,14 @@ if mode == 'artifacts':
     (root / 'second').write_bytes(b'1234567890')
     result = worker['execute'](json.dumps([sys.executable, '-c', 'pass']), '.', json.dumps(['normal', 'second']))
     assert result['exitCode'] == 65 and result['artifacts'] == {} and result['stdout'] == ''
+    namespace['MAX_ARTIFACT_TOTAL_BYTES'] = 256
+    for code, artifacts in [('import sys; sys.stdout.write(chr(0)*512)', []), ('pass', ['large', 'normal'])]:
+        if artifacts: (root / 'large').write_bytes(b'x'*128)
+        namespace['MAX_ENVELOPE_BYTES'] = 256 if artifacts else 512
+        result = worker['execute'](json.dumps([sys.executable, '-c', code]), '.', json.dumps(artifacts))
+        assert result['exitCode'] == 65 and result['artifacts'] == {} and result['stdout'] == '', result
+        assert 'transport budget' in result['stderr']
+    namespace['MAX_ENVELOPE_BYTES'] = 512
     for name in ('fifo', 'link', 'parent/normal', '../normal', '/etc/passwd'):
         try: read(root, name)
         except (OSError, ValueError): pass

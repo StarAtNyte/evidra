@@ -58,6 +58,11 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal completion-envelope limits now apply inside the remote worker before
+  returning over RPC, as well as in the local entrypoint. Direct worker tests
+  reject oversized escaped output and artifacts before transport; valid results
+  preserve their worker exit status. Live Modal RPC limits remain unverified.
+
 - Modal bounds aggregate artifact capture at 64 MiB and serialized completion
   envelopes at 7 MiB so terminal evidence fits the controller's retained tail.
   Exceeding either returns a small failed-result envelope (65) with no metrics
