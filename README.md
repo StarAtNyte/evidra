@@ -689,7 +689,7 @@ evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" \
 - experiment proposals receive an explainable novelty score against prior directions, reducing redundant hypothesis families while preserving probability-of-success, information-value, risk, and compute-cost ranking;
 - ensemble proposals are durable, checksummed candidate artifacts with member-file checksums, provenance, and explicit candidate/validated/promoted/rejected status; source mutation blocks validation, and creating a blend never silently promotes or submits it;
 - local-model experiment implementation through bounded unified-diff proposals, checked and applied only inside the experiment worktree;
-- Modal execution mounts the exact isolated experiment worktree and accepts either Modal CLI profiles or environment credentials;
+- Modal execution mounts the exact isolated experiment worktree and accepts either Modal CLI profiles or environment credentials; call IDs are recorded before waiting for completion. Custom `EVIDRA_MODAL_ENTRYPOINT` implementations must accept `--submission-id` and emit `[evidra-call] {"submissionId":"...","callId":"fc-..."}` before their result. Missing or conflicting receipts retain the compute and replay fence;
 - Docker/Podman execution mounts only the exact isolated experiment worktree, uses a network-disabled container, and keeps the same artifact, metric, retry, and evidence gates;
 - Codex-backed experiment engineers honor the configured entitlement policy: they switch to an installed local fallback in `auto`/`fallback` mode, or wait durably when `wait` is selected, instead of silently abandoning an authorized campaign;
 - shell and autonomy safety guards.

@@ -58,6 +58,13 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal now spawns a call and emits its SDK call ID before waiting for results.
+  The controller persists streamed receipts linked to the prelaunch intent;
+  new completion evidence must match that call ID. Missing, duplicate or
+  mismatched receipts cannot confirm completion. Call cancellation, live SDK
+  verification and recovery of submissions lost before receipt remain open.
+  API contract: https://modal.com/docs/sdk/py/latest/FunctionCall.
+
 - Modal stdout or stderr capture overflow now returns an explicit failed result
   (65) with no metrics or artifacts. A metric in the retained prefix cannot
   survive discarded later evidence. Python tests cover either stream overflowing
@@ -106,8 +113,9 @@ external evaluator.
   records synchronous completion evidence only after a successful client exit
   and valid worker envelope. Uncertain failures, timeouts, interruptions and
   missing envelopes retain compute reservations and block replay across restart.
-  Completion receipts are local invocation evidence, not remote call IDs;
-  discovering and cancelling orphaned Modal calls remains unimplemented.
+  Legacy completion receipts are local invocation evidence; new launches also
+  record SDK call IDs. Discovering and cancelling orphaned Modal calls remains
+  unimplemented.
 
 - Modal completion parsing now rejects duplicate envelopes, malformed terminal
   evidence in either order, and noncanonical artifact base64 instead of falling
@@ -119,7 +127,7 @@ external evaluator.
   overwrite client failure, timeout, or interruption; unconfirmed outcomes keep
   raw output as diagnostics and return nonretryable unknown failure. Tests cover
   graceful-zero termination, missing envelopes, and confirmed worker failures.
-  Durable Modal call identity, remote cancellation and live orphan recovery remain
+  Live Modal call identity verification, remote cancellation and orphan recovery remain
   open gates. No live Ollama server was reachable for runner-overflow trials.
 
 - Local health and every generation now probe the server version and require

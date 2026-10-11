@@ -236,8 +236,10 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]", timeout_sec
 
 
 @app.local_entrypoint()
-def run(command_json: str, cwd: str = ".", artifacts_json: str = "[]", timeout_seconds: int = 3600) -> None:
-    result = execute.remote(command_json, cwd, artifacts_json, timeout_seconds)
+def run(command_json: str, cwd: str = ".", artifacts_json: str = "[]", timeout_seconds: int = 3600, submission_id: str = "") -> None:
+    call = execute.spawn(command_json, cwd, artifacts_json, timeout_seconds)
+    print("[evidra-call] " + json.dumps({"submissionId": submission_id, "callId": call.object_id}), flush=True)
+    result = call.get()
     print(completion_envelope(result))
     # Returning an envelope completes the runtime-client contract. Worker
     # failure is represented inside it; RPC/client errors must still propagate.

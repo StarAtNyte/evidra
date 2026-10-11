@@ -9018,12 +9018,15 @@ test("Modal completion envelopes reject ambiguity and malformed terminal evidenc
 test("Modal requires successful client completion before accepting worker evidence or artifacts", async () => {
   const previousPath = process.env.PATH;
   try {
-    for (const mode of ["completed", "client-failed", "timeout", "interrupted", "missing-envelope", "worker-failed"]) {
+    for (const mode of ["completed", "client-failed", "timeout", "interrupted", "missing-envelope", "worker-failed", "missing-receipt", "mismatched-receipt", "duplicate-receipt"]) {
       const root = mkdtempSync(join(tmpdir(), "evidra-modal-completion-")), bin = join(root, "bin"); mkdirSync(bin);
       try {
         const payload = { exitCode: mode === "worker-failed" ? 7 : 0, stdout: "accuracy=0.9", stderr: "worker diagnostics", artifacts: { "result.json": Buffer.from("verified artifact").toString("base64") } };
         writeFileSync(join(bin, "modal"), `#!${process.execPath}
           const fs=require('node:fs'),mode=${JSON.stringify(mode)};
+          const receipt='[evidra-call] '+JSON.stringify({submissionId:mode==='mismatched-receipt'?'wrong':process.argv[process.argv.indexOf('--submission-id')+1],callId:'fc-contract'});
+          if(mode!=='missing-receipt')console.log(receipt);
+          if(mode==='duplicate-receipt')console.log(receipt);
           console.log(mode==='missing-envelope'?'accuracy=0.9':${JSON.stringify(JSON.stringify(payload))});
           fs.writeFileSync('ready','yes');
           if(mode==='client-failed')process.exit(3);
@@ -9044,6 +9047,9 @@ test("Modal requires successful client completion before accepting worker eviden
         const confirmed = ["completed", "worker-failed"].includes(mode);
         assert.equal(store.remoteExecutionState(manifest.id).confirmed, confirmed, mode);
         assert.equal(store.eventsByType("run.remote.submitting").length, 1);
+        const receipts = store.eventsByType("run.remote.submitted");
+        assert.equal(receipts.length, ["missing-receipt", "mismatched-receipt"].includes(mode) ? 0 : 1, mode);
+        if (receipts.length) { assert.equal(receipts[0].payload.callId, "fc-contract"); assert.equal(receipts[0].payload.protocol, "modal-call-v1"); }
         assert.equal(store.eventsByType("run.remote.terminal").length, confirmed ? 1 : 0);
         store.saveExperiment({ id: manifest.id, payload: { ...manifest, status: result.status } });
         store.close();
@@ -9059,7 +9065,7 @@ test("Modal requires successful client completion before accepting worker eviden
           }
         } finally { reopened.close(); }
         assert.equal(existsSync(join(root, "result.json")), confirmed, mode);
-        if (!confirmed) { assert.deepEqual(result.metrics, {}); assert.deepEqual(result.artifacts, {}); assert.match(result.stdout, /accuracy/); assert.equal(result.failureClass, "unknown"); assert.match(result.stderr, /completion is unconfirmed/); }
+        if (!confirmed) { assert.deepEqual(result.metrics, {}); assert.deepEqual(result.artifacts, {}); if (!["mismatched-receipt", "duplicate-receipt"].includes(mode)) assert.match(result.stdout, /accuracy/); assert.equal(result.failureClass, "unknown"); assert.match(result.stderr, /completion is unconfirmed/); }
         else assert.equal(readFileSync(join(root, "result.json"), "utf8"), "verified artifact");
         if (mode === "client-failed") assert.equal(result.exitCode, 3);
         if (mode === "timeout") assert.equal(result.exitCode, 124);
@@ -9085,6 +9091,14 @@ class App:
     def function(self, **kwargs):
         def decorate(fn):
             fn.remote = fn
+            class Call:
+                object_id = 'fc-contract'
+                def get(self): return fn(*self.args)
+            def spawn(*args):
+                call = Call()
+                call.args = args
+                return call
+            fn.spawn = spawn
             return fn
         return decorate
     def local_entrypoint(self): return lambda fn: fn
@@ -9162,7 +9176,7 @@ if mode in ('partial-lines', 'unicode', 'invalid-utf8', 'stderr-limit', 'stdout-
     sys.exit(0)
 if mode == 'rpc-error':
     def fail(*args): raise RuntimeError('RPC completion unconfirmed')
-    worker['execute'].remote = fail
+    worker['execute'].spawn = fail
 code = 'import sys; print(\"worker evidence\"); sys.exit(7)' if mode == 'failed' else 'import os, signal; os.kill(os.getpid(), signal.SIGTERM)' if mode == 'signal' else 'print(\"worker evidence\")'
 if mode == 'unterminated': code = 'import sys; sys.stdout.write("worker evidence")'
 if mode == 'timeout': code = 'import time; time.sleep(30)'
@@ -9217,7 +9231,8 @@ print('stopped')
 test("Modal reconciliation requires ordered completion evidence for every invocation", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-modal-ledger-"));
   try {
-    for (const mode of ["confirmed", "missing", "duplicate", "reordered", "wrong-receipt", "wrong-exit", "extra-intent"]) {
+    for (const mode of ["confirmed", "missing", "duplicate", "reordered", "wrong-receipt", "wrong-exit", "extra-intent", "call-confirmed", "call-mismatched", "call-missing"]) {
+      const confirmed = ["confirmed", "call-confirmed"].includes(mode);
       const db = join(root, `${mode}.sqlite`);
       const store = new ResearchStore(db);
       const id = `modal-${mode}`;
@@ -9227,15 +9242,20 @@ test("Modal reconciliation requires ordered completion evidence for every invoca
       const intent = { ...common, phase: "submitting" };
       const receipt = { ...common, phase: "submitted", completionEvidence: mode === "wrong-receipt" ? "unverified" : "client-envelope" };
       const terminal = { ...common, phase: "terminal", completionEvidence: "client-envelope", state: "COMPLETED", exitCode: mode === "wrong-exit" ? 256 : 7 };
+      if (mode.startsWith("call-")) {
+        intent.protocol = receipt.protocol = terminal.protocol = "modal-call-v1";
+        if (mode !== "call-missing") receipt.callId = "fc-owned";
+        terminal.callId = mode === "call-mismatched" ? "fc-other" : "fc-owned";
+      }
       const records = mode === "missing" ? [intent] : mode === "reordered" ? [terminal, intent, receipt] : [intent, receipt, terminal];
       if (mode === "duplicate") records.push(terminal);
       if (mode === "extra-intent") records.push({ ...intent, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" });
       for (const event of records) store.appendEvent(`run.remote.${event.phase}`, event);
       store.recoverStaleExperiments(0);
       store.close();
-      assert.deepEqual(await reconcileRemoteExperiment(db, root, id), { released: mode === "confirmed", queried: 0 }, mode);
+      assert.deepEqual(await reconcileRemoteExperiment(db, root, id), { released: confirmed, queried: 0 }, mode);
       const reopened = new ResearchStore(db);
-      try { assert.equal(reopened.reservedComputeGpuHours(), mode === "confirmed" ? 0 : 1, mode); }
+      try { assert.equal(reopened.reservedComputeGpuHours(), confirmed ? 0 : 1, mode); }
       finally { reopened.close(); }
     }
   } finally { rmSync(root, { recursive: true, force: true }); }

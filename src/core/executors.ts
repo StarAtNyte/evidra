@@ -22,6 +22,8 @@ export interface RemoteExecutionEvent {
   containerId?: string;
   daemonId?: string;
   completionEvidence?: "client-envelope";
+  protocol?: "modal-call-v1";
+  callId?: string;
 }
 export type RemoteExecutionObserver = (event: RemoteExecutionEvent) => void;
 
@@ -729,17 +731,40 @@ export class ModalExecutor implements ExperimentExecutor {
     const commandJson = JSON.stringify(command);
     // The worker image must contain the isolated worktree. Mounting the repo
     // root would omit `.sota/worktrees` and silently execute the wrong source.
-    const args = ["modal", "run", modalEntrypoint, "--command-json", commandJson, "--cwd", ".", "--artifacts-json", JSON.stringify(manifest.evaluation?.requiredArtifacts ?? []), "--timeout-seconds", String(timeoutSeconds)];
     const submissionId = randomUUID();
+    const args = ["modal", "run", modalEntrypoint, "--command-json", commandJson, "--cwd", ".", "--artifacts-json", JSON.stringify(manifest.evaluation?.requiredArtifacts ?? []), "--timeout-seconds", String(timeoutSeconds), "--submission-id", submissionId];
     const observe = (phase: RemoteExecutionEvent["phase"], details: Partial<RemoteExecutionEvent> = {}): void => {
-      this.onRemoteExecution?.({ ...details, executor: "modal", experimentId: manifest.id, submissionId, allocationName: `evidra-${submissionId}`, phase, at: new Date().toISOString() });
+      this.onRemoteExecution?.({ ...details, executor: "modal", protocol: "modal-call-v1", experimentId: manifest.id, submissionId, allocationName: `evidra-${submissionId}`, phase, at: new Date().toISOString() });
     };
     // Persist before launch: losing the client cannot prove the remote worker
     // stopped, even when the local process exits or never returns a receipt.
     observe("submitting");
+    let callId: string | undefined;
+    let pendingLine = "";
+    let oversizedLine = false;
+    const receive = (stream: "stdout" | "stderr", chunk: string): void => {
+      if (stream !== "stdout") return;
+      const parts = chunk.split("\n");
+      for (let index = 0; index < parts.length; index += 1) {
+        const part = parts[index];
+        if (!oversizedLine) {
+          if (pendingLine.length + part.length > 4096) { pendingLine = ""; oversizedLine = true; }
+          else pendingLine += part;
+        }
+        if (index === parts.length - 1) continue;
+        if (!oversizedLine && pendingLine.startsWith("[evidra-call] ")) {
+          const receipt = JSON.parse(pendingLine.slice("[evidra-call] ".length)) as { submissionId?: unknown; callId?: unknown };
+          if (receipt.submissionId !== submissionId || typeof receipt.callId !== "string" || !/^fc-[A-Za-z0-9]{1,128}$/.test(receipt.callId) || callId) throw new Error("Modal call receipt is malformed, mismatched, or duplicated.");
+          observe("submitted", { callId: receipt.callId });
+          callId = receipt.callId;
+        }
+        pendingLine = "";
+        oversizedLine = false;
+      }
+    };
     let result: ProcessResult;
     try {
-      result = await runProcess(args, launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, {
+      result = await runProcess(args, launchRoot, manifest.resources.timeoutMinutes * 60_000, receive, onProcess, {
         ...process.env,
         EVIDRA_MODAL_WORKSPACE: experimentWorkspace,
         ...(manifest.resources.gpu ? { EVIDRA_MODAL_GPU: manifest.resources.gpu } : {}),
@@ -753,12 +778,10 @@ export class ModalExecutor implements ExperimentExecutor {
     const payload = parseModalWorkerResult(result.stdout);
     // A printed envelope cannot override the controller's timeout/interruption
     // or prove remote completion when the runtime client failed.
-    if (result.exitCode !== 0 || !payload) {
+    if (result.exitCode !== 0 || !payload || !callId) {
       return { ...toRunResult(manifest, { ...result, command, cwd, exitCode: result.exitCode === 0 ? 65 : result.exitCode, stdout: "", stderr: boundProcessOutput([result.stderr, "Modal worker completion is unconfirmed; reconcile before replay."].filter(Boolean).join("\n")) }, metricName, true), stdout: result.stdout, artifacts: {}, failureClass: "unknown" };
     }
-    // These are synchronous completion receipts, not Modal call identifiers.
-    observe("submitted", { completionEvidence: "client-envelope" });
-    observe("terminal", { completionEvidence: "client-envelope", state: "COMPLETED", exitCode: payload.exitCode });
+    observe("terminal", { callId, completionEvidence: "client-envelope", state: "COMPLETED", exitCode: payload.exitCode });
     const allowedArtifacts = new Set(manifest.evaluation?.requiredArtifacts ?? []);
     for (const [name, encoded] of Object.entries(payload.artifacts ?? {})) {
       if (!allowedArtifacts.has(name)) continue;

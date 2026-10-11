@@ -3771,7 +3771,10 @@ export class ResearchStore {
       if (receipt.executor !== intent.payload.executor || proof.executor !== intent.payload.executor) return unresolved;
       if (receipt.allocationName !== intent.payload.allocationName || proof.allocationName !== intent.payload.allocationName) return unresolved;
       if (intent.payload.executor === "modal") {
-        if (receipt.completionEvidence !== "client-envelope" || proof.completionEvidence !== "client-envelope" || proof.state !== "COMPLETED" || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) return unresolved;
+        if (intent.payload.protocol === "modal-call-v1") {
+          if (receipt.protocol !== intent.payload.protocol || proof.protocol !== intent.payload.protocol || typeof receipt.callId !== "string" || !/^fc-[A-Za-z0-9]{1,128}$/.test(receipt.callId) || proof.callId !== receipt.callId) return unresolved;
+        } else if (intent.payload.protocol !== undefined || receipt.completionEvidence !== "client-envelope") return unresolved;
+        if (proof.completionEvidence !== "client-envelope" || proof.state !== "COMPLETED" || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) return unresolved;
         continue;
       }
       if (intent.payload.executor === "container") {
