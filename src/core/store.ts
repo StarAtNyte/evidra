@@ -3767,7 +3767,9 @@ export class ResearchStore {
       if (submitted.length !== 1 || terminal.length !== 1) return unresolved;
       const receipt = submitted[0].payload;
       const proof = terminal[0].payload;
+      if (events.indexOf(intent) >= events.indexOf(submitted[0]) || events.indexOf(submitted[0]) >= events.indexOf(terminal[0])) return unresolved;
       if (receipt.allocationName !== intent.payload.allocationName || proof.allocationName !== intent.payload.allocationName) return unresolved;
+      if (receipt.cluster !== undefined && (typeof receipt.cluster !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(receipt.cluster))) return unresolved;
       if (typeof receipt.jobId !== "string" || !/^\d+$/.test(receipt.jobId) || proof.jobId !== receipt.jobId || proof.cluster !== receipt.cluster || !terminalStates.has(String(proof.state)) || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) return unresolved;
     }
     // Every attempt needs an intent; unmatched ledger records cannot release a fence.

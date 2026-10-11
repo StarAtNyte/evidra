@@ -58,6 +58,11 @@ external evaluator.
 
 ## Latest repository state
 
+- Slurm recovery now rejects out-of-order lifecycle evidence and malformed
+  cluster identities; expanded ledger regressions verify that compute remains
+  reserved for these cases. Container controller-crash reconciliation remains
+  an open release gate.
+
 - Container execution now bypasses image entrypoints, disables image health
   checks, preserves the declared argv, and rejects implicit default commands.
   Cleanup removes anonymous image-created volumes with the exact container.

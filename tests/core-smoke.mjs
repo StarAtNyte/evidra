@@ -8990,6 +8990,9 @@ test("remote reconciliation rejects partial and contradictory allocation ledgers
       [valid[0], valid[1], { ...valid[2], cluster: "west" }],
       [valid[0], valid[1], { ...valid[2], state: "RUNNING" }],
       [...valid, valid[2]], [...valid, { phase: "submitting", submissionId: "unconfirmed" }],
+      [valid[1], valid[0], valid[2]], [valid[0], valid[2], valid[1]],
+      [valid[2], valid[1], valid[0]],
+      [valid[0], { ...valid[1], cluster: "--unsafe" }, { ...valid[2], cluster: "--unsafe" }],
     ];
     for (const [index, ledger] of ledgers.entries()) {
       const id = `uncertain-${index}`;

@@ -122,6 +122,9 @@ record. Both normal accounting and post-restart queries request duplicate
 records and match this identity as well as the numeric job ID. A different
 allocation reusing the ID cannot provide termination evidence. Multiple
 records for the same identity remain unconfirmed.
+Ledger reconciliation also requires durable intent, receipt, and terminal
+proof in that order, with a valid recorded cluster name. Reordered records
+and malformed cluster identities retain quarantine and compute reservations.
 
 `experiment reconcile` now queries unresolved, known Slurm receipts on their
 recorded cluster, with a fifteen-second budget across query launches (plus
