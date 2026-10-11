@@ -58,6 +58,17 @@ external evaluator.
 
 ## Latest repository state
 
+- Slurm uses a UUID-based allocation name in lifecycle evidence. Normal and
+  post-restart accounting query duplicates and require job-ID/name agreement.
+  `experiment reconcile` now queries known unresolved allocations on the
+  recorded cluster with a bounded query budget, appends idempotent terminal
+  proof, and releases only complete identity-checked evidence. Legacy identity
+  gaps, ambiguous receipts, active jobs, and failed queries remain fenced.
+  Fake-CLI tests cover reuse, duplicates, terminal failures, absent evidence,
+  and timeouts; no live cluster recovery claim is made.
+- Active reservation fencing at `1b3b758` passed hosted CI on both Node
+  versions, including package checks: run 38118811473; 705 local tests passed.
+
 - Normal Slurm finalization now consults allocation evidence as well as restart
   flags. Unconfirmed outcomes cannot release compute, replay, or claim success;
   failed terminal updates materialize a durable quarantine with the requested

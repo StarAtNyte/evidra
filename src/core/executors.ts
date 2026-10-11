@@ -13,6 +13,7 @@ export interface RemoteExecutionEvent {
   phase: "submitting" | "submitted" | "terminal";
   at: string;
   jobId?: string;
+  allocationName?: string;
   cluster?: string;
   state?: string;
   exitCode?: number;
@@ -521,8 +522,8 @@ function boundedFile(root: string, name: string): string {
 }
 
 /** Match the allocation itself; a completed batch step is not job completion. */
-export function parseSlurmAccounting(output: string, jobId: string): { state: string; exitCode: number; terminal: boolean } {
-  const rows = output.split(/\r?\n/).map((line) => line.trim().split("|")).filter((row) => row[0]?.trim() === jobId);
+export function parseSlurmAccounting(output: string, jobId: string, allocationName?: string): { state: string; exitCode: number; terminal: boolean } {
+  const rows = output.split(/\r?\n/).map((line) => line.trim().split("|")).filter((row) => row[0]?.trim() === jobId && (allocationName === undefined || row[3]?.trim() === allocationName));
   if (rows.length !== 1) return { state: "UNKNOWN", exitCode: 1, terminal: false };
   const state = rows[0][1]?.trim().toUpperCase().split(/\s+/)[0] ?? "UNKNOWN";
   const code = rows[0][2]?.trim().match(/^(\d+):(\d+)$/);
@@ -550,11 +551,12 @@ export class SlurmExecutor implements ExperimentExecutor {
     const suffix = `${manifest.id.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 48)}-${Date.now()}`;
     const stdoutPath = join(logRoot, `${suffix}.out`);
     const stderrPath = join(logRoot, `${suffix}.err`);
-    const submit = slurmCommand(manifest.id, cwd, command, stdoutPath, stderrPath, manifest.resources.timeoutMinutes, manifest.resources.gpu);
-    const started = Date.now();
     const submissionId = randomUUID();
+    const allocationName = `evidra-${submissionId}`;
+    const submit = slurmCommand(allocationName, cwd, command, stdoutPath, stderrPath, manifest.resources.timeoutMinutes, manifest.resources.gpu);
+    const started = Date.now();
     const observe = (phase: RemoteExecutionEvent["phase"], details: Partial<RemoteExecutionEvent> = {}): void => {
-      this.onRemoteExecution?.({ ...details, executor: "slurm", experimentId: manifest.id, submissionId, phase, at: new Date().toISOString() });
+      this.onRemoteExecution?.({ ...details, executor: "slurm", experimentId: manifest.id, submissionId, allocationName, phase, at: new Date().toISOString() });
     };
     // Persist intent before any RPC: controller loss during sbatch may leave
     // an accepted allocation even when no receipt reaches the client.
@@ -619,8 +621,8 @@ export class SlurmExecutor implements ExperimentExecutor {
     }
     if (!cancelled && Date.now() >= deadline) { timedOut = true; await cancel(); }
     const cancellationResult = cancellation ? await cancellation : undefined;
-    const accounting = await remoteCommand(["sacct", ...clusterArgs, "--noheader", "--parsable2", "--allocations", "--jobs", jobId, "--format=JobIDRaw,State%40,ExitCode"], 15_000);
-    const remote = parseSlurmAccounting(accounting.stdout, jobId);
+    const accounting = await remoteCommand(["sacct", ...clusterArgs, "--noheader", "--parsable2", "--allocations", "--duplicates", "--starttime", "1970-01-01", "--jobs", jobId, "--format=JobIDRaw,State%40,ExitCode,JobName%80"], 15_000);
+    const remote = parseSlurmAccounting(accounting.stdout, jobId, allocationName);
     const unconfirmed = accounting.exitCode !== 0 || !remote.terminal;
     if (!unconfirmed) {
       try { observe("terminal", { jobId, ...(receipt[2] ? { cluster: receipt[2] } : {}), state: remote.state, exitCode: remote.exitCode }); }

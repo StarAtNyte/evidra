@@ -1,3 +1,4 @@
+import { reconcileSlurmExperiment } from "../dist/core/remote-reconciliation.js";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8800,7 +8801,12 @@ async function withFakeSlurm(scripts, execute) {
   mkdirSync(bin);
   const previousPath = process.env.PATH;
   try {
-    for (const [name, script] of Object.entries(scripts)) writeFileSync(join(bin, name), `#!${process.execPath}\n${script}\n`, { mode: 0o755 });
+    for (const [name, script] of Object.entries(scripts)) {
+      const metadata = name === "sbatch"
+        ? "require('node:fs').writeFileSync('allocation-name', process.argv[process.argv.indexOf('--job-name')+1]);"
+        : name === "sacct" ? "const originalLog=console.log; console.log=(line)=>{ const value=String(line); originalLog(/^\\d+\\|[^|]+\\|[^|]+$/.test(value) ? value+'|'+require('node:fs').readFileSync('allocation-name','utf8') : value); };" : "";
+      writeFileSync(join(bin, name), `#!${process.execPath}\n${metadata}\n${script}\n`, { mode: 0o755 });
+    }
     process.env.PATH = `${bin}:${previousPath ?? ""}`;
     const manifest = { id: "slurm-contract", resources: { executor: "slurm", timeoutMinutes: 1 }, evaluation: { requiredArtifacts: [] } };
     await execute({ root, manifest, executor: new SlurmExecutor(root) });
@@ -8813,6 +8819,52 @@ async function withFakeSlurm(scripts, execute) {
 
 const slurmReceipt = "console.log('123')";
 const slurmQueueEmpty = "process.exit(0)";
+
+test("post-restart Slurm queries release only the exact terminal allocation identity", async () => {
+  const submissionId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const allocationName = `evidra-${submissionId}`;
+  const cases = [
+    { output: `123|COMPLETED|0:0|${allocationName}`, released: true },
+    { output: `123|FAILED|7:0|${allocationName}`, released: true },
+    { output: `123|RUNNING|0:0|${allocationName}`, released: false },
+    { output: "123|COMPLETED|0:0|different-allocation", released: false },
+    { output: `123|COMPLETED|0:0|${allocationName}\n123|RUNNING|0:0|${allocationName}`, released: false },
+    { output: `123|COMPLETED|0:0|${allocationName}\n123|RUNNING|0:0|other-allocation`, released: true },
+    { output: "", released: false },
+    { output: `123|COMPLETED|0:0|${allocationName}`, exitCode: 2, released: false },
+    { output: `123|COMPLETED|0:0|${allocationName}`, receipt: false, released: false, queried: 0 },
+    { output: `123|COMPLETED|0:0|${allocationName}`, legacy: true, released: false, queried: 0 },
+    { output: "", stalled: true, released: false },
+  ];
+  for (const scenario of cases) {
+    await withFakeSlurm({ sacct: scenario.stalled ? "setInterval(()=>{},1000);" : `const args=process.argv.slice(2); if(args[args.indexOf('--clusters')+1]!=='east' || !args.includes('--duplicates') || !args.includes('--starttime')) process.exit(9); console.log(${JSON.stringify(scenario.output)}); process.exit(${scenario.exitCode ?? 0});` }, async ({ root, manifest }) => {
+      const db = join(root, "state.sqlite");
+      const store = new ResearchStore(db);
+      const payload = { ...manifest, status: "running" };
+      store.saveExperiment({ id: manifest.id, payload });
+      store.reserveComputeBudget({ experimentId: manifest.id, budgetGpuHours: 4, usedGpuHours: 0, requestedGpuHours: 3, gpu: "A100" });
+      const event = { executor: "slurm", experimentId: manifest.id, submissionId, ...(scenario.legacy ? {} : { allocationName }), at: new Date().toISOString() };
+      store.appendEvent("run.remote.submitting", { ...event, phase: "submitting" });
+      if (scenario.receipt !== false) store.appendEvent("run.remote.submitted", { ...event, phase: "submitted", jobId: "123", cluster: "east" });
+      store.saveExperiment({ id: manifest.id, payload: { ...payload, status: "failed" } });
+      store.close();
+      const result = await reconcileSlurmExperiment(db, root, manifest.id, scenario.stalled ? { timeoutMs: 50 } : {});
+      assert.deepEqual(result, { released: scenario.released, queried: scenario.queried ?? 1 });
+      const reopened = new ResearchStore(db);
+      assert.equal(reopened.reservedComputeGpuHours(), scenario.released ? 0 : 3);
+      assert.equal(reopened.experiments()[0].payload.status, scenario.released ? "failed" : "blocked");
+      assert.equal(reopened.eventsByType("run.remote.terminal").length, scenario.released ? 1 : 0);
+      if (scenario.released) {
+        const proof = reopened.eventsByType("run.remote.terminal")[0].payload;
+        assert.equal(reopened.recordRemoteTerminalEvidence(proof), true);
+        recordRemoteExecution(db, proof);
+        assert.equal(reopened.eventsByType("run.remote.terminal").length, 1);
+      }
+      assert.equal(reopened.verifyEventChain().status, "valid");
+      reopened.close();
+    });
+  }
+});
 
 test("Slurm allocation ledger persists intent before submission and gates restart reconciliation", async () => {
   for (const accounting of ["123|COMPLETED|0:0", "123|RUNNING|0:0"]) {
@@ -8877,7 +8929,7 @@ test("remote reconciliation rejects partial and contradictory allocation ledgers
       const id = `uncertain-${index}`;
       store.saveExperiment({ id, payload: { id, status: "running", resources: { executor: "slurm" } } });
       store.reserveComputeBudget({ experimentId: id, budgetGpuHours: 20, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
-      for (const event of ledger) store.appendEvent(`run.remote.${event.phase}`, { executor: "slurm", experimentId: id, submissionId: id, at: new Date().toISOString(), ...event });
+      for (const event of ledger) store.appendEvent(`run.remote.${event.phase}`, { executor: "slurm", experimentId: id, submissionId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", allocationName: "evidra-bbbbbbbb-bbbb-bbbb-bbbbbbbbbbbb", at: new Date().toISOString(), ...event });
     }
     store.recoverStaleExperiments(0);
     for (const index of ledgers.keys()) assert.equal(store.reconcileRemoteExperiment(`uncertain-${index}`), false);
@@ -8894,7 +8946,7 @@ test("unconfirmed Slurm outcomes retain compute and reject replay without a cont
     const payload = { id: "live", status: "running", resources: { executor: "slurm" } };
     store.saveExperiment({ id: "live", payload });
     store.reserveComputeBudget({ experimentId: "live", budgetGpuHours: 4, usedGpuHours: 0, requestedGpuHours: 3, gpu: "A100" });
-    const event = { executor: "slurm", experimentId: "live", submissionId: "submission-1", at: new Date().toISOString() };
+    const event = { executor: "slurm", experimentId: "live", submissionId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", allocationName: "evidra-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", at: new Date().toISOString() };
     store.appendEvent("run.remote.submitting", { ...event, phase: "submitting" });
     store.appendEvent("run.remote.submitted", { ...event, phase: "submitted", jobId: "123", cluster: "east" });
     assert.equal(store.remoteExecutionState("live").confirmed, false);

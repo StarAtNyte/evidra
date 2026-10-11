@@ -72,8 +72,8 @@ Worker log previews read bounded head/tail bytes and reject symlink paths.
 Fake CLI regressions establish these protocol contracts, without establishing
 live cluster recovery. Accounting visibility can lag cancellation; an absent
 terminal record is reported as unconfirmed and requires reconciliation.
-Durable allocation fencing across controller restarts and remote pause/resume
-remain open: the current pause control only pauses a local polling process.
+Live allocation fencing across controller restarts and remote pause/resume
+remain unverified: the current pause control only pauses a local polling process.
 
 Restart recovery now quarantines stale container, Modal, and Slurm experiments
 as blocked with durable `remoteReconciliationRequired` state. A lost heartbeat
@@ -84,9 +84,9 @@ through terminal-looking updates and reservation reconciliation. Local stale
 work retains its bounded retry path. A SIGKILL regression verifies durable
 quarantine and reservation retention after reopening SQLite.
 
-This is a conservative restart fence, not completed remote recovery. Allocation
-identity capture, backend terminal-state verification, and a verified release
-path for quarantine are still required. It prevents replay of the quarantined
+This is a conservative restart fence, not completed remote recovery. Backend
+terminal-state verification and quarantine release for ambiguous submissions
+and other executor types are still required. It prevents replay of the quarantined
 experiment; it does not establish that remote workers have stopped or prohibit
 all new experiments in an unlimited-budget campaign.
 
@@ -103,9 +103,9 @@ when the event chain is valid and every recorded intent has exactly one
 matching receipt and terminal record. Extra, missing, mismatched, and ambiguous
 records retain quarantine. Reconciliation releases reserved compute and leaves
 the measurement failed/unvalidated with its bounded recovery path available.
-It currently reads existing durable accounting evidence; it does not query the
-cluster after restart. Controller loss before terminal evidence, submission
-ambiguity, legacy records, and container/Modal reconciliation remain open.
+It also queries known unresolved allocations after restart using the unique
+allocation name. Submission ambiguity, legacy identity gaps, live cluster
+verification, and container/Modal reconciliation remain open.
 
 The same allocation-evidence check now protects normal finalization and compute
 release, without waiting for a restart. An unconfirmed Slurm ledger blocks
@@ -116,6 +116,24 @@ recovery retain that compute until matching terminal evidence exists and the
 quarantine is reconciled. CLI/TUI replay checks consult the ledger even before
 a quarantine flag has been materialized. Allocation lookups use an indexed
 experiment-specific query, with a compatibility fallback for SQLite JSON1.
+
+Slurm allocations now use a UUID-based job name stored in every lifecycle
+record. Both normal accounting and post-restart queries request duplicate
+records and match this identity as well as the numeric job ID. A different
+allocation reusing the ID cannot provide termination evidence. Multiple
+records for the same identity remain unconfirmed.
+
+`experiment reconcile` now queries unresolved, known Slurm receipts on their
+recorded cluster, with a fifteen-second budget across query launches (plus
+local process cleanup). It records terminal proof idempotently and releases
+quarantine only after every intent is covered. Running jobs, query failures,
+missing identities, and ambiguous submissions stay fenced. Legacy lifecycle
+records without the unique allocation name cannot release quarantine under
+the strengthened identity contract. No cancellation or worker relaunch occurs
+during this accounting operation. Fake-CLI regressions cover successful and
+failed terminal jobs, reused IDs, duplicate identities, empty/nonterminal
+accounting, nonzero query exits, absent receipts, legacy records, and timeouts.
+Live cluster recovery and container/Modal reconciliation remain unverified.
 
 ## Release checks
 

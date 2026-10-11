@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { reconcileSlurmExperiment } from "./core/remote-reconciliation.js";
 import { Command } from "commander";
 import { appendFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync, realpathSync } from "node:fs";
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -7124,12 +7125,10 @@ experiment.command("gate")
 experiment.command("reconcile")
   .argument("<id>", "experiment identifier")
   .description("Release a restart quarantine only when every recorded Slurm allocation has durable terminal accounting")
-  .action((id: string) => {
-    const store = new ResearchStore(statePath);
-    try {
-      if (!store.reconcileRemoteExperiment(id)) throw new Error(`Experiment ${id} has no complete terminal allocation evidence; quarantine remains in place.`);
-      console.log(`Experiment ${id}: remote termination reconciled; measurement remains unvalidated.`);
-    } finally { store.close(); }
+  .action(async (id: string) => {
+    const result = await reconcileSlurmExperiment(statePath, root, id);
+    if (!result.released) throw new Error(`Experiment ${id} has no complete terminal allocation evidence; quarantine remains in place.`);
+    console.log(`Experiment ${id}: remote termination reconciled; measurement remains unvalidated.`);
   });
 experiment.command("run")
   .argument("<id>", "experiment identifier")

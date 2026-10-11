@@ -3761,17 +3761,28 @@ export class ResearchStore {
     const terminalStates = new Set(["COMPLETED", "CANCELLED", "TIMEOUT", "FAILED", "OUT_OF_MEMORY", "NODE_FAIL", "PREEMPTED", "BOOT_FAIL", "DEADLINE", "REVOKED"]);
     for (const intent of intents) {
       const id = intent.payload.submissionId;
-      if (typeof id !== "string" || !id) return unresolved;
+      if (typeof id !== "string" || !/^[a-f0-9-]{36}$/.test(id) || intent.payload.allocationName !== `evidra-${id}`) return unresolved;
       const submitted = events.filter((event) => event.phase === "submitted" && event.payload.submissionId === id);
       const terminal = events.filter((event) => event.phase === "terminal" && event.payload.submissionId === id);
       if (submitted.length !== 1 || terminal.length !== 1) return unresolved;
       const receipt = submitted[0].payload;
       const proof = terminal[0].payload;
+      if (receipt.allocationName !== intent.payload.allocationName || proof.allocationName !== intent.payload.allocationName) return unresolved;
       if (typeof receipt.jobId !== "string" || !/^\d+$/.test(receipt.jobId) || proof.jobId !== receipt.jobId || proof.cluster !== receipt.cluster || !terminalStates.has(String(proof.state)) || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) return unresolved;
     }
     // Every attempt needs an intent; unmatched ledger records cannot release a fence.
     if (events.some((event) => !intents.some((intent) => intent.payload.submissionId === event.payload.submissionId))) return unresolved;
     return { recorded: true, confirmed: true, submissionIds: intents.map((intent) => String(intent.payload.submissionId)) };
+  }
+
+  /** Concurrent recovery observers must not create duplicate terminal proofs. */
+  recordRemoteTerminalEvidence(event: { experimentId: string; submissionId: string; allocationName: string; jobId: string; cluster?: string; state: string; exitCode: number; at: string }): boolean {
+    return this.db.transaction(() => {
+      const existing = this.eventsByType("run.remote.terminal").map((record) => record.payload as Record<string, unknown>).filter((record) => record.experimentId === event.experimentId && record.submissionId === event.submissionId);
+      if (existing.length) return existing.length === 1 && ["jobId", "cluster", "allocationName", "state", "exitCode"].every((key) => existing[0][key] === (event as unknown as Record<string, unknown>)[key]);
+      this.appendEvent("run.remote.terminal", { ...event, executor: "slurm", phase: "terminal" });
+      return true;
+    })();
   }
 
   /** Release a restart fence only after every Slurm intent has terminal evidence. */

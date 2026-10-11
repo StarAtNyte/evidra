@@ -4,7 +4,11 @@ import type { RemoteExecutionEvent } from "./executors.js";
 /** Allocation evidence is mandatory durability, unlike best-effort liveness. */
 export function recordRemoteExecution(storePath: string, event: RemoteExecutionEvent): void {
   const store = new ResearchStore(storePath);
-  try { store.appendEvent(`run.remote.${event.phase}`, event); }
+  try {
+    if (event.phase === "terminal" && event.jobId !== undefined && event.allocationName !== undefined && event.state !== undefined && event.exitCode !== undefined) {
+      if (!store.recordRemoteTerminalEvidence({ ...event, jobId: event.jobId, allocationName: event.allocationName, state: event.state, exitCode: event.exitCode })) throw new Error("Remote terminal accounting conflicts with recorded evidence.");
+    } else store.appendEvent(`run.remote.${event.phase}`, event);
+  }
   finally { store.close(); }
 }
 
