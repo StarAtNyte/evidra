@@ -175,6 +175,7 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]", timeout_sec
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
     selector.register(process.stderr, selectors.EVENT_READ, "stderr")
     captured = {"stdout": bytearray(), "stderr": bytearray()}
+    capture_truncated = False
     decoders = {stream: codecs.getincrementaldecoder("utf-8")(errors="replace") for stream in captured}
     deadline = time.monotonic() + timeout_seconds
     try:
@@ -197,6 +198,8 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]", timeout_sec
                     key.fileobj.close()
                     continue
                 remaining = MAX_CAPTURE_BYTES - len(captured[stream])
+                if len(chunk) > remaining:
+                    capture_truncated = True
                 if remaining > 0:
                     captured[stream].extend(chunk[:remaining])
     finally:
@@ -210,6 +213,8 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]", timeout_sec
         process.stdout.close()
         process.stderr.close()
         process.wait(timeout=5)
+    if capture_truncated:
+        return {"exitCode": 65, "stdout": "", "stderr": f"Modal worker completed with exit {process.returncode}, but output exceeded the capture budget; incomplete metrics and artifacts were discarded.", "artifacts": {}}
     completed_stdout = captured["stdout"].decode("utf-8", errors="replace")
     completed_stderr = captured["stderr"].decode("utf-8", errors="replace")
     artifact_payload: dict[str, str] = {}

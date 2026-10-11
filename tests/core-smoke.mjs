@@ -9144,7 +9144,7 @@ if mode == 'artifacts':
     finally: os.read = original_read
     print('artifact checks passed')
     sys.exit(0)
-if mode in ('partial-lines', 'unicode', 'invalid-utf8'):
+if mode in ('partial-lines', 'unicode', 'invalid-utf8', 'stderr-limit', 'stdout-limit', 'exact-limit'):
     namespace = worker['execute'].__globals__
     namespace['MAX_CAPTURE_BYTES'] = 128
     progress = []
@@ -9153,6 +9153,9 @@ if mode in ('partial-lines', 'unicode', 'invalid-utf8'):
         'partial-lines': 'import os; os.write(1, b\"partial\"); os.write(2, b\"y\"*200000); os.write(1, b\"x\"*200000)',
         'unicode': 'import os, time; [(os.write(1, bytes([value])), time.sleep(0.005)) for value in \"नमस्ते\".encode()]',
         'invalid-utf8': 'import os; os.write(1, bytes([255])); os.write(2, bytes([254]))',
+        'stderr-limit': 'import os; os.write(1, b\"accuracy=0.9\"); os.write(2, b\"y\"*129)',
+        'stdout-limit': 'import os; os.write(1, b"accuracy=0.9" + b"x"*129)',
+        'exact-limit': 'import os; os.write(1, b\"x\"*128)',
     }
     result = worker['execute'](json.dumps([sys.executable, '-c', codes[mode]]), '.')
     print(json.dumps(dict(result, maxProgressChars=max(progress), progressEvents=len(progress))))
@@ -9168,7 +9171,7 @@ if mode == 'child-pipe': code = 'import subprocess,sys,pathlib; child=subprocess
 worker['run'](json.dumps([sys.executable, '-c', code]), timeout_seconds=1 if mode in ('timeout', 'closed-pipes', 'child-pipe') else 3600)
 `;
   try {
-    for (const mode of ["completed", "failed", "signal", "rpc-error", "partial-lines", "unicode", "invalid-utf8", "unterminated", "timeout", "closed-pipes", "child-pipe", "artifacts"]) {
+    for (const mode of ["completed", "failed", "signal", "rpc-error", "partial-lines", "unicode", "invalid-utf8", "unterminated", "timeout", "closed-pipes", "child-pipe", "artifacts", "stderr-limit", "stdout-limit", "exact-limit"]) {
       const result = spawnSync("python3", ["-c", script, join(process.cwd(), "modal_app.py"), root, mode], { encoding: "utf8", timeout: 10_000 });
       assert.equal(result.error, undefined);
       if (mode === "artifacts") { assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.trim(), "artifact checks passed"); continue; }
@@ -9193,14 +9196,17 @@ print('stopped')
       } else {
         assert.equal(result.status, 0, result.stderr);
         const envelope = parseModalWorkerResult(result.stdout);
-        assert.equal(envelope?.exitCode, mode === "failed" ? 7 : mode === "signal" ? 143 : 0);
+        assert.equal(envelope?.exitCode, mode === "failed" ? 7 : mode === "signal" ? 143 : ["partial-lines", "stderr-limit", "stdout-limit"].includes(mode) ? 65 : 0);
         if (mode === "partial-lines") {
-          assert.equal(envelope.stdout, `partial${"x".repeat(121)}`);
-          assert.equal(envelope.stderr, "y".repeat(128));
+          assert.equal(envelope.stdout, "");
+          assert.deepEqual(envelope.artifacts, {});
+          assert.match(envelope.stderr, /output exceeded the capture budget/);
           const details = JSON.parse(result.stdout);
           assert(details.maxProgressChars <= 65536 + 30);
           assert(details.progressEvents > 2);
-        } else if (mode === "unicode") assert.equal(envelope.stdout, "नमस्ते");
+        } else if (["stderr-limit", "stdout-limit"].includes(mode)) { assert.equal(envelope.stdout, ""); assert.match(envelope.stderr, /output exceeded the capture budget/); }
+        else if (mode === "exact-limit") assert.equal(envelope.stdout, "x".repeat(128));
+        else if (mode === "unicode") assert.equal(envelope.stdout, "नमस्ते");
         else if (mode === "invalid-utf8") { assert.equal(envelope.stdout, "�"); assert.equal(envelope.stderr, "�"); }
         else if (mode !== "signal") assert.match(envelope.stdout, /worker evidence/);
       }

@@ -58,6 +58,11 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal stdout or stderr capture overflow now returns an explicit failed result
+  (65) with no metrics or artifacts. A metric in the retained prefix cannot
+  survive discarded later evidence. Python tests cover either stream overflowing
+  and exactly-at-limit output remaining valid. Live Modal recovery remains open.
+
 - Modal completion-envelope limits now apply inside the remote worker before
   returning over RPC, as well as in the local entrypoint. Direct worker tests
   reject oversized escaped output and artifacts before transport; valid results
