@@ -43,7 +43,7 @@ import { executeResearchTool, normalizeResearchToolResult, availableResearchTool
 import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "../dist/core/external-tools.js";
 import { normalizeResearchDecisionPayload, normalizeResearchToolCall, researchDirectorAvailableTools, runResearchDirector } from "../dist/agents/research-director.js";
 import { CodexExecAgent, checkProvider, listLocalModels, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
-import { LocalExecutor, ContainerExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, SlurmExecutor, parseSlurmAccounting, slurmCommand, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
+import { LocalExecutor, ContainerExecutor, ModalExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, SlurmExecutor, parseSlurmAccounting, slurmCommand, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
 import { experienceReplayWorld } from "../dist/core/experience.js";
@@ -8982,6 +8982,42 @@ test("Modal result parser ignores progress and rejects malformed worker payloads
   assert.equal(payload?.artifacts["predictions.json"], "e30=");
   assert.equal(parseModalWorkerResult(JSON.stringify({ exitCode: 0, artifacts: { "bad": 42 } })), undefined);
   assert.equal(parseModalWorkerResult("Modal failed before the worker returned"), undefined);
+});
+
+test("Modal requires successful client completion before accepting worker evidence or artifacts", async () => {
+  const previousPath = process.env.PATH;
+  try {
+    for (const mode of ["completed", "client-failed", "timeout", "interrupted", "missing-envelope", "worker-failed"]) {
+      const root = mkdtempSync(join(tmpdir(), "evidra-modal-completion-")), bin = join(root, "bin"); mkdirSync(bin);
+      try {
+        const payload = { exitCode: mode === "worker-failed" ? 7 : 0, stdout: "accuracy=0.9", stderr: "worker diagnostics", artifacts: { "result.json": Buffer.from("verified artifact").toString("base64") } };
+        writeFileSync(join(bin, "modal"), `#!${process.execPath}
+          const fs=require('node:fs'),mode=${JSON.stringify(mode)};
+          console.log(mode==='missing-envelope'?'accuracy=0.9':${JSON.stringify(JSON.stringify(payload))});
+          fs.writeFileSync('ready','yes');
+          if(mode==='client-failed')process.exit(3);
+          if(mode==='timeout'||mode==='interrupted'){process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);}
+        `, { mode: 0o755 });
+        process.env.PATH = `${bin}:${previousPath ?? ""}`;
+        const manifest = { id: "modal-contract", resources: { executor: "modal", timeoutMinutes: mode === "timeout" ? 0.01 : 1 }, evaluation: { requiredArtifacts: ["result.json"] } };
+        let timer;
+        const result = await new ModalExecutor(root).run(manifest, root, ["train"], mode === "interrupted" ? (control) => {
+          timer = setInterval(() => { if (existsSync(join(root, "ready"))) { clearInterval(timer); control.terminate(); } }, 10);
+        } : undefined, "accuracy");
+        if (timer) clearInterval(timer);
+        assert.equal(result.status, mode === "completed" ? "completed" : "failed", mode);
+        const confirmed = ["completed", "worker-failed"].includes(mode);
+        assert.equal(existsSync(join(root, "result.json")), confirmed, mode);
+        if (!confirmed) { assert.deepEqual(result.metrics, {}); assert.deepEqual(result.artifacts, {}); assert.match(result.stdout, /accuracy/); assert.equal(result.failureClass, "unknown"); assert.match(result.stderr, /completion is unconfirmed/); }
+        else assert.equal(readFileSync(join(root, "result.json"), "utf8"), "verified artifact");
+        if (mode === "client-failed") assert.equal(result.exitCode, 3);
+        if (mode === "timeout") assert.equal(result.exitCode, 124);
+        if (mode === "interrupted") assert.equal(result.exitCode, 130);
+        if (mode === "missing-envelope") assert.equal(result.exitCode, 65);
+        if (mode === "worker-failed") assert.equal(result.exitCode, 7);
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    }
+  } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
 });
 
 test("container executor command mounts only the isolated worktree", () => {

@@ -738,7 +738,11 @@ export class ModalExecutor implements ExperimentExecutor {
       result = { command: args, cwd: launchRoot, exitCode: 127, durationMs: 0, stdout: "", stderr: message };
     }
     const payload = parseModalWorkerResult(result.stdout);
-    if (!payload) return toRunResult(manifest, { ...result, command, cwd }, metricName, true);
+    // A printed envelope cannot override the controller's timeout/interruption
+    // or prove remote completion when the runtime client failed.
+    if (result.exitCode !== 0 || !payload) {
+      return { ...toRunResult(manifest, { ...result, command, cwd, exitCode: result.exitCode === 0 ? 65 : result.exitCode, stdout: "", stderr: boundProcessOutput([result.stderr, "Modal worker completion is unconfirmed; reconcile before replay."].filter(Boolean).join("\n")) }, metricName, true), stdout: result.stdout, artifacts: {}, failureClass: "unknown" };
+    }
     const allowedArtifacts = new Set(manifest.evaluation?.requiredArtifacts ?? []);
     for (const [name, encoded] of Object.entries(payload.artifacts ?? {})) {
       if (!allowedArtifacts.has(name)) continue;

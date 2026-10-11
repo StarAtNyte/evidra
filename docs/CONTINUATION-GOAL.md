@@ -58,6 +58,14 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal now requires a successful runtime-client exit and valid worker envelope
+  before parsing worker metrics or importing artifacts. Printed success cannot
+  overwrite client failure, timeout, or interruption; unconfirmed outcomes keep
+  raw output as diagnostics and return nonretryable unknown failure. Tests cover
+  graceful-zero termination, missing envelopes, and confirmed worker failures.
+  Durable Modal call identity, remote cancellation and compute fencing remain
+  open gates. No live Ollama server was reachable for runner-overflow trials.
+
 - Local health and every generation now probe the server version and require
   a stable 0.x release at least 0.40.3, conservatively verified against released
   Ollama request/handler source. Unsupported or unknown versions cannot reach

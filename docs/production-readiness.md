@@ -195,6 +195,16 @@ Live cluster recovery and container/Modal reconciliation remain unverified.
 
 ## Release checks
 
+Modal worker envelopes are accepted only after the runtime client exits zero.
+Client failure, timeout, interruption, or a missing envelope cannot produce
+successful worker metrics or import returned artifacts. Timeout/interruption
+remain 124/130 even when a worker envelope printed success first. Raw client
+output remains diagnostic evidence; unconfirmed results have empty metrics and
+artifacts and a nonretryable unknown failure. A confirmed failed worker retains
+its own exit status and artifacts. Fake-runtime regressions cover these cases.
+This gate does not prove remote termination: Modal durable call identity,
+cancellation, normal-outcome compute fencing, and live recovery remain open.
+
 Container execution sets the declared executable as `--entrypoint`, preserves
 the remaining argv verbatim, and disables image health checks. Empty or invalid
 commands fail rather than falling back to an image's default startup command.
