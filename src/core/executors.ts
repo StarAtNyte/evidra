@@ -5,7 +5,7 @@ import { constants, openSync, closeSync, fstatSync, readSync, existsSync, lstatS
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ExperimentExecutorKind, ExperimentManifest, ProcessResult, RunResult } from "./types.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 export interface RemoteExecutionEvent {
   executor: "slurm" | "container" | "modal";
@@ -99,11 +99,13 @@ export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: 
     },
     configPatch: manifest.change?.configPatch ?? {},
   });
-  writeFileSync(configPath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+  const serializedConfig = `${JSON.stringify(payload, null, 2)}\n`;
+  writeFileSync(configPath, serializedConfig, { mode: 0o600 });
   return {
     ...safeWorkerEnvironment({ ...(manifest.resources.environment ?? {}), ...overrides, HOME: workerHome }),
     EVIDRA_EXPERIMENT_ID: manifest.id,
     EVIDRA_EXPERIMENT_CONFIG: configPath,
+    EVIDRA_EXPERIMENT_CONFIG_SHA256: createHash("sha256").update(serializedConfig).digest("hex"),
     EVIDRA_DATASET_VERSION: datasetVersion,
     EVIDRA_SPLIT_VERSION: splitVersion,
     EVIDRA_MATRIX_REQUIRED: manifest.evaluation?.matrixRequired ? "1" : "0",
@@ -722,7 +724,7 @@ export class ModalExecutor implements ExperimentExecutor {
   constructor(private readonly workspaceRoot?: string, private readonly onRemoteExecution?: RemoteExecutionObserver) {}
 
   async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
-    const experimentEnvironment = { ...prepareExperimentEnvironment(manifest, cwd), ...environment };
+    const experimentEnvironment = prepareExperimentEnvironment(manifest, cwd, environment);
     // Modal CLI profiles (created by `modal token set`) are valid credentials
     // too; do not require secrets to be duplicated into Evidra's environment.
     const launchRoot = resolve(this.workspaceRoot ?? cwd);
@@ -743,7 +745,7 @@ export class ModalExecutor implements ExperimentExecutor {
     // The worker image must contain the isolated worktree. Mounting the repo
     // root would omit `.sota/worktrees` and silently execute the wrong source.
     const submissionId = randomUUID();
-    const args = ["modal", "run", modalEntrypoint, "--command-json", commandJson, "--cwd", ".", "--artifacts-json", JSON.stringify(manifest.evaluation?.requiredArtifacts ?? []), "--timeout-seconds", String(timeoutSeconds), "--submission-id", submissionId];
+    const args = ["modal", "run", modalEntrypoint, "--command-json", commandJson, "--cwd", ".", "--artifacts-json", JSON.stringify(manifest.evaluation?.requiredArtifacts ?? []), "--timeout-seconds", String(timeoutSeconds), "--submission-id", submissionId, "--config-sha256", experimentEnvironment.EVIDRA_EXPERIMENT_CONFIG_SHA256!];
     const observe = (phase: RemoteExecutionEvent["phase"], details: Partial<RemoteExecutionEvent> = {}): void => {
       this.onRemoteExecution?.({ ...details, executor: "modal", protocol: "modal-call-v1", experimentId: manifest.id, submissionId, allocationName: `evidra-${submissionId}`, phase, at: new Date().toISOString() });
     };

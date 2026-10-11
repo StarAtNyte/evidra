@@ -1129,6 +1129,15 @@ external evaluator.
   the current public checkout normalizes 36 valid task contracts without
   executing Harbor or claiming benchmark performance.
 
+- Modal launch now binds the prepared experiment config to its SHA-256 digest.
+  The worker validates a bounded regular-file snapshot and strict metadata,
+  folds/seeds, matrix flag, and declared environment before starting commands.
+  Missing, altered, malformed, oversized, or symlinked contracts return failed
+  completion without measurements. Safe declared variables reach the worker;
+  private HOME and experiment metadata remain authoritative. Actual Python
+  subprocess regressions verify rejection before command execution; live Modal
+  mounting and SDK integration remain separate validation gates.
+
 ## Immediate next work
 
 1. Add/maintain real matched external benchmark adapters and run actual trials

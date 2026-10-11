@@ -8,6 +8,7 @@ SQLite state are mounted into the worker.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import subprocess
@@ -32,6 +33,7 @@ WORKER_ENV_KEYS = {
     "CUDA_HOME", "CUDA_PATH", "CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES",
     "NVIDIA_DRIVER_CAPABILITIES", "LD_LIBRARY_PATH", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
 }
+MAX_CONFIG_BYTES = 1024 * 1024
 MAX_CAPTURE_BYTES = 16 * 1024 * 1024
 STREAM_CHUNK_BYTES = 64 * 1024
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
@@ -104,6 +106,55 @@ def worker_environment() -> dict[str, str]:
     return safe
 
 
+def experiment_environment(root: Path, expected_digest: str) -> dict[str, str]:
+    """Validate a bounded snapshot before making any metadata visible to code."""
+    if not isinstance(expected_digest, str) or expected_digest and not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+        raise ValueError("Invalid config digest")
+    config_path = root / ".sota" / "experiment-config.json"
+    data = read_worker_artifact(root, ".sota/experiment-config.json", MAX_CONFIG_BYTES)
+    if data is None:
+        if expected_digest or os.path.lexists(config_path):
+            raise ValueError("Missing or oversized config")
+        return {}
+    digest = hashlib.sha256(data).hexdigest()
+    if expected_digest and digest != expected_digest:
+        raise ValueError("Config snapshot differs from prepared contract")
+    config = json.loads(data)
+    if not isinstance(config, dict) or type(config.get("schemaVersion")) is not int or config["schemaVersion"] != 1:
+        raise ValueError("Unsupported config schema")
+    for field in ("experimentId", "datasetVersion", "splitVersion"):
+        if not isinstance(config.get(field), str) or not config[field] or "\0" in config[field]:
+            raise ValueError("Invalid experiment metadata")
+    evaluation = config.get("evaluation")
+    if not isinstance(evaluation, dict) or type(evaluation.get("matrixRequired")) is not bool:
+        raise ValueError("Invalid evaluation contract")
+    for field in ("folds", "seeds"):
+        values = evaluation.get(field)
+        if not isinstance(values, list) or not values or any(type(value) is not int or field == "folds" and value < 0 for value in values):
+            raise ValueError("Invalid evaluation matrix")
+    resources = config.get("resources")
+    if not isinstance(resources, dict):
+        raise ValueError("Invalid resource contract")
+    declared = resources.get("environment", {})
+    if not isinstance(declared, dict):
+        raise ValueError("Invalid declared environment")
+    environment: dict[str, str] = {}
+    for key, value in declared.items():
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) or not isinstance(value, str) or "\0" in value:
+            raise ValueError("Invalid declared environment")
+        if not SECRET_ENV.search(key):
+            environment[key] = value
+    environment.update({
+        "EVIDRA_EXPERIMENT_CONFIG": str(config_path),
+        "EVIDRA_EXPERIMENT_CONFIG_SHA256": digest,
+        "EVIDRA_EXPERIMENT_ID": config["experimentId"],
+        "EVIDRA_DATASET_VERSION": config["datasetVersion"],
+        "EVIDRA_SPLIT_VERSION": config["splitVersion"],
+        "EVIDRA_MATRIX_REQUIRED": "1" if evaluation["matrixRequired"] else "0",
+    })
+    return environment
+
+
 def contained_path(root: Path, candidate: Path) -> Path:
     """Resolve a worker path and require it to remain under the mounted root."""
     resolved_root = root.resolve()
@@ -138,7 +189,7 @@ app = modal.App("evidra-experiment")
     gpu=GPU,
     timeout=int(os.environ.get("EVIDRA_MODAL_TIMEOUT_SECONDS", "3600")),
 )
-def execute(command_json: str, cwd: str, artifacts_json: str = "[]", timeout_seconds: int = 3600) -> dict[str, object]:
+def execute(command_json: str, cwd: str, artifacts_json: str = "[]", timeout_seconds: int = 3600, config_sha256: str = "") -> dict[str, object]:
     if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or timeout_seconds <= 0:
         raise ValueError("Evidra Modal timeout must be a positive integer")
     command = json.loads(command_json)
@@ -155,17 +206,12 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]", timeout_sec
     # model-supplied experiment code; /tmp is an ephemeral Modal filesystem.
     environment["HOME"] = "/tmp/evidra-worker-home"
     Path(environment["HOME"]).mkdir(parents=True, exist_ok=True)
-    config_path = REMOTE_WORKSPACE / ".sota" / "experiment-config.json"
-    if config_path.is_file():
-        environment["EVIDRA_EXPERIMENT_CONFIG"] = str(config_path)
-        try:
-            config = json.loads(config_path.read_text())
-            environment["EVIDRA_EXPERIMENT_ID"] = str(config["experimentId"])
-            environment["EVIDRA_DATASET_VERSION"] = str(config["datasetVersion"])
-            environment["EVIDRA_SPLIT_VERSION"] = str(config["splitVersion"])
-            environment["EVIDRA_MATRIX_REQUIRED"] = "1" if config.get("evaluation", {}).get("matrixRequired") else "0"
-        except (OSError, ValueError, KeyError, TypeError):
-            pass
+    try:
+        environment.update(experiment_environment(REMOTE_WORKSPACE, config_sha256))
+    except (OSError, ValueError, KeyError, TypeError, UnicodeError):
+        return {"exitCode": 65, "stdout": "", "stderr": "Modal experiment configuration is missing, invalid, or differs from the prepared contract; no experiment command was started.", "artifacts": {}}
+    # Declared environment cannot override the private worker home.
+    environment["HOME"] = "/tmp/evidra-worker-home"
     # Stream worker output for long GPU jobs while retaining a bounded copy for
     # the controller's structured RunResult. Buffering the whole subprocess
     # made Modal experiments appear hung and could grow memory without bound.
@@ -236,8 +282,8 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]", timeout_sec
 
 
 @app.local_entrypoint()
-def run(command_json: str, cwd: str = ".", artifacts_json: str = "[]", timeout_seconds: int = 3600, submission_id: str = "") -> None:
-    call = execute.spawn(command_json, cwd, artifacts_json, timeout_seconds)
+def run(command_json: str, cwd: str = ".", artifacts_json: str = "[]", timeout_seconds: int = 3600, submission_id: str = "", config_sha256: str = "") -> None:
+    call = execute.spawn(command_json, cwd, artifacts_json, timeout_seconds, config_sha256)
     print("[evidra-call] " + json.dumps({"submissionId": submission_id, "callId": call.object_id}), flush=True)
     result = call.get()
     print(completion_envelope(result))

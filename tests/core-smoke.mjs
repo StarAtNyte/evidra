@@ -9115,6 +9115,9 @@ test("Modal requires successful client completion before accepting worker eviden
         writeFileSync(join(bin, "modal"), `#!${process.execPath}
           const fs=require('node:fs'),mode=${JSON.stringify(mode)};
           if(process.argv.includes('--version')){console.log('modal client version 1.0.0');process.exit(0);}
+          const digest=process.argv[process.argv.indexOf('--config-sha256')+1];
+          const snapshot=fs.readFileSync(require('node:path').join(process.env.EVIDRA_MODAL_WORKSPACE,'.sota','experiment-config.json'));
+          if(!/^[0-9a-f]{64}$/.test(digest)||require('node:crypto').createHash('sha256').update(snapshot).digest('hex')!==digest)process.exit(9);
           const receipt='[evidra-call] '+JSON.stringify({submissionId:mode==='mismatched-receipt'?'wrong':process.argv[process.argv.indexOf('--submission-id')+1],callId:'fc-contract'});
           if(mode!=='missing-receipt')console.log(receipt);
           if(mode==='duplicate-receipt')console.log(receipt);
@@ -9198,6 +9201,57 @@ sys.modules['modal'] = types.SimpleNamespace(Image=Image, App=App)
 worker = runpy.run_path(sys.argv[1])
 worker['execute'].__globals__['REMOTE_WORKSPACE'] = pathlib.Path(sys.argv[2])
 mode = sys.argv[3]
+if mode == 'config':
+    import hashlib, copy, os
+    root = pathlib.Path(sys.argv[2])
+    directory = root / '.sota'
+    directory.mkdir(exist_ok=True)
+    path = directory / 'experiment-config.json'
+    config = {'schemaVersion': 1, 'experimentId': 'contract', 'datasetVersion': 'data-v2', 'splitVersion': 'split-v3', 'evaluation': {'folds': [0], 'seeds': [-1], 'matrixRequired': True}, 'resources': {'environment': {'CUSTOM_VALUE': 'declared', 'API_KEY': 'secret', 'HOME': '/controller', 'EVIDRA_EXPERIMENT_ID': 'spoof'}}}
+    code = 'import os,json,pathlib; pathlib.Path("config-command-started").write_text("yes"); print(json.dumps({k:os.environ.get(k) for k in ("CUSTOM_VALUE","API_KEY","HOME","EVIDRA_EXPERIMENT_ID","EVIDRA_DATASET_VERSION","EVIDRA_SPLIT_VERSION","EVIDRA_MATRIX_REQUIRED","EVIDRA_EXPERIMENT_CONFIG_SHA256")}))'
+    namespace = worker['execute'].__globals__
+    namespace['print'] = lambda *args, **kwargs: None
+    def invoke(digest=''):
+        return worker['execute'](json.dumps([sys.executable, '-c', code]), '.', config_sha256=digest)
+    data = json.dumps(config).encode()
+    path.write_bytes(data)
+    digest = hashlib.sha256(data).hexdigest()
+    result = invoke(digest)
+    assert result['exitCode'] == 0, result
+    env = json.loads(result['stdout'])
+    assert env == {'CUSTOM_VALUE': 'declared', 'API_KEY': None, 'HOME': '/tmp/evidra-worker-home', 'EVIDRA_EXPERIMENT_ID': 'contract', 'EVIDRA_DATASET_VERSION': 'data-v2', 'EVIDRA_SPLIT_VERSION': 'split-v3', 'EVIDRA_MATRIX_REQUIRED': '1', 'EVIDRA_EXPERIMENT_CONFIG_SHA256': digest}, env
+    def rejected(digest=''):
+        marker = root / 'config-command-started'
+        marker.unlink(missing_ok=True)
+        result = invoke(digest)
+        assert not marker.exists(), 'Invalid contract started command'
+        assert result['exitCode'] == 65 and result['stdout'] == '' and result['artifacts'] == {}, result
+    changed = copy.deepcopy(config)
+    changed['datasetVersion'] = 'changed'
+    path.write_text(json.dumps(changed))
+    rejected(digest)
+    path.unlink()
+    rejected(digest)
+    path.write_text('{invalid')
+    rejected()
+    for field, value in [('schemaVersion', True), ('experimentId', None), ('datasetVersion', ''), ('evaluation', {'folds': [0], 'seeds': [0], 'matrixRequired': 'false'}), ('evaluation', {'folds': [True], 'seeds': [0], 'matrixRequired': False}), ('resources', {'environment': {'BAD-NAME': 'x'}}), ('resources', {'environment': {'CUSTOM': None}}), ('resources', {'environment': {'CUSTOM': chr(0)}})]:
+        changed = copy.deepcopy(config)
+        changed[field] = value
+        path.write_text(json.dumps(changed))
+        rejected()
+    path.write_bytes(b'x' * (namespace['MAX_CONFIG_BYTES'] + 1))
+    rejected()
+    path.unlink()
+    target = root / 'outside-config'
+    target.write_bytes(data)
+    path.symlink_to(target)
+    rejected(digest)
+    path.unlink()
+    os.mkfifo(path)
+    rejected(digest)
+    path.unlink()
+    print('config checks passed')
+    sys.exit(0)
 if mode == 'artifacts':
     import os
     namespace = worker['execute'].__globals__
@@ -9277,9 +9331,10 @@ if mode == 'child-pipe': code = 'import subprocess,sys,pathlib; child=subprocess
 worker['run'](json.dumps([sys.executable, '-c', code]), timeout_seconds=1 if mode in ('timeout', 'closed-pipes', 'child-pipe') else 3600)
 `;
   try {
-    for (const mode of ["completed", "failed", "signal", "rpc-error", "partial-lines", "unicode", "invalid-utf8", "unterminated", "timeout", "closed-pipes", "child-pipe", "artifacts", "stderr-limit", "stdout-limit", "exact-limit"]) {
+    for (const mode of ["completed", "failed", "signal", "rpc-error", "partial-lines", "unicode", "invalid-utf8", "unterminated", "timeout", "closed-pipes", "child-pipe", "config", "artifacts", "stderr-limit", "stdout-limit", "exact-limit"]) {
       const result = spawnSync("python3", ["-c", script, join(process.cwd(), "modal_app.py"), root, mode], { encoding: "utf8", timeout: 10_000 });
       assert.equal(result.error, undefined);
+      if (mode === "config") { assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.trim(), "config checks passed"); continue; }
       if (mode === "artifacts") { assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.trim(), "artifact checks passed"); continue; }
       if (["rpc-error", "timeout", "closed-pipes", "child-pipe"].includes(mode)) {
         assert.notEqual(result.status, 0);
