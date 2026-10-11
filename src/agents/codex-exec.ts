@@ -843,6 +843,9 @@ export class CodexExecAgent {
       const body = JSON.stringify({
         model: this.options.model,
         stream: false,
+        // Preserve the declared input and fail on overflow on supporting servers.
+        truncate: false,
+        shift: false,
         messages: [{ role: "user", content: prompt }],
         options: { temperature: 0.2, num_predict: outputLimit },
         ...(format ? { format } : {}),

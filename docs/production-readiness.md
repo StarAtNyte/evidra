@@ -257,8 +257,19 @@ above the requested limit reject the response after recording consumed usage.
 Missing counts remain unknown. The runtime control follows
 [Ollama's parameter contract](https://docs.ollama.com/modelfile).
 
-These contracts do not establish local tokenizer limits or prevent server-side
-input truncation. Explicit model/context metadata, generation headroom, and
+Local chat requests now explicitly send `truncate: false` and `shift: false`.
+The controls are declared in Ollama's
+[request contract](https://github.com/ollama/ollama/blob/eab97e9f92b9a25c2d52d2cc6c1b1c99bd9fae21/api/types.go)
+and forwarded by its
+[chat handler](https://github.com/ollama/ollama/blob/eab97e9f92b9a25c2d52d2cc6c1b1c99bd9fae21/server/routes.go).
+The adapter preserves the full objective/schema, rejects context errors without
+assistant emission, and attributes usage when a generation-error payload
+provides it. HTTP-fixture regressions prove the outgoing controls and error gate.
+
+These contracts do not establish local tokenizer limits or prove truncation
+prevention on older servers or every runner. Server capability/version validation
+and live input/generation overflow trials remain required. Explicit model/context
+metadata, generation headroom, and
 provider-owned transcript growth remain part of the next token-budget gate.
 
 Local discovery and model-health probes have a ten-second deadline per request,

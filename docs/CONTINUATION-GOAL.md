@@ -58,6 +58,14 @@ external evaluator.
 
 ## Latest repository state
 
+- Local chat requests now send `truncate: false` and `shift: false`, following
+  Ollama request/handler source pinned at
+  `eab97e9f92b9a25c2d52d2cc6c1b1c99bd9fae21`. HTTP regressions preserve the full
+  objective/schema and reject context exhaustion without assistant emission;
+  generation-error usage is retained when reported. Server capability/version
+  validation, live runner conformance, tokenizer budgeting, and provider
+  transcript growth remain open release gates.
+
 - Local calls now request a finite output-token limit (4096 by default), with
   validated environment/adapter overrides from 1 to 65536. Reported output
   above the limit is rejected after usage attribution. Tests cover precedence,

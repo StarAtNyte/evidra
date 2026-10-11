@@ -8012,6 +8012,47 @@ test("local provider sends finite output limits and accounts rejected over-budge
   }
 });
 
+test("local requests disable truncation and reject context exhaustion without dropping the objective", async () => {
+  const previousHost = process.env.OLLAMA_HOST;
+  const requests = [];
+  let mode = "input-overflow", assistants = 0, usage;
+  const objective = "KEEP-START\n" + "preserve the complete experiment objective. ".repeat(2000) + "\nKEEP-END";
+  const server = createServer((request, response) => {
+    let body = ""; request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      const value = JSON.parse(body); requests.push(value);
+      if (value.truncate !== false || value.shift !== false) {
+        response.end(JSON.stringify({ done: true, message: { content: "silently truncated result" } })); return;
+      }
+      if (mode === "input-overflow") { response.statusCode = 400; response.end(JSON.stringify({ error: "input exceeds context length" })); }
+      else if (mode === "generation-overflow") response.end(JSON.stringify({ done: true, error: "context exhausted during generation", message: { content: "partial" }, prompt_eval_count: 3500, eval_count: 50 }));
+      else response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: "verified" }, prompt_eval_count: 300, eval_count: 1 }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
+  const agent = new CodexExecAgent({ provider: "local", model: "test", cwd: process.cwd(), onAssistant: () => { assistants += 1; }, onUsage: (value) => { usage = value; } });
+  try {
+    const task = { role: "research director", objective, context: { evidence: "full retained evidence" }, outputSchema: JSON.stringify({ type: "object" }) };
+    await assert.rejects(() => agent.run(task), /400.*input exceeds context length/);
+    assert.ok(requests[0].messages[0].content.startsWith(objective));
+    assert.match(requests[0].messages[0].content, /full retained evidence/);
+    assert.deepEqual(requests[0].format, { type: "object" });
+    assert.equal(assistants, 0); assert.equal(usage, undefined);
+    mode = "generation-overflow";
+    await assert.rejects(() => agent.run(task), /Ollama returned an error/);
+    assert.equal(assistants, 0); assert.equal(usage.outputTokens, 50);
+    assert.equal(usage.inputTokens, 3500);
+    mode = "fits";
+    assert.equal((await agent.run({ ...task, objective: "small verified objective" })).output, "verified");
+    assert.equal(assistants, 1);
+    for (const request of requests) { assert.equal(request.truncate, false); assert.equal(request.shift, false); }
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST; else process.env.OLLAMA_HOST = previousHost;
+    server.closeAllConnections(); await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("local provider enforces the configured turn timeout", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-local-timeout-"));
   const previousHost = process.env.OLLAMA_HOST;
