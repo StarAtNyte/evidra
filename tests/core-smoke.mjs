@@ -8984,6 +8984,30 @@ test("Modal result parser ignores progress and rejects malformed worker payloads
   assert.equal(parseModalWorkerResult("Modal failed before the worker returned"), undefined);
 });
 
+test("Modal completion envelopes reject ambiguity and malformed terminal evidence", () => {
+  const valid = { exitCode: 0, stdout: '{"accuracy":0.9}', stderr: "", artifacts: {} };
+  const success = JSON.stringify(valid);
+  for (const malformed of [
+    { ...valid, exitCode: "0" },
+    { ...valid, exitCode: -1 },
+    { ...valid, exitCode: 256 },
+    { ...valid, exitCode: 0.5 },
+    { ...valid, stdout: null },
+    { ...valid, stderr: [] },
+    { ...valid, artifacts: null },
+    { ...valid, artifacts: [] },
+    { ...valid, artifacts: { "result.json": "Zh==" } },
+  ]) {
+    const bad = JSON.stringify(malformed);
+    for (const output of [bad, `${success}\n${bad}`, `${bad}\n${success}`]) {
+      assert.equal(parseModalWorkerResult(output), undefined, output);
+    }
+  }
+  assert.equal(parseModalWorkerResult(`${success}\n${success}`), undefined);
+  assert.equal(parseModalWorkerResult(`${success}\n${JSON.stringify({ ...valid, exitCode: 7 })}`), undefined);
+  assert.deepEqual(parseModalWorkerResult(`{"progress":1}\n${success}\nFinished`), valid);
+});
+
 test("Modal requires successful client completion before accepting worker evidence or artifacts", async () => {
   const previousPath = process.env.PATH;
   try {

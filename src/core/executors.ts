@@ -188,21 +188,26 @@ export function parseEvaluationMatrix(stdout: string, metricName: string): Evalu
 
 /** Parse the final JSON emitted by modal_app.py without trusting progress logs. */
 export function parseModalWorkerResult(output: string): ModalWorkerResult | undefined {
-  for (const line of output.trim().split("\n").reverse()) {
-    try {
-      const candidate = JSON.parse(line) as Record<string, unknown>;
-      if (!candidate || typeof candidate !== "object" || typeof candidate.exitCode !== "number" || !Number.isInteger(candidate.exitCode) || candidate.exitCode < 0 || candidate.exitCode > 255) continue;
-      const artifacts = candidate.artifacts ?? {};
-      if (typeof candidate.stdout !== "string" || typeof candidate.stderr !== "string" || typeof artifacts !== "object" || Array.isArray(artifacts)) continue;
-      const normalized: Record<string, string> = {};
-      for (const [name, encoded] of Object.entries(artifacts)) {
-        if (typeof encoded !== "string" || encoded.length > 96 * 1024 * 1024 || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) return undefined;
-        normalized[name] = encoded;
-      }
-      return { exitCode: candidate.exitCode, stdout: candidate.stdout, stderr: candidate.stderr, artifacts: normalized };
-    } catch { /* Modal progress output is not the worker result. */ }
+  let result: ModalWorkerResult | undefined;
+  for (const line of output.trim().split("\n")) {
+    let candidate: Record<string, unknown>;
+    try { candidate = JSON.parse(line) as Record<string, unknown>; }
+    catch { continue; /* Modal progress output is not the worker result. */ }
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate) || !Object.hasOwn(candidate, "exitCode")) continue;
+    // Never fall back to an earlier success after malformed or duplicate
+    // completion evidence. The worker emits exactly one terminal envelope.
+    if (result || typeof candidate.exitCode !== "number" || !Number.isInteger(candidate.exitCode) || candidate.exitCode < 0 || candidate.exitCode > 255) return undefined;
+    const artifacts = candidate.artifacts === undefined ? {} : candidate.artifacts;
+    if (typeof candidate.stdout !== "string" || typeof candidate.stderr !== "string" || !artifacts || typeof artifacts !== "object" || Array.isArray(artifacts)) return undefined;
+    const normalized: Record<string, string> = {};
+    for (const [name, encoded] of Object.entries(artifacts)) {
+      if (typeof encoded !== "string" || encoded.length > 96 * 1024 * 1024 || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) return undefined;
+      if (Buffer.from(encoded, "base64").toString("base64") !== encoded) return undefined;
+      normalized[name] = encoded;
+    }
+    result = { exitCode: candidate.exitCode, stdout: candidate.stdout, stderr: candidate.stderr, artifacts: normalized };
   }
-  return undefined;
+  return result;
 }
 
 function safeArtifactPath(root: string, name: string): string | undefined {

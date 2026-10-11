@@ -58,6 +58,11 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal completion parsing now rejects duplicate envelopes, malformed terminal
+  evidence in either order, and noncanonical artifact base64 instead of falling
+  back to an earlier success. Ordinary progress logs remain accepted. This does
+  not establish remote cancellation or durable allocation identity.
+
 - Modal now requires a successful runtime-client exit and valid worker envelope
   before parsing worker metrics or importing artifacts. Printed success cannot
   overwrite client failure, timeout, or interruption; unconfirmed outcomes keep
