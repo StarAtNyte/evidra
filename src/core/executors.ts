@@ -21,7 +21,7 @@ export interface RemoteExecutionEvent {
   runtime?: "docker" | "podman";
   containerId?: string;
   daemonId?: string;
-  completionEvidence?: "client-envelope";
+  completionEvidence?: "client-envelope" | "sdk-result";
   protocol?: "modal-call-v1";
   callId?: string;
 }

@@ -3774,7 +3774,7 @@ export class ResearchStore {
         if (intent.payload.protocol === "modal-call-v1") {
           if (receipt.protocol !== intent.payload.protocol || proof.protocol !== intent.payload.protocol || typeof receipt.callId !== "string" || !/^fc-[A-Za-z0-9]{1,128}$/.test(receipt.callId) || proof.callId !== receipt.callId) return unresolved;
         } else if (intent.payload.protocol !== undefined || receipt.completionEvidence !== "client-envelope") return unresolved;
-        if (proof.completionEvidence !== "client-envelope" || proof.state !== "COMPLETED" || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) return unresolved;
+        if (!(proof.completionEvidence === "client-envelope" || intent.payload.protocol === "modal-call-v1" && proof.completionEvidence === "sdk-result") || proof.state !== "COMPLETED" || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) return unresolved;
         continue;
       }
       if (intent.payload.executor === "container") {
@@ -3807,6 +3807,16 @@ export class ResearchStore {
       const existing = this.eventsByType("run.remote.terminal").map((record) => record.payload as Record<string, unknown>).filter((record) => record.experimentId === event.experimentId && record.submissionId === event.submissionId);
       if (existing.length) return existing.length === 1 && existing[0].executor === "container" && ["runtime", "containerId", "daemonId", "allocationName", "state", "exitCode"].every((key) => existing[0][key] === (event as unknown as Record<string, unknown>)[key]);
       this.appendEvent("run.remote.terminal", { ...event, executor: "container", phase: "terminal" });
+      return true;
+    })();
+  }
+
+  /** Both synchronous completion and recovery must agree on the same call. */
+  recordModalTerminalEvidence(event: { experimentId: string; submissionId: string; allocationName: string; callId: string; state: string; exitCode: number; completionEvidence: "client-envelope" | "sdk-result"; at: string }): boolean {
+    return this.db.transaction(() => {
+      const existing = this.eventsByType("run.remote.terminal").map((record) => record.payload as Record<string, unknown>).filter((record) => record.experimentId === event.experimentId && record.submissionId === event.submissionId);
+      if (existing.length) return existing.length === 1 && existing[0].executor === "modal" && existing[0].protocol === "modal-call-v1" && ["callId", "allocationName", "state", "exitCode"].every((key) => existing[0][key] === (event as unknown as Record<string, unknown>)[key]);
+      this.appendEvent("run.remote.terminal", { ...event, executor: "modal", protocol: "modal-call-v1", phase: "terminal" });
       return true;
     })();
   }

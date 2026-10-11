@@ -58,6 +58,15 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal reconciliation now polls recorded call IDs with SDK `get(timeout=0)`
+  through a packaged Python helper. Completed valid worker envelopes produce
+  idempotent terminal evidence and release quarantine without importing metrics
+  or artifacts. Pending, expired, malformed, missing-receipt and failed queries
+  stay fenced. Set `EVIDRA_MODAL_PYTHON` to the Python interpreter with Modal
+  installed. Tests run the actual helper with a stub SDK; live RPC and remote
+  cancellation remain unverified. Temporary SDK installation was not completed.
+  Source: https://modal.com/docs/sdk/py/latest/FunctionCall.
+
 - Modal now spawns a call and emits its SDK call ID before waiting for results.
   The controller persists streamed receipts linked to the prelaunch intent;
   new completion evidence must match that call ID. Missing, duplicate or

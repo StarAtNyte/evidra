@@ -9,6 +9,7 @@
     "vendor/claude-paint",
     "README.md",
     "modal_app.py",
+    "modal_reconcile.py",
     "modal_controller.py"
   ],
   "bin": {

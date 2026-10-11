@@ -2,6 +2,7 @@ import { ResearchStore } from "./store.js";
 import { parseSlurmAccounting } from "./executors.js";
 import { runProcess } from "./process.js";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 export interface RemoteReconciliationOptions { timeoutMs?: number; cancelContainer?: boolean }
 
@@ -15,12 +16,47 @@ export async function reconcileRemoteExperiment(storePath: string, cwd: string, 
   } finally { store.close(); }
   if (executor === "container") return reconcileContainerExperiment(storePath, cwd, experimentId, options);
   if (options.cancelContainer) throw new Error("Container cancellation requires a quarantined container experiment.");
-  if (executor === "modal") {
-    const evidence = new ResearchStore(storePath);
-    try { return { released: evidence.reconcileRemoteExperiment(experimentId), queried: 0 }; }
-    finally { evidence.close(); }
-  }
+  if (executor === "modal") return reconcileModalExperiment(storePath, cwd, experimentId, options);
   return reconcileSlurmExperiment(storePath, cwd, experimentId, options);
+}
+
+/** Poll only recorded Modal calls; pending/errors/expired outputs stay fenced. */
+export async function reconcileModalExperiment(storePath: string, cwd: string, experimentId: string, options: { timeoutMs?: number } = {}): Promise<{ released: boolean; queried: number }> {
+  const store = new ResearchStore(storePath);
+  let queried = 0;
+  const deadline = Date.now() + Math.max(1, Math.min(15_000, Number.isFinite(options.timeoutMs) ? options.timeoutMs! : 15_000));
+  try {
+    if (store.verifyEventChain().status !== "valid") return { released: false, queried };
+    const entry = store.experiments().find((item) => item.id === experimentId);
+    const payload = entry?.payload as { remoteReconciliationRequired?: unknown; resources?: { executor?: unknown } } | undefined;
+    if (payload?.remoteReconciliationRequired !== true || payload.resources?.executor !== "modal") return { released: false, queried };
+    if (store.reconcileRemoteExperiment(experimentId)) return { released: true, queried };
+    const records = store.eventsByTypes(["run.remote.submitting", "run.remote.submitted", "run.remote.terminal"])
+      .map((event) => ({ type: event.type, payload: event.payload as Record<string, unknown> }))
+      .filter((event) => event.payload?.experimentId === experimentId && event.payload.executor === "modal");
+    for (const intent of records.filter((event) => event.type === "run.remote.submitting")) {
+      const { submissionId, allocationName, protocol } = intent.payload;
+      if (protocol !== "modal-call-v1" || typeof submissionId !== "string" || !/^[a-f0-9-]{36}$/.test(submissionId) || allocationName !== `evidra-${submissionId}`) continue;
+      if (records.filter((record) => record.type === "run.remote.submitting" && record.payload.submissionId === submissionId).length !== 1 || records.some((record) => record.type === "run.remote.terminal" && record.payload.submissionId === submissionId)) continue;
+      const receipts = records.filter((event) => event.type === "run.remote.submitted" && event.payload.submissionId === submissionId);
+      if (receipts.length !== 1 || records.indexOf(intent) >= records.indexOf(receipts[0])) continue;
+      const receipt = receipts[0].payload;
+      const callId = receipt.callId;
+      if (receipt.phase !== "submitted" || intent.payload.phase !== "submitting" || receipt.protocol !== protocol || receipt.allocationName !== allocationName || typeof callId !== "string" || !/^fc-[A-Za-z0-9]{1,128}$/.test(callId)) continue;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      queried += 1;
+      try {
+        const result = await runProcess([process.env.EVIDRA_MODAL_PYTHON ?? "python3", fileURLToPath(new URL("../../modal_reconcile.py", import.meta.url)), callId], cwd, remaining);
+        if (result.exitCode === 130) break;
+        if (result.exitCode !== 0 || Buffer.byteLength(result.stdout) > 4096) continue;
+        const proof = JSON.parse(result.stdout) as { callId?: unknown; state?: unknown; exitCode?: unknown };
+        if (proof.callId !== callId || proof.state !== "COMPLETED" || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) continue;
+        store.recordModalTerminalEvidence({ experimentId, submissionId, allocationName, callId, state: "COMPLETED", exitCode: Number(proof.exitCode), completionEvidence: "sdk-result", at: new Date().toISOString() });
+      } catch { /* Failed SDK queries cannot establish remote termination. */ }
+    }
+    return { released: store.reconcileRemoteExperiment(experimentId), queried };
+  } finally { store.close(); }
 }
 
 export async function reconcileContainerExperiment(storePath: string, cwd: string, experimentId: string, options: RemoteReconciliationOptions = {}): Promise<{ released: boolean; queried: number }> {

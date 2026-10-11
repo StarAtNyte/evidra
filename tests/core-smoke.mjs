@@ -9228,6 +9228,72 @@ print('stopped')
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("Modal recovery polls recorded calls without replaying or importing measurement evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-modal-recovery-"));
+  const previousPythonPath = process.env.PYTHONPATH;
+  const previousMode = process.env.EVIDRA_MODAL_TEST_MODE;
+  const previousPython = process.env.EVIDRA_MODAL_PYTHON;
+  try {
+    writeFileSync(join(root, "modal.py"), `
+import json, os
+class FunctionCall:
+    @classmethod
+    def from_id(cls, call_id):
+        assert call_id in ('fc-owned', 'fc-pending')
+        call = cls()
+        call.call_id = call_id
+        return call
+    def get(self, timeout):
+        assert timeout == 0
+        mode = os.environ['EVIDRA_MODAL_TEST_MODE']
+        if mode == 'pending' or self.call_id == 'fc-pending': raise TimeoutError('still running')
+        if mode == 'expired': raise RuntimeError('output expired')
+        return dict(exitCode=True if mode == 'malformed' else 7 if mode == 'failed' else 0, stdout='accuracy=0.99', stderr='', artifacts={'result.json': 'e30='})
+`);
+    process.env.PYTHONPATH = root;
+    process.env.EVIDRA_MODAL_PYTHON = "python3";
+    for (const mode of ["completed", "failed", "pending", "expired", "malformed", "missing-receipt", "multiple"]) {
+      process.env.EVIDRA_MODAL_TEST_MODE = mode;
+      const db = join(root, `${mode}.sqlite`), id = `recover-${mode}`;
+      const store = new ResearchStore(db);
+      const common = { executor: "modal", protocol: "modal-call-v1", experimentId: id, submissionId: "12345678-1234-1234-1234-123456789abc", allocationName: "evidra-12345678-1234-1234-1234-123456789abc" };
+      store.saveExperiment({ id, payload: { id, status: "running", resources: { executor: "modal" } } });
+      store.reserveComputeBudget({ experimentId: id, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+      store.appendEvent("run.remote.submitting", { ...common, phase: "submitting" });
+      if (mode !== "missing-receipt") store.appendEvent("run.remote.submitted", { ...common, callId: "fc-owned", phase: "submitted" });
+      if (mode === "multiple") {
+        const second = { ...common, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" };
+        store.appendEvent("run.remote.submitting", { ...second, phase: "submitting" });
+        store.appendEvent("run.remote.submitted", { ...second, callId: "fc-pending", phase: "submitted" });
+      }
+      store.recoverStaleExperiments(0);
+      store.close();
+      const completed = ["completed", "failed"].includes(mode);
+      assert.deepEqual(await reconcileRemoteExperiment(db, root, id), { released: completed, queried: mode === "missing-receipt" ? 0 : mode === "multiple" ? 2 : 1 }, mode);
+      const reopened = new ResearchStore(db);
+      try {
+        assert.equal(reopened.reservedComputeGpuHours(), completed ? 0 : 1);
+        assert.equal(reopened.experiments()[0].payload.status, completed ? "failed" : "blocked");
+        assert.equal(reopened.runs().length, 0);
+        assert.equal(existsSync(join(root, "result.json")), false);
+        const terminals = reopened.eventsByType("run.remote.terminal");
+        assert.equal(terminals.length, completed || mode === "multiple" ? 1 : 0);
+        if (completed || mode === "multiple") {
+          const proof = terminals[0].payload;
+          assert.equal(proof.completionEvidence, "sdk-result");
+          assert.equal(proof.exitCode, mode === "failed" ? 7 : 0);
+          assert.equal(reopened.recordModalTerminalEvidence({ ...proof, completionEvidence: "client-envelope" }), true);
+          assert.equal(reopened.recordModalTerminalEvidence({ ...proof, callId: "fc-other" }), false);
+          assert.equal(reopened.eventsByType("run.remote.terminal").length, 1);
+        }
+      } finally { reopened.close(); }
+    }
+  } finally {
+    for (const [key, value] of [["PYTHONPATH", previousPythonPath], ["EVIDRA_MODAL_TEST_MODE", previousMode], ["EVIDRA_MODAL_PYTHON", previousPython]]) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Modal reconciliation requires ordered completion evidence for every invocation", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-modal-ledger-"));
   try {
