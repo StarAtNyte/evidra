@@ -1259,6 +1259,8 @@ The provider is an implementation detail behind the same research protocol:
   still be selected explicitly; an explicit Astra selection is never silently
   rewritten to the Luna default.
 - **Local:** Ollama's local chat endpoint and the selected installed model.
+  Requires a stable 0.x server version at least 0.40.3 for explicit context
+  truncation/shifting controls; unsupported versions fail before inference.
 
 Competition manifests may additionally declare typed `researchChannels` such as
 `rules`, `discussion`, `leaderboard`, `documentation`, `paper`, or `repository`.

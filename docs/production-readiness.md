@@ -267,8 +267,17 @@ assistant emission, and attributes usage when a generation-error payload
 provides it. HTTP-fixture regressions prove the outgoing controls and error gate.
 
 These contracts do not establish local tokenizer limits or prove truncation
-prevention on older servers or every runner. Server capability/version validation
-and live input/generation overflow trials remain required. Explicit model/context
+prevention on every runner. Startup health checks and every local generation
+now probe `/api/version` and require a stable 0.x version at least 0.40.3,
+the conservative release floor verified against
+[released request fields](https://github.com/ollama/ollama/blob/v0.40.3/api/types.go)
+and [handler forwarding](https://github.com/ollama/ollama/blob/v0.40.3/server/routes.go).
+This does not assert that all earlier releases lack support. Old, malformed,
+prerelease, unknown-major, missing, or unreadable version metadata cannot reach
+inference. Probes retain bounded bodies, deadlines, proxy paths, and turn
+cancellation; oversized requests fail before preflight. The reported version
+is a compatibility gate, not live runner or proxy conformance evidence.
+Live input/generation overflow trials remain required. Explicit model/context
 metadata, generation headroom, and
 provider-owned transcript growth remain part of the next token-budget gate.
 

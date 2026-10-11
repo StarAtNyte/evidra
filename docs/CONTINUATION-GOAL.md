@@ -58,12 +58,21 @@ external evaluator.
 
 ## Latest repository state
 
+- Local health and every generation now probe the server version and require
+  a stable 0.x release at least 0.40.3, conservatively verified against released
+  Ollama request/handler source. Unsupported or unknown versions cannot reach
+  inference; deadlines, interruption, byte bounds, and proxy routing remain
+  enforced. HTTP regressions cover accepted versions, malformed/prerelease/
+  old/unknown-major versions, stalled metadata, and cancellation.
+  Live runner/proxy conformance, tokenizer budgets, and transcript growth
+  remain open gates; self-reported version is not an execution attestation.
+
 - Local chat requests now send `truncate: false` and `shift: false`, following
   Ollama request/handler source pinned at
   `eab97e9f92b9a25c2d52d2cc6c1b1c99bd9fae21`. HTTP regressions preserve the full
   objective/schema and reject context exhaustion without assistant emission;
-  generation-error usage is retained when reported. Server capability/version
-  validation, live runner conformance, tokenizer budgeting, and provider
+  generation-error usage is retained when reported. Live runner conformance,
+  tokenizer budgeting, and provider
   transcript growth remain open release gates.
 
 - Local calls now request a finite output-token limit (4096 by default), with

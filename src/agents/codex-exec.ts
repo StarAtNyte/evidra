@@ -13,10 +13,10 @@ import { boundedLocalResponseText, LOCAL_REQUEST_MAX_BYTES, LOCAL_ERROR_MAX_BYTE
 export type AgentProvider = "codex" | "local";
 
 /** Share one base URL across discovery, health checks, and generation. */
-export function ollamaEndpoint(endpoint: "tags" | "show" | "chat"): string {
+export function ollamaEndpoint(endpoint: "tags" | "show" | "chat" | "version"): string {
   const url = new URL(process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434");
   if (!["http:", "https:"].includes(url.protocol)) throw new Error("OLLAMA_HOST must use HTTP or HTTPS.");
-  const base = url.pathname.replace(/\/+$/, "").replace(/\/api\/(?:tags|show|chat)$/, "");
+  const base = url.pathname.replace(/\/+$/, "").replace(/\/api\/(?:tags|show|chat|version)$/, "");
   url.pathname = `${base}/api/${endpoint}`;
   url.search = "";
   url.hash = "";
@@ -540,7 +540,7 @@ export interface ProviderProbeOptions {
 }
 
 /** Keep the deadline active through body decoding, not only response headers. */
-async function probeOllama(endpoint: "tags" | "show", options: ProviderProbeOptions = {}, model?: string): Promise<Record<string, unknown>> {
+async function probeOllama(endpoint: "tags" | "show" | "version", options: ProviderProbeOptions = {}, model?: string): Promise<Record<string, unknown>> {
   const abort = new AbortController();
   const duration = Math.max(1, Math.min(10_000, Number.isFinite(options.timeoutMs) ? options.timeoutMs! : 10_000));
   let timedOut = false;
@@ -572,6 +572,14 @@ async function probeOllama(endpoint: "tags" | "show", options: ProviderProbeOpti
   }
 }
 
+/** Conservative verified release floor, not an assertion about earlier releases. */
+async function requireOllamaContextControls(options: ProviderProbeOptions): Promise<void> {
+  const payload = await probeOllama("version", options);
+  const version = typeof payload.version === "string" ? payload.version.match(/^0\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/) : undefined;
+  const minor = Number(version?.[1]), patch = Number(version?.[2]);
+  if (!version || !Number.isSafeInteger(minor) || !Number.isSafeInteger(patch) || minor < 40 || minor === 40 && patch < 3) throw new Error("Local Ollama requires a stable 0.x release at least 0.40.3 for context controls. Upgrade Ollama or select another provider.");
+}
+
 export async function listLocalModels(options: ProviderProbeOptions = {}): Promise<AvailableModel[]> {
   const payload = await probeOllama("tags", options);
   if (!Array.isArray(payload.models)) throw new Error("Local Ollama returned invalid model inventory.");
@@ -598,6 +606,7 @@ export async function checkProvider(options: ExecAgentOptions): Promise<void> {
     return;
   }
 
+  await requireOllamaContextControls(options);
   const models = await listLocalModels(options);
   if (!models.some((entry) => entry.id === options.model)) {
     throw new Error(`Local model '${options.model}' is not installed. Available models: ${models.map((entry) => entry.id).join(", ") || "none"}.`);
@@ -851,6 +860,8 @@ export class CodexExecAgent {
         ...(format ? { format } : {}),
       });
       if (Buffer.byteLength(body, "utf8") > LOCAL_REQUEST_MAX_BYTES) throw new Error(`Local Ollama request exceeds the ${LOCAL_REQUEST_MAX_BYTES}-byte limit.`);
+      // Use the turn's abort signal so preflight cannot outlive cancellation.
+      await requireOllamaContextControls({ timeoutMs: this.options.timeoutMs, interruptSignal: abort.signal });
       const response = await fetch(ollamaEndpoint("chat"), {
         method: "POST",
         headers: { "content-type": "application/json" },

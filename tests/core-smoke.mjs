@@ -7279,7 +7279,7 @@ test("research lane teams share only cacheable observations within one invocatio
   const previousHost = process.env.OLLAMA_HOST;
   const calls = new Map();
   const readPaths = [];
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk.toString(); });
     request.on("end", () => {
@@ -7642,7 +7642,7 @@ test("research director executes typed tools and reasons over returned evidence"
   let observedRefreshedState = false;
   let observedExactToolGuidance = false;
   let refreshes = 0;
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     calls += 1;
     const decision = calls === 1
       ? { phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Need workspace evidence", rationale: "The workspace has not been inspected yet.", hypotheses: [], selectedHypothesis: null, nextAction: "Inspect files", toolCalls: [{ name: "workspace.files", arguments: {} }] }
@@ -7693,7 +7693,7 @@ test("research director converts exhausted tool rounds into a durable conservati
   let exhaustion;
   const events = [];
   let finalizationContext;
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     calls += 1;
     let body = "";
     request.on("data", (chunk) => { body += chunk.toString(); });
@@ -7742,7 +7742,7 @@ test("research director keeps the finalization-only turn inside the hard tool ca
   let calls = 0;
   let toolExecutions = 0;
   let exhaustionCount = 0;
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     calls += 1;
     request.resume();
     request.on("end", () => {
@@ -7784,7 +7784,7 @@ test("research director changes to an untried model after a retryable route fail
   let calls = 0;
   const seenModels = [];
   const decision = { phase: "orientation", goalStatus: "active", decision: "propose", bottleneck: "route recovered", rationale: "The alternate route returned a valid decision.", hypotheses: [], selectedHypothesis: null, nextAction: "continue", toolCalls: [] };
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk.toString(); });
     request.on("end", () => {
@@ -7820,11 +7820,18 @@ test("research director changes to an untried model after a retryable route fail
   }
 });
 
+function createOllamaServer(handler) {
+  return createServer((request, response) => {
+    if (request.url?.endsWith("/api/version")) { response.end(JSON.stringify({ version: "0.40.3" })); return; }
+    handler(request, response);
+  });
+}
+
 test("local provider preserves the endpoint, schema, completion, and usage contracts", async () => {
   const previousHost = process.env.OLLAMA_HOST;
   const requests = [];
   let payload = { done: true, done_reason: "stop", message: { content: '{"answer":"verified"}' }, prompt_eval_count: 123, eval_count: 17, prompt_eval_cached_count: 8 };
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => {
@@ -7901,7 +7908,7 @@ test("local response byte bounds preserve split Unicode and cancel oversized str
 test("local provider bounds serialized request bytes before sending HTTP", async () => {
   const previousHost = process.env.OLLAMA_HOST;
   let requests = 0;
-  const server = createServer((_request, response) => { requests += 1; response.end(JSON.stringify({ done: true, message: { content: "ok" } })); });
+  const server = createOllamaServer((_request, response) => { requests += 1; response.end(JSON.stringify({ done: true, message: { content: "ok" } })); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
   try {
@@ -7927,7 +7934,7 @@ test("local generation and metadata reject oversized chunked and decompressed bo
   let assistantCalls = 0;
   const chunk = Buffer.alloc(64 * 1024, 120);
   const compressed = gzipSync(Buffer.alloc(LOCAL_RESPONSE_MAX_BYTES + 1, 120));
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     if (probeTarget === "show" && request.url.endsWith("/tags")) { response.end(JSON.stringify({models:[{name:"test"}]})); return; }
     if (mode === "chunked") {
       response.writeHead(200, { "content-type": "application/json" });
@@ -7971,7 +7978,7 @@ test("local provider sends finite output limits and accounts rejected over-budge
   const previousHost = process.env.OLLAMA_HOST, previousLimit = process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS;
   const requests = [];
   let generated = 24, usage, assistants = 0;
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     let body = ""; request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => {
       requests.push(JSON.parse(body));
@@ -8017,7 +8024,7 @@ test("local requests disable truncation and reject context exhaustion without dr
   const requests = [];
   let mode = "input-overflow", assistants = 0, usage;
   const objective = "KEEP-START\n" + "preserve the complete experiment objective. ".repeat(2000) + "\nKEEP-END";
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     let body = ""; request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => {
       const value = JSON.parse(body); requests.push(value);
@@ -8053,10 +8060,60 @@ test("local requests disable truncation and reject context exhaustion without dr
   }
 });
 
+test("local context controls require a recognized released server before health or inference", async () => {
+  const previousHost = process.env.OLLAMA_HOST;
+  let version = "0.40.3", paths = [], mode = "normal";
+  const server = createServer((request, response) => {
+    paths.push(request.url);
+    if (request.url.endsWith("/version")) {
+      if (mode === "stalled") { response.writeHead(200); response.flushHeaders(); response.write('{"version":'); return; }
+      response.end(JSON.stringify({ version }));
+    } else if (request.url.endsWith("/tags")) response.end(JSON.stringify({ models: [{ name: "test" }] }));
+    else if (request.url.endsWith("/show")) response.end("{}");
+    else response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: "verified" }, eval_count: 1 }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}/proxy/api/chat`;
+  const options = { provider: "local", model: "test", cwd: process.cwd(), timeoutMs: 2000 };
+  const task = { role: "conversation assistant", objective: "verify", context: {} };
+  try {
+    for (const unsupported of ["0.39.9", "0.40.2", "0.40.3-rc1", "0.040.3", "1.0.0", "unknown", "", null, 40, {}]) {
+      version = unsupported; paths = [];
+      await assert.rejects(() => new CodexExecAgent(options).run(task), /requires a stable.*0.40.3/);
+      assert.deepEqual(paths, ["/proxy/api/version"]);
+      paths = [];
+      await assert.rejects(() => checkProvider(options), /requires a stable.*0.40.3/);
+      assert.deepEqual(paths, ["/proxy/api/version"]);
+    }
+    for (const supported of ["0.40.3", "0.40.4", "0.41.0"]) {
+      version = supported; paths = [];
+      assert.equal((await new CodexExecAgent(options).run(task)).output, "verified");
+      assert.deepEqual(paths, ["/proxy/api/version", "/proxy/api/chat"]);
+      paths = [];
+      await checkProvider(options);
+      assert.deepEqual(paths, ["/proxy/api/version", "/proxy/api/tags", "/proxy/api/show"]);
+    }
+    mode = "stalled"; paths = [];
+    const listeners = [process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")];
+    await assert.rejects(() => new CodexExecAgent({ ...options, timeoutMs: 50 }).run(task), /timed out/);
+    assert.deepEqual(paths, ["/proxy/api/version"]);
+    assert.deepEqual([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")], listeners);
+    paths = [];
+    const interrupt = new AbortController();
+    const interrupted = new CodexExecAgent({ ...options, interruptSignal: interrupt.signal }).run(task);
+    setTimeout(() => interrupt.abort(), 50);
+    await assert.rejects(() => interrupted, /interrupted/);
+    assert.deepEqual(paths, ["/proxy/api/version"]);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST; else process.env.OLLAMA_HOST = previousHost;
+    server.closeAllConnections(); await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("local provider enforces the configured turn timeout", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-local-timeout-"));
   const previousHost = process.env.OLLAMA_HOST;
-  const server = createServer((_request, _response) => {
+  const server = createOllamaServer((_request, _response) => {
     // Deliberately leave the response open: the provider must abort it.
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -8077,7 +8134,7 @@ test("local discovery and health probes bound stalled headers and bodies and hon
   const previousHost = process.env.OLLAMA_HOST;
   let mode = "headers";
   let requests = 0;
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     requests += 1;
     if (mode === "headers") return;
     response.setHeader("content-type", "application/json");
@@ -8424,7 +8481,7 @@ test("research director honors the bounded provider-attempt policy", async () =>
   const root = mkdtempSync(join(tmpdir(), "evidra-director-attempts-"));
   const previousHost = process.env.OLLAMA_HOST;
   let calls = 0;
-  const server = createServer((_request, response) => {
+  const server = createOllamaServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: "not valid research JSON" } }));
@@ -8448,7 +8505,7 @@ test("research director reuses successful read-only observations within a turn",
   const previousHost = process.env.OLLAMA_HOST;
   let calls = 0;
   let toolCalls = 0;
-  const server = createServer((_request, response) => {
+  const server = createOllamaServer((_request, response) => {
     calls += 1;
     const decision = calls === 1
       ? { phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Need evidence", rationale: "Inspect once.", hypotheses: [], selectedHypothesis: null, nextAction: "Inspect files", toolCalls: [{ name: "workspace.files", arguments: {} }, { name: "workspace.files", arguments: {} }] }
@@ -8483,7 +8540,7 @@ test("research director stops a repeated read-only request instead of burning to
   let toolCalls = 0;
   let suppressed;
   const repeated = { phase: "baseline", goalStatus: "active", decision: "inspect", bottleneck: "Need repository inventory", rationale: "The existing workspace observation is available.", hypotheses: [], selectedHypothesis: null, nextAction: "Inspect the workspace again", toolCalls: [{ name: "workspace.files", arguments: {} }] };
-  const server = createServer((_request, response) => {
+  const server = createOllamaServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(repeated) } }));
@@ -8515,7 +8572,7 @@ test("research director does not rerun an identical read-only shell command with
   let calls = 0;
   let executions = 0;
   const repeated = { phase: "validation", goalStatus: "active", decision: "inspect", bottleneck: "Need to confirm the locked inputs", rationale: "Recheck the exact prior command.", hypotheses: [], selectedHypothesis: null, nextAction: "Hash the locked input again", toolCalls: [{ name: "shell.exec", arguments: { command: ["sha256sum", "mini.parquet"] } }] };
-  const server = createServer((_request, response) => {
+  const server = createOllamaServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(repeated) } }));
@@ -8548,7 +8605,7 @@ test("research director does not retry a policy-denied tool route across tool ro
   let calls = 0;
   let toolExecutions = 0;
   const deniedTool = { phase: "baseline", goalStatus: "active", decision: "inspect", bottleneck: "Need to run a command", rationale: "Try shell execution again.", hypotheses: [], selectedHypothesis: null, nextAction: "Run the command", toolCalls: [{ name: "shell.exec", arguments: { command: "npm test" } }] };
-  const server = createServer((_request, response) => {
+  const server = createOllamaServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(deniedTool) } }));
@@ -8581,7 +8638,7 @@ test("research director suppresses an unchanged malformed tool request after ret
   let calls = 0;
   let toolExecutions = 0;
   const invalidTool = { phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Need the file content", rationale: "Read the file.", hypotheses: [], selectedHypothesis: null, nextAction: "Read the source file", toolCalls: [{ name: "workspace.read", arguments: {} }] };
-  const server = createServer((_request, response) => {
+  const server = createOllamaServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(invalidTool) } }));
@@ -8614,7 +8671,7 @@ test("research director stops when different read-only searches return no new ob
   let calls = 0;
   let toolCalls = 0;
   let suppressed;
-  const server = createServer((_request, response) => {
+  const server = createOllamaServer((_request, response) => {
     calls += 1;
     const query = calls === 1 ? "332302" : "different-term";
     const decision = { phase: "data_audit", goalStatus: "active", decision: "inspect", bottleneck: "Search yielded no result", rationale: "Try a different query.", hypotheses: [], selectedHypothesis: null, nextAction: "Search again", toolCalls: [{ name: "workspace.search", arguments: { query } }] };
