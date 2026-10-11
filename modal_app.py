@@ -167,17 +167,39 @@ def contained_path(root: Path, candidate: Path) -> Path:
 
 
 def include_workspace_path(path: str) -> bool:
-    normalized = path.replace("\\", "/").lstrip("./")
-    # Controller state is excluded, but the isolated worker config is part of
-    # the experiment contract and is safe to copy into the remote workspace.
-    if normalized.endswith("/.sota/experiment-config.json") or normalized == ".sota/experiment-config.json":
+    """Filter SDK paths relative to the isolated workspace, preserving dots."""
+    candidate = Path(path.replace("\\", "/"))
+    if candidate.is_absolute():
+        try:
+            candidate = candidate.relative_to(WORKSPACE)
+        except ValueError:
+            return False
+    if ".." in candidate.parts or not candidate.parts:
+        return False
+    # This exception belongs only to the worktree's root contract; it must not
+    # admit matching filenames under excluded source/control directories.
+    if candidate == Path(".sota/experiment-config.json"):
         return True
     excluded = {".git", ".sota", "node_modules", ".venv", "__pycache__", ".mypy_cache"}
-    return not any(part in excluded for part in Path(normalized).parts)
+    return not any(part in excluded for part in candidate.parts)
 
 
 def ignore_workspace_path(path: Path) -> bool:
-    return not include_workspace_path(str(path))
+    if not include_workspace_path(str(path)):
+        return True
+    candidate = path if path.is_absolute() else WORKSPACE / path
+    try:
+        target = candidate.resolve(strict=True)
+        relative_target = target.relative_to(WORKSPACE)
+        if not target.is_file() or not include_workspace_path(str(relative_target)):
+            return True
+        # The SDK dereferences file symlinks when preparing uploads. A config
+        # alias must not bypass the worker's regular-file snapshot validation.
+        if relative_target == Path(".sota/experiment-config.json") or candidate.relative_to(WORKSPACE) == Path(".sota/experiment-config.json"):
+            return candidate != target
+        return False
+    except (OSError, ValueError, RuntimeError):
+        return True
 
 
 image = modal.Image.debian_slim(python_version="3.11").pip_install("uv").add_local_dir(WORKSPACE, remote_path=str(REMOTE_WORKSPACE), ignore=ignore_workspace_path)

@@ -1138,6 +1138,14 @@ external evaluator.
   subprocess regressions verify rejection before command execution; live Modal
   mounting and SDK integration remain separate validation gates.
 
+- Modal upload filtering now preserves leading dots and applies the contract
+  exception only at the worktree root. Resolved file targets must also remain
+  inside the worktree and pass exclusions; config aliases and special files
+  are excluded. A repeatable SDK probe (`scripts/probe-modal-workspace-mount.py`)
+  verified the actual Modal 1.6.1 local enumerator in an isolated virtualenv;
+  evidence is in `docs/research/evidence/modal-workspace-mount-sdk-2026-10-12.json`.
+  This proves local upload selection, not live remote mounting or cancellation.
+
 ## Immediate next work
 
 1. Add/maintain real matched external benchmark adapters and run actual trials

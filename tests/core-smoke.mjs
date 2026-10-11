@@ -9201,6 +9201,46 @@ sys.modules['modal'] = types.SimpleNamespace(Image=Image, App=App)
 worker = runpy.run_path(sys.argv[1])
 worker['execute'].__globals__['REMOTE_WORKSPACE'] = pathlib.Path(sys.argv[2])
 mode = sys.argv[3]
+if mode == 'mount':
+    import os
+    root = pathlib.Path(sys.argv[2]) / 'isolated'
+    root.mkdir()
+    namespace = worker['execute'].__globals__
+    namespace['WORKSPACE'] = root
+    included = namespace['include_workspace_path']
+    ignored = namespace['ignore_workspace_path']
+    wanted = ['train.py', 'src/.hidden/module.py', '.sota/experiment-config.json']
+    excluded = ['.git/config', '.sota/controller.sqlite', '.sota/worker-home/.credentials', '.venv/bin/python', 'node_modules/package/index.js', '__pycache__/cache.pyc', '.mypy_cache/cache.json', 'src/.sota/experiment-config.json', '.git/.sota/experiment-config.json']
+    for name in wanted + excluded:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('fixture')
+        for spelling in (name, './' + name, str(path)):
+            assert included(spelling) == (name in wanted), spelling
+        assert ignored(pathlib.Path(name)) == (name in excluded), name
+    for name in ('../outside', str(root.parent / 'outside'), '/.sota/experiment-config.json'):
+        assert not included(name), name
+    (root / 'allowed-link.py').symlink_to(root / 'train.py')
+    assert not ignored(pathlib.Path('allowed-link.py'))
+    (root / 'controller-link').symlink_to(root / '.sota/controller.sqlite')
+    (root / 'git-link').symlink_to(root / '.git/config')
+    (root / 'config-link').symlink_to(root / '.sota/experiment-config.json')
+    outside = root.parent / 'outside'
+    outside.write_text('controller secret')
+    (root / 'external-link').symlink_to(outside)
+    (root / 'dangling-link').symlink_to(root / 'missing')
+    os.mkfifo(root / 'fifo')
+    for name in ('controller-link', 'git-link', 'config-link', 'external-link', 'dangling-link', 'fifo'):
+        assert ignored(pathlib.Path(name)), name
+    expected = set(wanted + ['allowed-link.py'])
+    selected = {str(path.relative_to(root)) for path in root.rglob('*') if not ignored(path.relative_to(root))}
+    assert selected == expected, selected
+    config_path = root / '.sota/experiment-config.json'
+    config_path.unlink()
+    config_path.symlink_to(root / 'train.py')
+    assert ignored(pathlib.Path('.sota/experiment-config.json'))
+    print('mount checks passed')
+    sys.exit(0)
 if mode == 'config':
     import hashlib, copy, os
     root = pathlib.Path(sys.argv[2])
@@ -9331,9 +9371,10 @@ if mode == 'child-pipe': code = 'import subprocess,sys,pathlib; child=subprocess
 worker['run'](json.dumps([sys.executable, '-c', code]), timeout_seconds=1 if mode in ('timeout', 'closed-pipes', 'child-pipe') else 3600)
 `;
   try {
-    for (const mode of ["completed", "failed", "signal", "rpc-error", "partial-lines", "unicode", "invalid-utf8", "unterminated", "timeout", "closed-pipes", "child-pipe", "config", "artifacts", "stderr-limit", "stdout-limit", "exact-limit"]) {
+    for (const mode of ["completed", "failed", "signal", "rpc-error", "partial-lines", "unicode", "invalid-utf8", "unterminated", "timeout", "closed-pipes", "child-pipe", "mount", "config", "artifacts", "stderr-limit", "stdout-limit", "exact-limit"]) {
       const result = spawnSync("python3", ["-c", script, join(process.cwd(), "modal_app.py"), root, mode], { encoding: "utf8", timeout: 10_000 });
       assert.equal(result.error, undefined);
+      if (mode === "mount") { assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.trim(), "mount checks passed"); continue; }
       if (mode === "config") { assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.trim(), "config checks passed"); continue; }
       if (mode === "artifacts") { assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.trim(), "artifact checks passed"); continue; }
       if (["rpc-error", "timeout", "closed-pipes", "child-pipe"].includes(mode)) {
