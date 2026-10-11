@@ -5,6 +5,17 @@ import { EarlyStoppingMonitor, type EarlyStoppingConfig } from "./early-stopping
 const MAX_CAPTURE_BYTES = 16 * 1024 * 1024;
 const captureMarker = `\n...[output truncated by Evidra at ${MAX_CAPTURE_BYTES} bytes]...\n`;
 
+/** The OS rejected launch before Node reported a started child. */
+export class ProcessStartError extends Error {
+  readonly code: string | undefined;
+  constructor(error: Error) {
+    super(error.message, { cause: error });
+    this.name = "ProcessStartError";
+    const code = (error as NodeJS.ErrnoException).code;
+    this.code = typeof code === "string" ? code : undefined;
+  }
+}
+
 function appendCapture(current: string, chunk: string): string {
   const next = current + chunk;
   if (Buffer.byteLength(next, "utf8") <= MAX_CAPTURE_BYTES) return next;
@@ -154,7 +165,7 @@ export function runProcess(
         if (settled) return;
         settled = true;
         removeHandlers();
-        reject(error);
+        reject(new ProcessStartError(error));
       } else failCallback(error);
     });
     child.on("exit", (code) => {

@@ -32,7 +32,7 @@ import { competitionResearchClaimType, competitionResearchSources, competitionSo
 import { extractCompetitionInsights } from "../dist/core/competition-insights.js";
 import { dashboardHtml, dashboardSnapshot } from "../dist/core/dashboard.js";
 import { workbenchHtml } from "../dist/core/dashboard-web.js";
-import { boundProcessOutput, processFailureResult, runProcess } from "../dist/core/process.js";
+import { boundProcessOutput, processFailureResult, ProcessStartError, runProcess } from "../dist/core/process.js";
 import { competitionIdForMode, competitionManifestForInitialization, declaredEvaluatorCommand, loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { whestbenchConfig } from "../dist/competitions/whestbench.js";
 import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
@@ -9015,6 +9015,50 @@ test("Modal completion envelopes reject ambiguity and malformed terminal evidenc
   assert.deepEqual(parseModalWorkerResult(`{"progress":1}\n${success}\nFinished`), valid);
 });
 
+test("Modal distinguishes proven spawn failure from errors after the client starts", async () => {
+  const previousPath = process.env.PATH;
+  try {
+    for (const mode of ["missing", "not-executable", "callback-error"]) {
+      const root = mkdtempSync(join(tmpdir(), "evidra-modal-spawn-"));
+      const bin = join(root, "bin"); mkdirSync(bin);
+      const db = join(root, "state.sqlite");
+      const store = new ResearchStore(db);
+      try {
+        if (mode !== "missing") writeFileSync(join(bin, "modal"), `#!${process.execPath}
+          console.log('[evidra-call] '+JSON.stringify({submissionId:process.argv[process.argv.indexOf('--submission-id')+1],callId:'fc-launched'}));
+          console.log(JSON.stringify({exitCode:0,stdout:'accuracy=0.9',stderr:'',artifacts:{}}));
+        `, { mode: mode === "not-executable" ? 0o644 : 0o755 });
+        process.env.PATH = bin;
+        const manifest = { id: mode, resources: { executor: "modal", timeoutMinutes: 1 }, evaluation: { requiredArtifacts: [] } };
+        store.saveExperiment({ id: mode, payload: { ...manifest, status: "running" } });
+        store.reserveComputeBudget({ experimentId: mode, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+        const result = await new ModalExecutor(root, (event) => {
+          if (mode === "callback-error" && event.phase === "submitted") throw Object.assign(new Error("observer ENOENT after launch"), { code: "ENOENT" });
+          recordRemoteExecution(db, event);
+        }).run(manifest, root, ["train"], undefined, "accuracy");
+        const notStarted = mode !== "callback-error";
+        assert.equal(result.status, "failed");
+        assert.equal(result.exitCode, 127);
+        assert.equal(result.failureClass, notStarted ? "dependency" : "unknown");
+        assert.deepEqual(result.metrics, {});
+        const proofs = store.eventsByType("run.remote.terminal");
+        assert.equal(proofs.length, notStarted ? 1 : 0);
+        if (notStarted) {
+          assert.equal(proofs[0].payload.state, "NOT_STARTED");
+          assert.equal(proofs[0].payload.spawnErrorCode, mode === "missing" ? "ENOENT" : "EACCES");
+        }
+        assert.equal(store.remoteExecutionState(mode).confirmed, notStarted);
+        store.saveExperiment({ id: mode, payload: { ...manifest, status: "failed" } });
+      } finally { store.close(); }
+      const reopened = new ResearchStore(db);
+      try {
+        assert.equal(reopened.reservedComputeGpuHours(), mode === "callback-error" ? 1 : 0);
+        assert.equal(reopened.experiments()[0].payload.status, mode === "callback-error" ? "blocked" : "failed");
+      } finally { reopened.close(); rmSync(root, { recursive: true, force: true }); }
+    }
+  } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
+});
+
 test("Modal requires successful client completion before accepting worker evidence or artifacts", async () => {
   const previousPath = process.env.PATH;
   try {
@@ -9334,8 +9378,8 @@ test("Modal call ownership stays bounded and rejects aliases without SQLite JSON
 test("Modal reconciliation requires ordered completion evidence for every invocation", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-modal-ledger-"));
   try {
-    for (const mode of ["confirmed", "missing", "duplicate", "reordered", "wrong-receipt", "wrong-exit", "extra-intent", "call-confirmed", "call-mismatched", "call-missing", "call-reused"]) {
-      const confirmed = ["confirmed", "call-confirmed"].includes(mode);
+    for (const mode of ["confirmed", "missing", "duplicate", "reordered", "wrong-receipt", "wrong-exit", "extra-intent", "call-confirmed", "call-mismatched", "call-missing", "call-reused", "spawn-proven", "spawn-receipt", "spawn-wrongcode", "spawn-wrongexit", "spawn-reordered", "spawn-duplicate"]) {
+      const confirmed = ["confirmed", "call-confirmed", "spawn-proven"].includes(mode);
       const db = join(root, `${mode}.sqlite`);
       const store = new ResearchStore(db);
       const id = `modal-${mode}`;
@@ -9350,8 +9394,16 @@ test("Modal reconciliation requires ordered completion evidence for every invoca
         if (mode !== "call-missing") receipt.callId = "fc-owned";
         terminal.callId = mode === "call-mismatched" ? "fc-other" : "fc-owned";
       }
-      const records = mode === "missing" ? [intent] : mode === "reordered" ? [terminal, intent, receipt] : [intent, receipt, terminal];
+      if (mode.startsWith("spawn-")) {
+        intent.protocol = terminal.protocol = "modal-call-v1";
+        terminal.state = "NOT_STARTED";
+        terminal.completionEvidence = "spawn-error";
+        terminal.exitCode = mode === "spawn-wrongexit" ? 0 : 127;
+        terminal.spawnErrorCode = mode === "spawn-wrongcode" ? "ECONNRESET" : "ENOENT";
+      }
+      const records = mode === "missing" ? [intent] : mode === "reordered" ? [terminal, intent, receipt] : mode === "spawn-reordered" ? [terminal, intent] : mode.startsWith("spawn-") && mode !== "spawn-receipt" ? [intent, terminal] : [intent, receipt, terminal];
       if (mode === "duplicate") records.push(terminal);
+      if (mode === "spawn-duplicate") records.push(terminal);
       if (mode === "extra-intent") records.push({ ...intent, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" });
       if (mode === "call-reused") records.push(...[intent, receipt, terminal].map((event) => ({ ...event, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" })));
       for (const event of records) store.appendEvent(`run.remote.${event.phase}`, event);
@@ -10964,7 +11016,7 @@ test("execution heartbeat records liveness before the first interval", async () 
 
 test("missing process executables reject without retaining the timeout", async () => {
   const started = Date.now();
-  await assert.rejects(() => runProcess(["evidra-command-that-does-not-exist"], process.cwd(), 30_000));
+  await assert.rejects(() => runProcess(["evidra-command-that-does-not-exist"], process.cwd(), 30_000), (error) => error instanceof ProcessStartError && error.code === "ENOENT");
   assert(Date.now() - started < 2_000);
 });
 

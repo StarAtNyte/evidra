@@ -1,4 +1,4 @@
-import { boundProcessOutput, processFailureResult, runProcess, type ProcessControl } from "./process.js";
+import { boundProcessOutput, processFailureResult, ProcessStartError, runProcess, type ProcessControl } from "./process.js";
 import { parseLearningCurve } from "./early-stopping.js";
 import { redactStructured } from "./redaction.js";
 import { constants, openSync, closeSync, fstatSync, readSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
@@ -21,7 +21,8 @@ export interface RemoteExecutionEvent {
   runtime?: "docker" | "podman";
   containerId?: string;
   daemonId?: string;
-  completionEvidence?: "client-envelope" | "sdk-result";
+  completionEvidence?: "client-envelope" | "sdk-result" | "spawn-error";
+  spawnErrorCode?: string;
   protocol?: "modal-call-v1";
   callId?: string;
 }
@@ -740,6 +741,8 @@ export class ModalExecutor implements ExperimentExecutor {
     // stopped, even when the local process exits or never returns a receipt.
     observe("submitting");
     let callId: string | undefined;
+    let notStarted = false;
+    let spawnErrorCode: string | undefined;
     let pendingLine = "";
     let oversizedLine = false;
     const receive = (stream: "stdout" | "stderr", chunk: string): void => {
@@ -773,13 +776,18 @@ export class ModalExecutor implements ExperimentExecutor {
       }, manifest.resources.earlyStopping);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (!callId && error instanceof ProcessStartError && ["ENOENT", "EACCES", "ENOEXEC", "ENOTDIR", "EMFILE", "ENFILE", "E2BIG"].includes(error.code ?? "")) {
+        observe("terminal", { state: "NOT_STARTED", exitCode: 127, completionEvidence: "spawn-error", spawnErrorCode: error.code });
+        notStarted = true;
+        spawnErrorCode = error.code;
+      }
       result = { command: args, cwd: launchRoot, exitCode: 127, durationMs: 0, stdout: "", stderr: message };
     }
     const payload = parseModalWorkerResult(result.stdout);
     // A printed envelope cannot override the controller's timeout/interruption
     // or prove remote completion when the runtime client failed.
     if (result.exitCode !== 0 || !payload || !callId) {
-      return { ...toRunResult(manifest, { ...result, command, cwd, exitCode: result.exitCode === 0 ? 65 : result.exitCode, stdout: "", stderr: boundProcessOutput([result.stderr, "Modal worker completion is unconfirmed; reconcile before replay."].filter(Boolean).join("\n")) }, metricName, true), stdout: result.stdout, artifacts: {}, failureClass: "unknown" };
+      return { ...toRunResult(manifest, { ...result, command, cwd, exitCode: result.exitCode === 0 ? 65 : result.exitCode, stdout: "", stderr: boundProcessOutput([result.stderr, notStarted ? "Modal client did not start; no remote launch was attempted." : "Modal worker completion is unconfirmed; reconcile before replay."].filter(Boolean).join("\n")) }, metricName, true), stdout: result.stdout, artifacts: {}, failureClass: notStarted && ["ENOENT", "EACCES", "ENOEXEC", "ENOTDIR"].includes(spawnErrorCode ?? "") ? "dependency" : "unknown" };
     }
     observe("terminal", { callId, completionEvidence: "client-envelope", state: "COMPLETED", exitCode: payload.exitCode });
     const allowedArtifacts = new Set(manifest.evaluation?.requiredArtifacts ?? []);

@@ -3765,6 +3765,11 @@ export class ResearchStore {
       if (typeof id !== "string" || !/^[a-f0-9-]{36}$/.test(id) || intent.payload.allocationName !== `evidra-${id}`) return unresolved;
       const submitted = events.filter((event) => event.phase === "submitted" && event.payload.submissionId === id);
       const terminal = events.filter((event) => event.phase === "terminal" && event.payload.submissionId === id);
+      if (intent.payload.executor === "modal" && intent.payload.protocol === "modal-call-v1" && terminal.length === 1 && terminal[0].payload.state === "NOT_STARTED") {
+        const proof = terminal[0].payload;
+        if (submitted.length !== 0 || events.indexOf(intent) >= events.indexOf(terminal[0]) || intent.payload.callId !== undefined || proof.executor !== "modal" || proof.protocol !== intent.payload.protocol || proof.allocationName !== intent.payload.allocationName || proof.callId !== undefined || proof.exitCode !== 127 || proof.completionEvidence !== "spawn-error" || !["ENOENT", "EACCES", "ENOEXEC", "ENOTDIR", "EMFILE", "ENFILE", "E2BIG"].includes(String(proof.spawnErrorCode))) return unresolved;
+        continue;
+      }
       if (submitted.length !== 1 || terminal.length !== 1) return unresolved;
       const receipt = submitted[0].payload;
       const proof = terminal[0].payload;

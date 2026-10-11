@@ -58,6 +58,12 @@ external evaluator.
 
 ## Latest repository state
 
+- Process launch errors now preserve OS proof that the runtime client did not start. Modal
+  records ordered NOT_STARTED evidence for verified spawn failures, allowing
+  reservations to release without pretending a remote call ran. Post-launch
+  errors still retain the fence, even if their message/code says ENOENT.
+  Tests cover missing and non-executable clients, callback errors and restart.
+
 - Modal ownership checks now use a partial call-ID index and read at most two
   matching receipts. SQLite without JSON1 streams receipts and stops at the
   second match instead of materializing history. Regression tests verify the
