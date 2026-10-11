@@ -41,7 +41,7 @@ import { executeResearchTool, normalizeResearchToolResult, availableResearchTool
 import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "../dist/core/external-tools.js";
 import { normalizeResearchDecisionPayload, normalizeResearchToolCall, researchDirectorAvailableTools, runResearchDirector } from "../dist/agents/research-director.js";
 import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
-import { LocalExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, slurmCommand, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
+import { LocalExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, SlurmExecutor, parseSlurmAccounting, slurmCommand, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
 import { experienceReplayWorld } from "../dist/core/experience.js";
@@ -8630,6 +8630,7 @@ test("Slurm executor command preserves argv boundaries and declared resources", 
   const command = slurmCommand("exp with spaces", "/tmp/evidra-worktree", ["python", "train.py", "--name", "O'Reilly"], "/tmp/out.log", "/tmp/err.log", 12.4, "A100:1");
   assert.equal(command[0], "sbatch");
   assert(command.includes("--parsable"));
+  assert(command.includes("--no-requeue"), "only the controller owns bounded retry decisions");
   assert(command.includes("--chdir"));
   assert(command.includes("/tmp/evidra-worktree"));
   assert(command.includes("--gres"));
@@ -8637,6 +8638,132 @@ test("Slurm executor command preserves argv boundaries and declared resources", 
   assert.equal(command.at(-1), "exec 'python' 'train.py' '--name' 'O'\\''Reilly'");
   assert(command.includes("--time"));
   assert(command.includes("13"));
+});
+
+test("Slurm accounting requires the exact allocation, terminal state, and zero status/signal", () => {
+  assert.deepEqual(parseSlurmAccounting("123.batch|COMPLETED|0:0\n123|FAILED|7:0\n", "123"), { state: "FAILED", exitCode: 7, terminal: true });
+  for (const [state, code, expected] of [["COMPLETED", "0:0", 0], ["COMPLETED", "3:0", 3], ["COMPLETED", "0:9", 137], ["TIMEOUT", "0:15", 124], ["CANCELLED by 1000", "0:15", 130], ["FAILED", "0:0", 1]]) {
+    assert.equal(parseSlurmAccounting(`123|${state}|${code}\n`, "123").exitCode, expected);
+  }
+  for (const output of ["123.batch|COMPLETED|0:0", "123|RUNNING|0:0", "123|COMPLETED|invalid", "123|COMPLETED|0:0\n123|FAILED|1:0"]) {
+    assert.equal(parseSlurmAccounting(output, "123").terminal, false);
+    assert.notEqual(parseSlurmAccounting(output, "123").exitCode, 0);
+  }
+});
+
+async function withFakeSlurm(scripts, execute) {
+  const root = mkdtempSync(join(tmpdir(), "evidra-slurm-contract-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  const previousPath = process.env.PATH;
+  try {
+    for (const [name, script] of Object.entries(scripts)) writeFileSync(join(bin, name), `#!${process.execPath}\n${script}\n`, { mode: 0o755 });
+    process.env.PATH = `${bin}:${previousPath ?? ""}`;
+    const manifest = { id: "slurm-contract", resources: { executor: "slurm", timeoutMinutes: 1 }, evaluation: { requiredArtifacts: [] } };
+    await execute({ root, manifest, executor: new SlurmExecutor(root) });
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const slurmReceipt = "console.log('123')";
+const slurmQueueEmpty = "process.exit(0)";
+
+test("Slurm executor does not promote completed jobs with failed exit status", async () => {
+  await withFakeSlurm({ sbatch: slurmReceipt, squeue: slurmQueueEmpty, sacct: "console.log('123|COMPLETED|7:0')" }, async ({ root, manifest, executor }) => {
+    const result = await executor.run(manifest, root, ["train"]);
+    assert.equal(result.status, "failed");
+    assert.equal(result.exitCode, 7);
+    assert.equal(recoveryPlan(result.failureClass).retry, false);
+    assert.match(result.stderr, /Slurm job 123/);
+  });
+});
+
+test("Slurm executor awaits one cancellation request before collecting accounting", async () => {
+  await withFakeSlurm({
+    sbatch: slurmReceipt,
+    scancel: "require('node:fs').appendFileSync('cancel-requests', 'request\\n'); setTimeout(() => require('node:fs').writeFileSync('cancel-complete','yes'), 150)",
+    sacct: "console.log(require('node:fs').existsSync('cancel-complete') ? '123|CANCELLED|0:15' : '123|RUNNING|0:0')",
+  }, async ({ root, manifest, executor }) => {
+    let registrations = 0;
+    const result = await executor.run(manifest, root, ["train"], (control) => { if (++registrations === 2) { control.terminate(); control.terminate(); } });
+    assert.equal(result.exitCode, 130);
+    assert.match(result.stderr, /Slurm job 123: CANCELLED/);
+    assert.equal(readFileSync(join(root, "cancel-requests"), "utf8").trim(), "request");
+    assert.equal(recoveryPlan(result.failureClass).retry, false);
+  });
+});
+
+test("Slurm executor distinguishes deadline cancellation from operator interruption", async () => {
+  await withFakeSlurm({ sbatch: slurmReceipt, squeue: "console.log('RUNNING')", scancel: "process.exit(0)", sacct: "console.log('123|CANCELLED|0:15')" }, async ({ root, manifest, executor }) => {
+    manifest.resources.timeoutMinutes = 0.004;
+    const result = await executor.run(manifest, root, ["train"]);
+    assert.equal(result.exitCode, 124);
+    assert.equal(result.failureClass, "timeout");
+    assert.match(result.stderr, /Timed out/);
+  });
+});
+
+test("Slurm queue errors trigger cancellation and remain failed evidence", async () => {
+  await withFakeSlurm({ sbatch: slurmReceipt, squeue: "console.error('controller unavailable'); process.exit(2)", scancel: "require('node:fs').writeFileSync('cancel-requested','yes')", sacct: "console.log('123|COMPLETED|0:0')" }, async ({ root, manifest, executor }) => {
+    const result = await executor.run(manifest, root, ["train"]);
+    assert.equal(result.status, "failed");
+    assert.match(result.stderr, /queue query failed.*controller unavailable/);
+    assert.ok(existsSync(join(root, "cancel-requested")));
+    assert.equal(recoveryPlan(result.failureClass).retry, false);
+  });
+});
+
+test("Slurm unconfirmed accounting cannot enter an automatic retry route", async () => {
+  await withFakeSlurm({ sbatch: slurmReceipt, squeue: slurmQueueEmpty, sacct: "console.log('123|RUNNING|0:0')" }, async ({ root, manifest, executor }) => {
+    const result = await executor.run(manifest, root, ["train"]);
+    assert.equal(result.status, "failed");
+    assert.match(result.stderr, /unconfirmed.*reconcile/);
+    assert.equal(result.failureClass, "unknown");
+    assert.equal(recoveryPlan(result.failureClass).retry, false);
+  });
+});
+
+test("Slurm control commands stay on the cluster named by the submission receipt", async () => {
+  const validateCluster = "const args=process.argv.slice(2); if(args[0]!=='--clusters'||args[1]!=='gpu-east') process.exit(2);";
+  await withFakeSlurm({ sbatch: "console.log('123;gpu-east')", squeue: validateCluster, sacct: validateCluster + "console.log('123|COMPLETED|0:0')" }, async ({ root, manifest, executor }) => {
+    const result = await executor.run(manifest, root, ["train"]);
+    assert.equal(result.status, "completed");
+    assert.match(result.stderr, /on gpu-east/);
+  });
+});
+
+test("Slurm log previews reject symlinks to files outside the worktree", async () => {
+  const external = mkdtempSync(join(tmpdir(), "evidra-slurm-private-"));
+  const secret = join(external, "controller.txt");
+  writeFileSync(secret, "private-controller-material");
+  try {
+    await withFakeSlurm({
+      sbatch: `const args=process.argv.slice(2); require('node:fs').symlinkSync(${JSON.stringify(secret)}, args[args.indexOf('--output')+1]); console.log('123');`,
+      squeue: slurmQueueEmpty, sacct: "console.log('123|COMPLETED|0:0')",
+    }, async ({ root, manifest, executor }) => {
+      const result = await executor.run(manifest, root, ["train"]);
+      assert.doesNotMatch(result.stdout, /private-controller-material/);
+      assert.doesNotMatch(result.stderr, /private-controller-material/);
+    });
+  } finally { rmSync(external, { recursive: true, force: true }); }
+});
+
+test("Slurm reads bounded head/tail log evidence instead of loading entire worker files", async () => {
+  await withFakeSlurm({
+    sbatch: "const args=process.argv.slice(2); const path=args[args.indexOf('--output')+1]; const fs=require('node:fs'); fs.writeFileSync(path,'startup-evidence\\n'+'🧪'.repeat(5*1024*1024)+'\\naccuracy=0.9\\n'); console.log('123');",
+    squeue: slurmQueueEmpty, sacct: "console.log('123|COMPLETED|0:0')",
+  }, async ({ root, manifest, executor }) => {
+    const result = await executor.run(manifest, root, ["train"], undefined, "accuracy");
+    assert.equal(result.status, "completed");
+    assert.equal(result.metrics.accuracy, 0.9);
+    assert.ok(Buffer.byteLength(result.stdout) <= 16*1024*1024);
+    assert.match(result.stdout, /^startup-evidence/);
+    assert.match(result.stdout, /output truncated by Evidra/);
+    assert.ok(!result.stdout.includes('\uFFFD'));
+  });
 });
 
 test("paired statistics and recovery are deterministic", () => {

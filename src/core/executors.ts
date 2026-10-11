@@ -1,7 +1,7 @@
-import { runProcess, type ProcessControl } from "./process.js";
+import { boundProcessOutput, processFailureResult, runProcess, type ProcessControl } from "./process.js";
 import { parseLearningCurve } from "./early-stopping.js";
 import { redactStructured } from "./redaction.js";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { constants, openSync, closeSync, fstatSync, readSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ExperimentExecutorKind, ExperimentManifest, ProcessResult, RunResult } from "./types.js";
 
@@ -466,25 +466,59 @@ function shellQuote(value: string): string {
 export function slurmCommand(jobName: string, cwd: string, command: string[], stdoutPath: string, stderrPath: string, timeoutMinutes: number, gpu?: string): string[] {
   if (!command.length || command.some((part) => typeof part !== "string")) throw new Error("Slurm commands must contain a non-empty argv array.");
   const safeJobName = jobName.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 80);
-  const args = ["sbatch", "--parsable", "--job-name", safeJobName || "evidra", "--chdir", resolve(cwd), "--output", resolve(stdoutPath), "--error", resolve(stderrPath), "--time", String(Math.max(1, Math.ceil(timeoutMinutes)))];
+  const args = ["sbatch", "--parsable", "--no-requeue", "--job-name", safeJobName || "evidra", "--chdir", resolve(cwd), "--output", resolve(stdoutPath), "--error", resolve(stderrPath), "--time", String(Math.max(1, Math.ceil(timeoutMinutes)))];
   if (gpu) args.push("--gres", `gpu:${gpu}`);
   args.push("--wrap", `exec ${command.map(shellQuote).join(" ")}`);
   return args;
 }
 
-function boundedFile(path: string): string {
+function boundedFile(root: string, name: string): string {
+  let descriptor: number | undefined;
   try {
-    const value = readFileSync(path, "utf8");
-    if (Buffer.byteLength(value, "utf8") <= 16 * 1024 * 1024) return value;
-    return `${value.slice(0, 8 * 1024 * 1024)}\n...[output truncated by Evidra]...\n${value.slice(-8 * 1024 * 1024)}`;
+    const path = safeArtifactPath(root, name);
+    if (!path) return "";
+    const before = lstatSync(path);
+    if (!before.isFile()) return "";
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const current = fstatSync(descriptor);
+    if (!current.isFile() || before.dev !== current.dev || before.ino !== current.ino) return "";
+    const limit = 16 * 1024 * 1024;
+    const read = (position: number, length: number): Buffer => {
+      const bytes = Buffer.alloc(length);
+      let used = 0;
+      while (used < length) {
+        const received = readSync(descriptor!, bytes, used, length - used, position + used);
+        if (!received) break;
+        used += received;
+      }
+      return bytes.subarray(0, used);
+    };
+    if (current.size <= limit) return boundProcessOutput(read(0, current.size).toString("utf8"));
+    const half = Math.floor(limit / 2) - 128;
+    const head = read(0, half + 3);
+    const tail = read(current.size - half - 3, half + 3);
+    let headEnd = Math.min(half, head.length);
+    let tailStart = Math.min(3, tail.length);
+    while (headEnd > 0 && (head[headEnd] & 0xc0) === 0x80) headEnd -= 1;
+    while (tailStart < tail.length && (tail[tailStart] & 0xc0) === 0x80) tailStart += 1;
+    return boundProcessOutput(head.subarray(0, headEnd).toString("utf8") + "\n...[output truncated by Evidra]...\n" + tail.subarray(tailStart).toString("utf8"));
   } catch { return ""; }
+  finally { if (descriptor !== undefined) closeSync(descriptor); }
 }
 
-function slurmExitCode(value: string): number {
-  const normalized = value.trim().toUpperCase();
-  if (normalized.startsWith("COMPLETED")) return 0;
-  if (normalized.startsWith("CANCELLED") || normalized.startsWith("TIMEOUT")) return 130;
-  return 1;
+/** Match the allocation itself; a completed batch step is not job completion. */
+export function parseSlurmAccounting(output: string, jobId: string): { state: string; exitCode: number; terminal: boolean } {
+  const rows = output.split(/\r?\n/).map((line) => line.trim().split("|")).filter((row) => row[0]?.trim() === jobId);
+  if (rows.length !== 1) return { state: "UNKNOWN", exitCode: 1, terminal: false };
+  const state = rows[0][1]?.trim().toUpperCase().split(/\s+/)[0] ?? "UNKNOWN";
+  const code = rows[0][2]?.trim().match(/^(\d+):(\d+)$/);
+  const terminal = ["COMPLETED", "CANCELLED", "TIMEOUT", "FAILED", "OUT_OF_MEMORY", "NODE_FAIL", "PREEMPTED", "BOOT_FAIL", "DEADLINE", "REVOKED"].includes(state);
+  if (!terminal || !code) return { state, exitCode: 1, terminal: false };
+  const status = Number(code[1]);
+  const signal = Number(code[2]);
+  const exitCode = state === "TIMEOUT" ? 124 : state === "CANCELLED" ? 130
+    : signal > 0 ? 128 + Math.min(127, signal) : status > 0 ? Math.min(255, status) : state === "COMPLETED" ? 0 : 1;
+  return { state, exitCode, terminal };
 }
 
 export class SlurmExecutor implements ExperimentExecutor {
@@ -506,44 +540,84 @@ export class SlurmExecutor implements ExperimentExecutor {
     const started = Date.now();
     let submission: ProcessResult;
     try {
-      submission = await runProcess(submit, launchRoot, 30_000, undefined, onProcess, experimentEnvironment, manifest.resources.earlyStopping);
+      submission = await runProcess(submit, launchRoot, Math.max(1, Math.min(30_000, manifest.resources.timeoutMinutes * 60_000)), undefined, onProcess, experimentEnvironment);
     } catch (error) {
-      return toRunResult(manifest, { command, cwd: launchRoot, exitCode: 127, durationMs: Date.now() - started, stdout: "", stderr: error instanceof Error ? error.message : String(error) }, metricName, true);
+      return { ...toRunResult(manifest, { command, cwd: launchRoot, exitCode: 127, durationMs: Date.now() - started, stdout: "", stderr: `${error instanceof Error ? error.message : String(error)}\nSlurm submission outcome is unconfirmed; reconcile the allocation before relaunching.` }, metricName, true), failureClass: "unknown" };
     }
-    if (submission.exitCode !== 0) return toRunResult(manifest, { ...submission, command, cwd }, metricName, true);
-    const jobId = submission.stdout.trim().split(/[;\s]/)[0];
-    if (!/^\d+$/.test(jobId)) return toRunResult(manifest, { command, cwd, exitCode: 65, durationMs: Date.now() - started, stdout: submission.stdout, stderr: "Slurm returned no numeric job id." }, metricName, true);
-
-    let cancelled = false;
-    let activeControl: ProcessControl | undefined;
-    const cancel = async (): Promise<void> => {
-      if (cancelled) return;
-      cancelled = true;
-      await runProcess(["scancel", jobId], launchRoot, 10_000).catch(() => undefined);
+    if (submission.exitCode !== 0) {
+      const ambiguous = submission.exitCode === 124 || submission.exitCode === 130 || /^\d+(?:;|\s|$)/.test(submission.stdout.trim());
+      const failed = toRunResult(manifest, { ...submission, command, cwd, stderr: submission.stderr + (ambiguous ? "\nSlurm submission outcome is unconfirmed; reconcile the allocation before relaunching." : "") }, metricName, true);
+      return ambiguous ? { ...failed, failureClass: "unknown" } : failed;
+    }
+    const receipt = submission.stdout.trim().match(/^(\d+)(?:;([A-Za-z0-9][A-Za-z0-9_.-]*))?$/);
+    if (!receipt) return { ...toRunResult(manifest, { command, cwd, exitCode: 65, durationMs: Date.now() - started, stdout: submission.stdout, stderr: "Slurm submission receipt is ambiguous; reconcile the remote allocation before relaunching." }, metricName, true), failureClass: "unknown" };
+    const jobId = receipt[1];
+    const clusterArgs = receipt[2] ? ["--clusters", receipt[2]] : [];
+    const remoteCommand = async (argv: string[], timeoutMs: number, exposeControl = false): Promise<ProcessResult> => {
+      try { return await runProcess(argv, launchRoot, timeoutMs, undefined, exposeControl ? (control) => { activeControl = control; } : undefined); }
+      catch (error) { return processFailureResult(argv, launchRoot, error); }
+      finally { if (exposeControl) activeControl = undefined; }
     };
-    onProcess?.({
-      pause: () => activeControl?.pause(),
-      resume: () => activeControl?.resume(),
-      terminate: () => { void cancel(); activeControl?.terminate(); },
-      get paused() { return activeControl?.paused ?? false; },
-    });
+    let cancelled = false;
+    let interrupted = false;
+    let timedOut = false;
+    let monitoringError = "";
+    let activeControl: ProcessControl | undefined;
+    let cancellation: Promise<ProcessResult> | undefined;
+    const cancel = (): Promise<ProcessResult> => {
+      cancelled = true;
+      // All callers join one in-flight request. Fire-and-forget UI termination
+      // must not race the final accounting query or hide scancel failure.
+      return cancellation ??= remoteCommand(["scancel", ...clusterArgs, jobId], 10_000);
+    };
+    try {
+      onProcess?.({
+        pause: () => activeControl?.pause(),
+        resume: () => activeControl?.resume(),
+        terminate: () => { interrupted = true; void cancel(); activeControl?.terminate(); },
+        get paused() { return activeControl?.paused ?? false; },
+      });
+    } catch (error) {
+      monitoringError = error instanceof Error ? error.message : String(error);
+      await cancel();
+    }
 
     const deadline = started + manifest.resources.timeoutMinutes * 60_000;
-    let interrupted = false;
     while (!cancelled && Date.now() < deadline) {
-      const status = await runProcess(["squeue", "--noheader", "--jobs", jobId, "--format=%T"], launchRoot, 10_000, undefined, (control) => { activeControl = control; });
-      if (status.exitCode === 130) { interrupted = true; await cancel(); break; }
+      const status = await remoteCommand(["squeue", ...clusterArgs, "--noheader", "--jobs", jobId, "--format=%T"], Math.max(1, Math.min(10_000, deadline - Date.now())), true);
+      if (status.exitCode !== 0) {
+        interrupted ||= status.exitCode === 130;
+        timedOut ||= status.exitCode === 124 && Date.now() >= deadline;
+        monitoringError = `Slurm queue query failed for job ${jobId}: ${status.stderr || `exit ${status.exitCode}`}`;
+        await cancel();
+        break;
+      }
       if (!status.stdout.trim()) break;
-      await new Promise((resolveSleep) => setTimeout(resolveSleep, 2_000));
+      await new Promise((resolveSleep) => setTimeout(resolveSleep, Math.min(2_000, Math.max(0, deadline - Date.now()))));
     }
-    if (!cancelled && Date.now() >= deadline) { await cancel(); }
-    if (cancelled) interrupted = true;
-    const accounting = await runProcess(["sacct", "--noheader", "--parsable2", "--jobs", jobId, "--format=State,ExitCode"], launchRoot, 15_000);
-    const state = accounting.stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? (interrupted ? "CANCELLED" : "UNKNOWN");
-    const output = boundedFile(stdoutPath);
-    const error = boundedFile(stderrPath);
-    const exitCode = interrupted ? 130 : slurmExitCode(state);
-    return toRunResult(manifest, { command, cwd, exitCode, durationMs: Date.now() - started, stdout: output || submission.stdout, stderr: error || submission.stderr }, metricName, true);
+    if (!cancelled && Date.now() >= deadline) { timedOut = true; await cancel(); }
+    const cancellationResult = cancellation ? await cancellation : undefined;
+    const accounting = await remoteCommand(["sacct", ...clusterArgs, "--noheader", "--parsable2", "--allocations", "--jobs", jobId, "--format=JobIDRaw,State%40,ExitCode"], 15_000);
+    const remote = parseSlurmAccounting(accounting.stdout, jobId);
+    const unconfirmed = accounting.exitCode !== 0 || !remote.terminal;
+    const output = boundedFile(cwd, relative(cwd, stdoutPath));
+    const error = boundedFile(cwd, relative(cwd, stderrPath));
+    const exitCode = timedOut ? 124 : interrupted ? 130 : monitoringError || unconfirmed ? 1 : remote.exitCode;
+    const stderr = boundProcessOutput([error, submission.stderr, monitoringError, accounting.stderr,
+      cancellationResult && cancellationResult.exitCode !== 0 ? `Slurm cancellation request failed for job ${jobId}: ${cancellationResult.stderr || `exit ${cancellationResult.exitCode}`}` : "",
+      `Slurm job ${jobId}${receipt[2] ? ` on ${receipt[2]}` : ""}: ${remote.state}`,
+      timedOut ? "Timed out." : "",
+      interrupted ? "Interrupted by Evidra." : "",
+      unconfirmed ? "Remote completion/cancellation is unconfirmed; reconcile this allocation before relaunching." : "",
+    ].filter(Boolean).join("\n"));
+    const result = toRunResult(manifest, { command, cwd, exitCode, durationMs: Date.now() - started, stdout: output || submission.stdout, stderr }, metricName, true);
+    if (unconfirmed || interrupted || monitoringError && !timedOut) return { ...result, failureClass: "unknown" };
+    if (timedOut || remote.state === "TIMEOUT") return { ...result, failureClass: "timeout" };
+    if (remote.state === "CANCELLED") return { ...result, failureClass: "unknown" };
+    if (remote.state === "OUT_OF_MEMORY") return { ...result, failureClass: "memory_exhausted" };
+    if (result.failureClass === "transient_cloud" && !["NODE_FAIL", "BOOT_FAIL", "PREEMPTED"].includes(remote.state)) return { ...result, failureClass: "unknown" };
+    return result;
+
   }
 }
 

@@ -58,6 +58,18 @@ external evaluator.
 
 ## Latest repository state
 
+- Slurm protocol hardening now uses exact terminal allocation accounting with
+  actual exit status/signals, joined cancellation requests, cluster-aware
+  control commands, and scheduler requeue disabled. Ambiguous outcomes and
+  queue failures cannot trigger automatic retries. Log previews read bounded
+  UTF-8 head/tail evidence and reject symlinks. Ten focused tests pass; live
+  cluster restart fencing, accounting reconciliation, and remote pause/resume
+  remain open. The paper alignment and these limits are recorded in
+  `production-readiness.md`.
+- Hosted CI at `ffc4b7e` passed all 689 tests on Node 22.19.0 and Node 24,
+  including production package checks; see run 38115887237. This closes the
+  runner compatibility failures below for that commit.
+
 - Hosted verification of `6d66564` exposed missing `rg` on the runner and an
   optional Modal-profile spawn failure in `doctor`. Git/ripgrep are now explicit
   required tooling, the installer rejects missing ripgrep before downloading,

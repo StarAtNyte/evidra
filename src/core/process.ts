@@ -21,6 +21,11 @@ function appendCapture(current: string, chunk: string): string {
   return encoded.subarray(0, headEnd).toString("utf8") + captureMarker + encoded.subarray(tailStart).toString("utf8");
 }
 
+/** Apply the same UTF-8 byte ceiling to captured file previews. */
+export function boundProcessOutput(output: string): string {
+  return appendCapture("", output);
+}
+
 export interface ProcessControl {
   pause(): void;
   resume(): void;

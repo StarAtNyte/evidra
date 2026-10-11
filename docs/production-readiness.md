@@ -60,6 +60,21 @@ the configured policy/reference are copied at launch. Reference lookup is
 binary search over one pre-sorted curve. Numeric telemetry must be finite and
 nonblank, and metacharacters in metric names are interpreted literally.
 
+Slurm submissions disable scheduler requeue so retry ownership remains with
+Evidra. Accounting must identify the exact allocation, a terminal state, and
+the actual status/signal pair; `COMPLETED` alone does not establish success.
+Control queries follow the cluster in the submission receipt. Cancellation
+callers join one request before accounting is collected. Queue errors and
+unconfirmed submission/completion outcomes cannot enter an automatic retry
+route. Deadline expiry remains code 124; operator interruption remains 130.
+Worker log previews read bounded head/tail bytes and reject symlink paths.
+
+Fake CLI regressions establish these protocol contracts, without establishing
+live cluster recovery. Accounting visibility can lag cancellation; an absent
+terminal record is reported as unconfirmed and requires reconciliation.
+Durable allocation fencing across controller restarts and remote pause/resume
+remain open: the current pause control only pauses a local polling process.
+
 ## Release checks
 
 Git and ripgrep (`rg`) are required workspace runtimes in addition to Node.
@@ -104,6 +119,12 @@ a Modal-absent `doctor` crash. The follow-up adds the required-tool preflight,
 explicit CI provisioning, and a minimal-PATH diagnostics regression. Preserve
 the [failed run](https://github.com/StarAtNyte/evidra/actions/runs/38115532722)
 as failure evidence; a local full-suite pass did not prove runner compatibility.
+
+The follow-up tooling fix at `ffc4b7e` passed all 689 tests on both hosted Node
+22.19.0 and Node 24 jobs, including production package checks in
+[CI run 38115887237](https://github.com/StarAtNyte/evidra/actions/runs/38115887237).
+This establishes hosted compatibility for that commit, while the remaining
+remote execution and external performance gates stay open.
 
 ## Next production gates
 
