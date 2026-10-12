@@ -43,6 +43,9 @@ jobs:
       - name: Run regression suite
         run: npm test
 
+      - name: Verify backup crash before publication
+        run: node scripts/probe-backup-publication-crash.mjs
+
       - name: Verify distributable package
         run: npm pack --dry-run
 

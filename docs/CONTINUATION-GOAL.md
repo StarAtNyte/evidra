@@ -1287,6 +1287,11 @@ staging directory remained private (0700). Evidence:
 `docs/research/evidence/backup-sigkill-before-publication-2026-10-12.json`.
 Automatic orphan cleanup, power-loss durability and full campaign restoration
 remain unverified.
+Reproduce the publication-interruption gate with
+`node scripts/probe-backup-publication-crash.mjs` after building. It uses only
+disposable local state, retains fixtures for inspection and runs in CI on both
+supported Node versions. A fresh local run passed all integrity, permission
+and old/new snapshot assertions.
 
 The default Modal local entrypoint now prints its app identity before spawning
 the function call. The controller journals a causal `run.remote.allocated`
