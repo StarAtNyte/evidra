@@ -1287,6 +1287,13 @@ Evidence: `docs/research/evidence/modal-live-durable-binding-2026-10-12.json`
 and `docs/research/evidence/modal-live-backup-binding-2026-10-12.json`.
 This proves snapshot consistency, not controller takeover, full campaign
 restoration or artifact backup.
+The same restored snapshot subsequently passed stale recovery and read-only
+SDK reconciliation of its unresolved peer. One query confirmed stopped-app
+termination, cleared quarantine and retained failed experiment status with
+zero measurements and no peer cleanup request. Evidence:
+`docs/research/evidence/modal-live-backup-recovery-2026-10-12.json`.
+This verifies allocation recovery from that backup; full campaign takeover,
+artifact restoration and live reservation retention remain unverified.
 
 The bounded live T4 probe (`scripts/probe-modal-gpu.mjs`, SDK Python and CLI
 paths as arguments) was rejected because the configured Modal account requires
