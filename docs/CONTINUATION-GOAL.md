@@ -1169,10 +1169,23 @@ external evaluator.
   showed one container still alive. Explicit stop of the probe's own app yielded
   stopped state and zero tasks. Evidence:
   `docs/research/evidence/modal-live-client-crash-2026-10-12.json`.
-  **Production blocker in Modal compute recovery:** completed calls alone do not
+  **Previously observed Modal compute recovery gap (fixed below):** completed calls alone do not
   prove allocation quiescence after client loss. Retain app/allocation identity
   and require termination proof before releasing compute; do not treat the
   current successful SDK poll as closure of this gate.
+
+- Modal compute recovery now requires SDK-bound app identity, stopped state,
+  and zero running containers; call completion alone is insufficient. New
+  receipts record app IDs, successful execution verifies allocation teardown
+  within a bounded wait, and older terminal records require a separate causal
+  allocation proof. Missing/active/mismatched/ambiguous apps retain quarantine
+  and compute reservations. SDK inspection is preflighted before launch.
+  Actual CPU execution and a real CLI SIGKILL verified the fix: a completed call
+  with an active app stayed fenced, then explicit stop of the probe's own app
+  enabled read-only recovery with no imported measurements. Evidence:
+  `docs/research/evidence/modal-live-allocation-quiescence-2026-10-12.json`.
+  This supersedes the compute-release gap above. Pending-call cancellation,
+  GPU workloads, concurrency and live nondefault environments remain open.
 
 ## Immediate next work
 

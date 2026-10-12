@@ -26,6 +26,9 @@ export interface RemoteExecutionEvent {
   spawnErrorCode?: string;
   protocol?: "modal-call-v1";
   callId?: string;
+  appId?: string;
+  appState?: "STOPPED";
+  runningTasks?: number;
 }
 export type RemoteExecutionObserver = (event: RemoteExecutionEvent) => void;
 
@@ -743,6 +746,22 @@ export class ModalExecutor implements ExperimentExecutor {
       const exitCode = [124, 130].includes(preflight.exitCode) ? preflight.exitCode : 127;
       return { ...toRunResult(manifest, { ...preflight, command, cwd, durationMs: 0, exitCode, stdout: "", stderr: boundProcessOutput([preflight.stderr, "Modal runtime preflight failed; no remote launch was attempted."].filter(Boolean).join("\n")) }, metricName, true), stdout: preflight.stdout, artifacts: {}, failureClass: exitCode === 124 ? "timeout" : exitCode === 130 ? "unknown" : "dependency" };
     }
+    // Allocation inspection must be usable before any remote work is launched.
+    const inspectionCommand = [process.env.EVIDRA_MODAL_PYTHON ?? "python3", fileURLToPath(new URL("../../modal_reconcile.py", import.meta.url)), "--check-runtime"];
+    let inspection: ProcessResult;
+    try {
+      inspection = await runProcess(inspectionCommand, launchRoot, Math.min(10_000, manifest.resources.timeoutMinutes * 60_000), undefined, onProcess);
+    } catch (error) {
+      inspection = processFailureResult(inspectionCommand, launchRoot, error);
+    }
+    let inspectionReady = false;
+    if (inspection.exitCode === 0 && Buffer.byteLength(inspection.stdout) <= 4096) {
+      try { inspectionReady = JSON.parse(inspection.stdout).ready === true; } catch { /* Invalid capability responses cannot authorize a launch. */ }
+    }
+    if (!inspectionReady) {
+      const exitCode = [124, 130].includes(inspection.exitCode) ? inspection.exitCode : 127;
+      return { ...toRunResult(manifest, { command, cwd, exitCode, durationMs: 0, stdout: "", stderr: "Modal allocation inspection preflight failed; no remote launch was attempted. Configure EVIDRA_MODAL_PYTHON with a compatible Modal SDK." }, metricName, true), artifacts: {}, failureClass: exitCode === 124 ? "timeout" : exitCode === 130 ? "unknown" : "dependency" };
+    }
     // The worker image must contain the isolated worktree. Mounting the repo
     // root would omit `.sota/worktrees` and silently execute the wrong source.
     const submissionId = randomUUID();
@@ -754,6 +773,7 @@ export class ModalExecutor implements ExperimentExecutor {
     // stopped, even when the local process exits or never returns a receipt.
     observe("submitting");
     let callId: string | undefined;
+    let appId: string | undefined;
     let notStarted = false;
     let spawnErrorCode: string | undefined;
     let pendingLine = "";
@@ -769,9 +789,11 @@ export class ModalExecutor implements ExperimentExecutor {
         }
         if (index === parts.length - 1) continue;
         if (!oversizedLine && pendingLine.startsWith("[evidra-call] ")) {
-          const receipt = JSON.parse(pendingLine.slice("[evidra-call] ".length)) as { submissionId?: unknown; callId?: unknown };
+          const receipt = JSON.parse(pendingLine.slice("[evidra-call] ".length)) as { submissionId?: unknown; callId?: unknown; appId?: unknown };
           if (receipt.submissionId !== submissionId || typeof receipt.callId !== "string" || !/^fc-[A-Za-z0-9]{1,128}$/.test(receipt.callId) || callId) throw new Error("Modal call receipt is malformed, mismatched, or duplicated.");
-          observe("submitted", { callId: receipt.callId });
+          if (receipt.appId !== undefined && (typeof receipt.appId !== "string" || !/^ap-[A-Za-z0-9]{1,128}$/.test(receipt.appId))) throw new Error("Modal application receipt is malformed.");
+          appId = receipt.appId as string | undefined;
+          observe("submitted", { callId: receipt.callId, ...(appId ? { appId } : {}) });
           callId = receipt.callId;
         }
         pendingLine = "";
@@ -802,7 +824,22 @@ export class ModalExecutor implements ExperimentExecutor {
     if (result.exitCode !== 0 || !payload || !callId) {
       return { ...toRunResult(manifest, { ...result, command, cwd, exitCode: result.exitCode === 0 ? 65 : result.exitCode, stdout: "", stderr: boundProcessOutput([result.stderr, notStarted ? "Modal client did not start; no remote launch was attempted." : "Modal worker completion is unconfirmed; reconcile before replay."].filter(Boolean).join("\n")) }, metricName, true), stdout: result.stdout, artifacts: {}, failureClass: notStarted && ["ENOENT", "EACCES", "ENOEXEC", "ENOTDIR"].includes(spawnErrorCode ?? "") ? "dependency" : "unknown" };
     }
-    observe("terminal", { callId, completionEvidence: "client-envelope", state: "COMPLETED", exitCode: payload.exitCode });
+    // Successful CLI exit still needs authoritative application quiescence.
+    // A crashed client can leave warm containers alive after call completion.
+    const allocationStarted = Date.now();
+    try {
+      const remaining = Math.min(15_000, manifest.resources.timeoutMinutes * 60_000 - result.durationMs);
+      if (remaining <= 0) throw new Error("Allocation verification deadline exhausted");
+      const allocation = await runProcess([process.env.EVIDRA_MODAL_PYTHON ?? "python3", fileURLToPath(new URL("../../modal_reconcile.py", import.meta.url)), callId, "--wait-stopped-seconds", "10"], launchRoot, remaining, undefined, onProcess);
+      if (allocation.exitCode !== 0 || Buffer.byteLength(allocation.stdout) > 4096) throw new Error("Allocation query failed");
+      const proof = JSON.parse(allocation.stdout) as { callId?: unknown; state?: unknown; exitCode?: unknown; appId?: unknown; appState?: unknown; runningTasks?: unknown };
+      if (proof.callId !== callId || proof.state !== "COMPLETED" || proof.exitCode !== payload.exitCode || typeof proof.appId !== "string" || !/^ap-[A-Za-z0-9]{1,128}$/.test(proof.appId) || appId !== undefined && appId !== proof.appId || proof.appState !== "STOPPED" || proof.runningTasks !== 0) throw new Error("Allocation termination is unconfirmed");
+      observe("terminal", { callId, appId: proof.appId, appState: "STOPPED", runningTasks: 0, completionEvidence: "client-envelope", state: "COMPLETED", exitCode: payload.exitCode });
+    } catch {
+      result.durationMs += Date.now() - allocationStarted;
+      return { ...toRunResult(manifest, { ...result, command, cwd, exitCode: 65, stdout: "", stderr: boundProcessOutput([result.stderr, "Modal application termination is unconfirmed; compute and replay remain fenced. Reconcile before replay."].filter(Boolean).join("\n")) }, metricName, true), stdout: result.stdout, artifacts: {}, failureClass: "unknown" };
+    }
+    result.durationMs += Date.now() - allocationStarted;
     const allowedArtifacts = new Set(manifest.evaluation?.requiredArtifacts ?? []);
     for (const [name, encoded] of Object.entries(payload.artifacts ?? {})) {
       if (!allowedArtifacts.has(name)) continue;

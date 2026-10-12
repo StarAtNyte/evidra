@@ -1,0 +1,156 @@
+{
+  "at": "2026-10-11T19:08:53.365Z",
+  "executor": "modal",
+  "gpuRequested": false,
+  "timeoutMinutes": 1,
+  "result": {
+    "runId": "modal-live-client-crash-1791745733361",
+    "status": "failed",
+    "exitCode": 1,
+    "durationSeconds": 8.686,
+    "metrics": {},
+    "metricsByFold": {},
+    "learningCurve": [],
+    "subgroupDeltas": [],
+    "artifacts": {},
+    "stdout": "✓ Initialized. View run at \n[Modal run URL omitted]\n✓ Created objects.\n├── ✓ Uploaded /home/nitiz/Projects/Self/Harness/evidra/modal_app.py\n├── ✓ Uploaded /tmp/evidra-live-modal-crash-Yfk04d/workspace\n└── ✓ Created Function execute.\n[evidra-call] {\"submissionId\": \"f8c06229-01cc-43d1-8221-cad38c070e37\", \"callId\": \"fc-01M4P5WCDF32B2GE8746J8EWD6\", \"appId\": \"ap-LCDnz1wO4t42DUcGoPToq2\"}\n",
+    "stderr": "Modal worker completion is unconfirmed; reconcile before replay.",
+    "command": [
+      "python",
+      "probe.py"
+    ],
+    "cwd": "/tmp/evidra-live-modal-crash-Yfk04d/workspace",
+    "failureClass": "unknown"
+  },
+  "events": [
+    {
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "modal-live-client-crash",
+      "submissionId": "f8c06229-01cc-43d1-8221-cad38c070e37",
+      "allocationName": "evidra-f8c06229-01cc-43d1-8221-cad38c070e37",
+      "phase": "submitting",
+      "at": "2026-10-11T19:08:44.671Z"
+    },
+    {
+      "callId": "fc-01M4P5WCDF32B2GE8746J8EWD6",
+      "appId": "ap-LCDnz1wO4t42DUcGoPToq2",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "modal-live-client-crash",
+      "submissionId": "f8c06229-01cc-43d1-8221-cad38c070e37",
+      "allocationName": "evidra-f8c06229-01cc-43d1-8221-cad38c070e37",
+      "phase": "submitted",
+      "at": "2026-10-11T19:08:53.348Z"
+    }
+  ],
+  "artifact": null,
+  "workerSourceSha256": "7dc7bfd8a09c39c6ffd0a3e023160209272d8a216c40df23f30a4eb37453757f",
+  "normalExecution": {
+    "at": "2026-10-11T19:08:38.493Z",
+    "executor": "modal",
+    "gpuRequested": false,
+    "timeoutMinutes": 2,
+    "result": {
+      "runId": "modal-live-cpu-smoke-1791745718493",
+      "status": "completed",
+      "exitCode": 0,
+      "durationSeconds": 18.561,
+      "metrics": {
+        "accuracy": 1
+      },
+      "metricsByFold": {},
+      "learningCurve": [],
+      "subgroupDeltas": [],
+      "artifacts": {
+        "result.json": "/tmp/evidra-live-modal-gJVIIn/workspace/result.json"
+      },
+      "stdout": "accuracy=1.0\n",
+      "stderr": "",
+      "command": [
+        "python",
+        "probe.py"
+      ],
+      "cwd": "/tmp/evidra-live-modal-gJVIIn/workspace"
+    },
+    "events": [
+      {
+        "executor": "modal",
+        "protocol": "modal-call-v1",
+        "experimentId": "modal-live-cpu-smoke",
+        "submissionId": "e16567d1-6917-469a-92e6-41bd9ddc1fc8",
+        "allocationName": "evidra-e16567d1-6917-469a-92e6-41bd9ddc1fc8",
+        "phase": "submitting",
+        "at": "2026-10-11T19:08:12.966Z"
+      },
+      {
+        "callId": "fc-01M4P5VGBCKNF6MNXZ2X5J5JNT",
+        "appId": "ap-xzcVg9urQ5VJmHEL6BocRT",
+        "executor": "modal",
+        "protocol": "modal-call-v1",
+        "experimentId": "modal-live-cpu-smoke",
+        "submissionId": "e16567d1-6917-469a-92e6-41bd9ddc1fc8",
+        "allocationName": "evidra-e16567d1-6917-469a-92e6-41bd9ddc1fc8",
+        "phase": "submitted",
+        "at": "2026-10-11T19:08:24.676Z"
+      },
+      {
+        "callId": "fc-01M4P5VGBCKNF6MNXZ2X5J5JNT",
+        "appId": "ap-xzcVg9urQ5VJmHEL6BocRT",
+        "appState": "STOPPED",
+        "runningTasks": 0,
+        "completionEvidence": "client-envelope",
+        "state": "COMPLETED",
+        "exitCode": 0,
+        "executor": "modal",
+        "protocol": "modal-call-v1",
+        "experimentId": "modal-live-cpu-smoke",
+        "submissionId": "e16567d1-6917-469a-92e6-41bd9ddc1fc8",
+        "allocationName": "evidra-e16567d1-6917-469a-92e6-41bd9ddc1fc8",
+        "phase": "terminal",
+        "at": "2026-10-11T19:08:38.489Z"
+      }
+    ],
+    "artifact": {
+      "probe": "passed"
+    },
+    "workerSourceSha256": "7dc7bfd8a09c39c6ffd0a3e023160209272d8a216c40df23f30a4eb37453757f"
+  },
+  "allocationObservedBeforeStop": {
+    "callId": "fc-01M4P5WCDF32B2GE8746J8EWD6",
+    "state": "COMPLETED",
+    "exitCode": 0,
+    "appId": "ap-LCDnz1wO4t42DUcGoPToq2",
+    "appState": "ACTIVE",
+    "runningTasks": 1
+  },
+  "recoveryWhileAppActive": {
+    "released": false,
+    "queried": 1
+  },
+  "explicitOwnAppStop": true,
+  "recoveryAfterAppStop": {
+    "released": true,
+    "queried": 1,
+    "terminal": {
+      "experimentId": "modal-live-client-crash",
+      "submissionId": "f8c06229-01cc-43d1-8221-cad38c070e37",
+      "allocationName": "evidra-f8c06229-01cc-43d1-8221-cad38c070e37",
+      "callId": "fc-01M4P5WCDF32B2GE8746J8EWD6",
+      "state": "COMPLETED",
+      "exitCode": 0,
+      "completionEvidence": "sdk-result",
+      "appId": "ap-LCDnz1wO4t42DUcGoPToq2",
+      "appState": "STOPPED",
+      "runningTasks": 0,
+      "at": "2026-10-11T19:10:19.879Z",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "phase": "terminal"
+    },
+    "importedRuns": 0
+  },
+  "probeSource": "import os,json,pathlib,time\ntime.sleep(10)\nassert os.environ['EVIDRA_EXPERIMENT_ID']=='modal-live-client-crash'\nassert os.environ['EVIDRA_DATASET_VERSION']=='probe-data-v1'\nassert os.environ['EVIDRA_SPLIT_VERSION']=='probe-split-v1'\nassert os.environ['PROBE_VALUE']=='declared'\nassert os.environ['HOME']=='/tmp/evidra-worker-home'\nassert not pathlib.Path('.sota/controller-secret').exists()\nassert not pathlib.Path('.git/config').exists()\npathlib.Path('result.json').write_text(json.dumps({'probe':'passed'}))\nprint('accuracy=1.0')\n",
+  "modalVersion": "1.6.1",
+  "scope": "Live CPU normal completion and actual local-client SIGKILL. Completed call with active app remained fenced; explicit stop of the owned app permitted read-only recovery only after stopped state and zero tasks. Pending-call cancellation, GPU and concurrency remain unverified."
+}

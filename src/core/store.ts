@@ -835,6 +835,7 @@ export class ResearchStore {
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_type_task_id_id ON events(type, json_extract(payload_json, '$.taskId'), id)"); } catch { /* JSON1 unavailable; event APIs retain their compatibility fallback */ }
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_type_experiment_id_id ON events(type, json_extract(payload_json, '$.experimentId'), id)"); } catch { /* JSON1 unavailable; allocation lookups retain their compatibility fallback */ }
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_modal_call_id ON events(json_extract(payload_json, '$.callId'), id) WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal'"); } catch { /* JSON1 unavailable; call ownership uses a streaming fallback */ }
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_remote_submission_identity ON events(type, json_extract(payload_json, '$.experimentId'), json_extract(payload_json, '$.submissionId'), id) WHERE type IN ('run.remote.submitted', 'run.remote.terminal', 'run.remote.allocation.terminal')"); } catch { /* JSON1 unavailable; allocation proofs use bounded streaming reads */ }
     this.db.prepare("INSERT OR IGNORE INTO workspace_identity (id, workspace_id, created_at) VALUES (1, ?, ?)").run(`ws_${randomUUID()}`, new Date().toISOString());
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_experiments_created_at ON experiments(created_at);
@@ -3780,7 +3781,16 @@ export class ResearchStore {
         if (intent.payload.protocol === "modal-call-v1") {
           if (receipt.protocol !== intent.payload.protocol || proof.protocol !== intent.payload.protocol || typeof receipt.callId !== "string" || !/^fc-[A-Za-z0-9]{1,128}$/.test(receipt.callId) || proof.callId !== receipt.callId) return unresolved;
           if (!this.modalCallOwnershipConfirmed(experimentId, String(id), receipt.callId)) return unresolved;
-        } else if (intent.payload.protocol !== undefined || receipt.completionEvidence !== "client-envelope") return unresolved;
+        } else return unresolved;
+        let allocation = proof;
+        const supplemental = this.remoteEvidenceForSubmission("run.remote.allocation.terminal", experimentId, id);
+        if (proof.appState === "STOPPED" && proof.runningTasks === 0 && typeof proof.appId === "string" && /^ap-[A-Za-z0-9]{1,128}$/.test(proof.appId) && supplemental.length !== 0) return unresolved;
+        if (!(proof.appState === "STOPPED" && proof.runningTasks === 0 && typeof proof.appId === "string" && /^ap-[A-Za-z0-9]{1,128}$/.test(proof.appId))) {
+          const terminals = this.remoteEvidenceForSubmission("run.remote.terminal", experimentId, id);
+          if (supplemental.length !== 1 || terminals.length !== 1 || supplemental[0].id <= terminals[0].id) return unresolved;
+          allocation = supplemental[0].payload;
+        }
+        if (allocation.phase !== "terminal" || allocation.state !== proof.state || allocation.exitCode !== proof.exitCode || allocation.executor !== "modal" || allocation.protocol !== intent.payload.protocol || allocation.allocationName !== intent.payload.allocationName || allocation.callId !== receipt.callId || allocation.appState !== "STOPPED" || allocation.runningTasks !== 0 || typeof allocation.appId !== "string" || !/^ap-[A-Za-z0-9]{1,128}$/.test(allocation.appId) || receipt.appId !== undefined && receipt.appId !== allocation.appId) return unresolved;
         if (!(proof.completionEvidence === "client-envelope" || intent.payload.protocol === "modal-call-v1" && proof.completionEvidence === "sdk-result") || proof.state !== "COMPLETED" || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) return unresolved;
         continue;
       }
@@ -3819,6 +3829,23 @@ export class ResearchStore {
   }
 
   /** A call receipt cannot be reused by another intent or experiment. */
+  private remoteEvidenceForSubmission(type: string, experimentId: string, submissionId: string): Array<{ id: number; payload: Record<string, unknown> }> {
+    try {
+      const rows = this.db.prepare("SELECT id, payload_json FROM events WHERE type = ? AND type IN ('run.remote.submitted', 'run.remote.terminal', 'run.remote.allocation.terminal') AND json_extract(payload_json, '$.experimentId') = ? AND json_extract(payload_json, '$.submissionId') = ? ORDER BY id LIMIT 2").all(type, experimentId, submissionId) as Array<{ id: number; payload_json: string }>;
+      return rows.map((row) => ({ id: row.id, payload: JSON.parse(row.payload_json) as Record<string, unknown> }));
+    } catch {
+      const found: Array<{ id: number; payload: Record<string, unknown> }> = [];
+      const rows = this.db.prepare("SELECT id, payload_json FROM events WHERE type = ? ORDER BY id").iterate(type) as IterableIterator<{ id: number; payload_json: string }>;
+      for (const row of rows) {
+        const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+        if (payload?.experimentId !== experimentId || payload.submissionId !== submissionId) continue;
+        found.push({ id: row.id, payload });
+        if (found.length === 2) break;
+      }
+      return found;
+    }
+  }
+
   modalCallOwnershipConfirmed(experimentId: string, submissionId: string, callId: string): boolean {
     let receipts: Array<Record<string, unknown>>;
     try {
@@ -3838,11 +3865,23 @@ export class ResearchStore {
   }
 
   /** Both synchronous completion and recovery must agree on the same call. */
-  recordModalTerminalEvidence(event: { experimentId: string; submissionId: string; allocationName: string; callId: string; state: string; exitCode: number; completionEvidence: "client-envelope" | "sdk-result"; at: string }): boolean {
+  recordModalTerminalEvidence(event: { experimentId: string; submissionId: string; allocationName: string; callId: string; state: string; exitCode: number; completionEvidence: "client-envelope" | "sdk-result"; appId?: string; appState?: "STOPPED"; runningTasks?: number; at: string }): boolean {
     return this.db.transaction(() => {
       if (!this.modalCallOwnershipConfirmed(event.experimentId, event.submissionId, event.callId)) return false;
-      const existing = this.eventsByType("run.remote.terminal").map((record) => record.payload as Record<string, unknown>).filter((record) => record.experimentId === event.experimentId && record.submissionId === event.submissionId);
-      if (existing.length) return existing.length === 1 && existing[0].executor === "modal" && existing[0].protocol === "modal-call-v1" && ["callId", "allocationName", "state", "exitCode"].every((key) => existing[0][key] === (event as unknown as Record<string, unknown>)[key]);
+      const existing = this.remoteEvidenceForSubmission("run.remote.terminal", event.experimentId, event.submissionId).map((record) => record.payload);
+      const receipt = this.remoteEvidenceForSubmission("run.remote.submitted", event.experimentId, event.submissionId)[0]?.payload;
+      const hasAllocation = typeof event.appId === "string" && /^ap-[A-Za-z0-9]{1,128}$/.test(event.appId) && event.appState === "STOPPED" && event.runningTasks === 0;
+      if (hasAllocation && receipt?.appId !== undefined && receipt.appId !== event.appId) return false;
+      if (existing.length) {
+        if (existing.length !== 1 || existing[0].executor !== "modal" || existing[0].protocol !== "modal-call-v1" || !["callId", "allocationName", "state", "exitCode"].every((key) => existing[0][key] === (event as unknown as Record<string, unknown>)[key])) return false;
+        if (existing[0].appId !== undefined) return hasAllocation && existing[0].appId === event.appId && existing[0].appState === event.appState && existing[0].runningTasks === event.runningTasks;
+        if (hasAllocation) {
+          const supplemental = this.remoteEvidenceForSubmission("run.remote.allocation.terminal", event.experimentId, event.submissionId).map((record) => record.payload);
+          if (supplemental.length) return supplemental.length === 1 && ["callId", "appId", "appState", "runningTasks", "allocationName"].every((key) => supplemental[0][key] === (event as unknown as Record<string, unknown>)[key]);
+          this.appendEvent("run.remote.allocation.terminal", { ...event, executor: "modal", protocol: "modal-call-v1", phase: "terminal" });
+        }
+        return true;
+      }
       this.appendEvent("run.remote.terminal", { ...event, executor: "modal", protocol: "modal-call-v1", phase: "terminal" });
       return true;
     })();

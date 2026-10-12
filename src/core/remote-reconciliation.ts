@@ -37,13 +37,20 @@ export async function reconcileModalExperiment(storePath: string, cwd: string, e
     for (const intent of records.filter((event) => event.type === "run.remote.submitting")) {
       const { submissionId, allocationName, protocol } = intent.payload;
       if (protocol !== "modal-call-v1" || typeof submissionId !== "string" || !/^[a-f0-9-]{36}$/.test(submissionId) || allocationName !== `evidra-${submissionId}`) continue;
-      if (records.filter((record) => record.type === "run.remote.submitting" && record.payload.submissionId === submissionId).length !== 1 || records.some((record) => record.type === "run.remote.terminal" && record.payload.submissionId === submissionId)) continue;
+      if (records.filter((record) => record.type === "run.remote.submitting" && record.payload.submissionId === submissionId).length !== 1) continue;
       const receipts = records.filter((event) => event.type === "run.remote.submitted" && event.payload.submissionId === submissionId);
       if (receipts.length !== 1 || records.indexOf(intent) >= records.indexOf(receipts[0])) continue;
       const receipt = receipts[0].payload;
       const callId = receipt.callId;
       if (receipt.phase !== "submitted" || intent.payload.phase !== "submitting" || receipt.protocol !== protocol || receipt.allocationName !== allocationName || typeof callId !== "string" || !/^fc-[A-Za-z0-9]{1,128}$/.test(callId)) continue;
       if (!store.modalCallOwnershipConfirmed(experimentId, submissionId, callId)) continue;
+      const terminals = records.filter((event) => event.type === "run.remote.terminal" && event.payload.submissionId === submissionId);
+      if (terminals.length > 1) continue;
+      if (terminals.length === 1) {
+        const terminal = terminals[0].payload;
+        if (records.indexOf(receipts[0]) >= records.indexOf(terminals[0]) || terminal.executor !== "modal" || terminal.protocol !== protocol || terminal.phase !== "terminal" || terminal.allocationName !== allocationName || terminal.callId !== callId || terminal.state !== "COMPLETED" || !Number.isInteger(terminal.exitCode) || Number(terminal.exitCode) < 0 || Number(terminal.exitCode) > 255 || !["client-envelope", "sdk-result"].includes(String(terminal.completionEvidence))) continue;
+      }
+
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
       queried += 1;
@@ -51,9 +58,9 @@ export async function reconcileModalExperiment(storePath: string, cwd: string, e
         const result = await runProcess([process.env.EVIDRA_MODAL_PYTHON ?? "python3", fileURLToPath(new URL("../../modal_reconcile.py", import.meta.url)), callId], cwd, remaining);
         if (result.exitCode === 130) break;
         if (result.exitCode !== 0 || Buffer.byteLength(result.stdout) > 4096) continue;
-        const proof = JSON.parse(result.stdout) as { callId?: unknown; state?: unknown; exitCode?: unknown };
-        if (proof.callId !== callId || proof.state !== "COMPLETED" || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) continue;
-        store.recordModalTerminalEvidence({ experimentId, submissionId, allocationName, callId, state: "COMPLETED", exitCode: Number(proof.exitCode), completionEvidence: "sdk-result", at: new Date().toISOString() });
+        const proof = JSON.parse(result.stdout) as { callId?: unknown; state?: unknown; exitCode?: unknown; appId?: unknown; appState?: unknown; runningTasks?: unknown };
+        if (proof.callId !== callId || proof.state !== "COMPLETED" || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255 || typeof proof.appId !== "string" || !/^ap-[A-Za-z0-9]{1,128}$/.test(proof.appId) || receipt.appId !== undefined && receipt.appId !== proof.appId || proof.appState !== "STOPPED" || proof.runningTasks !== 0) continue;
+        store.recordModalTerminalEvidence({ experimentId, submissionId, allocationName, callId, state: "COMPLETED", exitCode: Number(proof.exitCode), completionEvidence: "sdk-result", appId: proof.appId, appState: "STOPPED", runningTasks: 0, at: new Date().toISOString() });
       } catch { /* Failed SDK queries cannot establish remote termination. */ }
     }
     return { released: store.reconcileRemoteExperiment(experimentId), queried };

@@ -15,6 +15,10 @@ const previousPath = process.env.PATH, previousEntrypoint = process.env.EVIDRA_M
 try {
   const bin = join(root, "bin"), workspace = join(root, "unrelated workspace");
   mkdirSync(bin); mkdirSync(workspace);
+  writeFileSync(join(bin, "python3"), `#!${process.execPath}
+    if(process.argv.includes('--check-runtime')){console.log(JSON.stringify({ready:true}));process.exit(0);}
+    console.log(JSON.stringify({callId:process.argv[3],state:'COMPLETED',exitCode:0,appId:'ap-installedworker',appState:'STOPPED',runningTasks:0}));
+  `, { mode: 0o755 });
   writeFileSync(join(workspace, "modal_app.py"), "raise RuntimeError('wrong workspace worker')\n");
   writeFileSync(join(bin, "modal"), `#!${process.execPath}
     const fs=require('node:fs');

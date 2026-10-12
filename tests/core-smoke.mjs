@@ -9018,24 +9018,31 @@ test("Modal completion envelopes reject ambiguity and malformed terminal evidenc
 test("Modal runtime preflight failures never record allocation intent or charge worker compute", async () => {
   const previousPath = process.env.PATH;
   try {
-    for (const mode of ["missing", "broken", "timeout", "interrupted"]) {
+    for (const mode of ["missing", "broken", "timeout", "interrupted", "sdk-missing", "sdk-broken", "sdk-malformed", "sdk-timeout", "sdk-interrupted"]) {
       const root = mkdtempSync(join(tmpdir(), "evidra-modal-preflight-"));
       const bin = join(root, "bin"); mkdirSync(bin);
       const db = join(root, "state.sqlite"), store = new ResearchStore(db);
       try {
         if (mode !== "missing") writeFileSync(join(bin, "modal"), `#!${process.execPath}
           if(process.argv.includes('--version')){
+            if(${JSON.stringify(mode)}.startsWith('sdk-')){console.log('modal client version 1.6.1');process.exit(0);}
             if(${JSON.stringify(mode)}==='broken'){console.log('accuracy=0.9');console.error('ModuleNotFoundError: modal');process.exit(1);}
             setInterval(()=>{},1000);
           }else{require('node:fs').writeFileSync('launched','yes');process.exit(0);}
         `, { mode: 0o755 });
+        if (mode.startsWith("sdk-") && mode !== "sdk-missing") writeFileSync(join(bin, "python3"), `#!${process.execPath}
+          if(${JSON.stringify(mode)}==='sdk-malformed'){console.log('accuracy=0.9');process.exit(0);}
+          if(${JSON.stringify(mode)}==='sdk-broken'){console.log('accuracy=0.9');process.exit(1);}
+          require('node:fs').writeFileSync('sdk-check-ready','yes');setInterval(()=>{},1000);
+        `, { mode: 0o755 });
         process.env.PATH = bin;
-        const manifest = { id: mode, resources: { executor: "modal", timeoutMinutes: mode === "timeout" ? 0.001 : 1 }, evaluation: { requiredArtifacts: [] } };
+        const manifest = { id: mode, resources: { executor: "modal", timeoutMinutes: mode.endsWith("timeout") ? 0.001 : 1 }, evaluation: { requiredArtifacts: [] } };
         store.saveExperiment({ id: mode, payload: { ...manifest, status: "running" } });
         store.reserveComputeBudget({ experimentId: mode, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
-        const result = await new ModalExecutor(root, (event) => recordRemoteExecution(db, event)).run(manifest, root, ["train"], mode === "interrupted" ? (control) => control.terminate() : undefined, "accuracy");
+        let processes = 0;
+        const result = await new ModalExecutor(root, (event) => recordRemoteExecution(db, event)).run(manifest, root, ["train"], mode === "interrupted" ? (control) => control.terminate() : mode === "sdk-interrupted" ? (control) => { if (++processes === 2) control.terminate(); } : undefined, "accuracy");
         assert.equal(result.status, "failed");
-        assert.equal(result.exitCode, mode === "timeout" ? 124 : mode === "interrupted" ? 130 : 127);
+        assert.equal(result.exitCode, mode.endsWith("timeout") ? 124 : mode.endsWith("interrupted") ? 130 : 127);
         assert.equal(result.durationSeconds, 0);
         assert.deepEqual(result.metrics, {});
         assert.deepEqual(result.artifacts, {});
@@ -9060,7 +9067,7 @@ test("Modal distinguishes proven spawn failure from errors after the client star
   try {
     for (const mode of ["missing", "not-executable", "callback-error"]) {
       const root = mkdtempSync(join(tmpdir(), "evidra-modal-spawn-"));
-      const bin = join(root, "bin"); mkdirSync(bin);
+      const bin = join(root, "bin"); mkdirSync(bin); installModalAllocationFixture(bin);
       const db = join(root, "state.sqlite");
       const store = new ResearchStore(db);
       try {
@@ -9105,10 +9112,19 @@ test("Modal distinguishes proven spawn failure from errors after the client star
   } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
 });
 
+function installModalAllocationFixture(bin, mode = "completed") {
+  writeFileSync(join(bin, "python3"), `#!${process.execPath}
+    const mode=${JSON.stringify(mode)};
+    if(process.argv.includes('--check-runtime')){console.log(JSON.stringify({ready:true}));process.exit(0);}
+    if(mode==='app-missing')process.exit(1);
+    console.log(JSON.stringify({callId:process.argv[3],state:'COMPLETED',exitCode:mode==='worker-failed'?7:0,appId:'ap-contract',appState:mode==='app-active'?'ACTIVE':'STOPPED',runningTasks:mode==='app-active'?1:0}));
+  `, { mode: 0o755 });
+}
+
 test("Modal uses the shipped worker from an unrelated workspace and preserves custom entrypoints", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-modal-entrypoint-"));
   const bin = join(root, "bin"), workspace = join(root, "workspace with spaces");
-  mkdirSync(bin); mkdirSync(workspace);
+  mkdirSync(bin); mkdirSync(workspace); installModalAllocationFixture(bin);
   const previousPath = process.env.PATH, previousEntrypoint = process.env.EVIDRA_MODAL_ENTRYPOINT;
   try {
     writeFileSync(join(workspace, "modal_app.py"), "raise RuntimeError('workspace decoy must not be used')");
@@ -9141,8 +9157,8 @@ test("Modal uses the shipped worker from an unrelated workspace and preserves cu
 test("Modal requires successful client completion before accepting worker evidence or artifacts", async () => {
   const previousPath = process.env.PATH;
   try {
-    for (const mode of ["completed", "client-failed", "timeout", "interrupted", "missing-envelope", "worker-failed", "missing-receipt", "mismatched-receipt", "duplicate-receipt"]) {
-      const root = mkdtempSync(join(tmpdir(), "evidra-modal-completion-")), bin = join(root, "bin"); mkdirSync(bin);
+    for (const mode of ["completed", "client-failed", "timeout", "interrupted", "missing-envelope", "worker-failed", "missing-receipt", "mismatched-receipt", "duplicate-receipt", "app-active", "app-missing", "app-mismatch"]) {
+      const root = mkdtempSync(join(tmpdir(), "evidra-modal-completion-")), bin = join(root, "bin"); mkdirSync(bin); installModalAllocationFixture(bin, mode);
       try {
         const payload = { exitCode: mode === "worker-failed" ? 7 : 0, stdout: "accuracy=0.9", stderr: "worker diagnostics", artifacts: { "result.json": Buffer.from("verified artifact").toString("base64") } };
         writeFileSync(join(bin, "modal"), `#!${process.execPath}
@@ -9151,7 +9167,7 @@ test("Modal requires successful client completion before accepting worker eviden
           const digest=process.argv[process.argv.indexOf('--config-sha256')+1];
           const snapshot=fs.readFileSync(require('node:path').join(process.env.EVIDRA_MODAL_WORKSPACE,'.sota','experiment-config.json'));
           if(!/^[0-9a-f]{64}$/.test(digest)||require('node:crypto').createHash('sha256').update(snapshot).digest('hex')!==digest)process.exit(9);
-          const receipt='[evidra-call] '+JSON.stringify({submissionId:mode==='mismatched-receipt'?'wrong':process.argv[process.argv.indexOf('--submission-id')+1],callId:'fc-contract'});
+          const receipt='[evidra-call] '+JSON.stringify({submissionId:mode==='mismatched-receipt'?'wrong':process.argv[process.argv.indexOf('--submission-id')+1],callId:'fc-contract',appId:mode==='app-mismatch'?'ap-other':'ap-contract'});
           if(mode!=='missing-receipt')console.log(receipt);
           if(mode==='duplicate-receipt')console.log(receipt);
           console.log(mode==='missing-envelope'?'accuracy=0.9':${JSON.stringify(JSON.stringify(payload))});
@@ -9193,7 +9209,7 @@ test("Modal requires successful client completion before accepting worker eviden
           }
         } finally { reopened.close(); }
         assert.equal(existsSync(join(root, "result.json")), confirmed, mode);
-        if (!confirmed) { assert.deepEqual(result.metrics, {}); assert.deepEqual(result.artifacts, {}); if (!["mismatched-receipt", "duplicate-receipt"].includes(mode)) assert.match(result.stdout, /accuracy/); assert.equal(result.failureClass, "unknown"); assert.match(result.stderr, /completion is unconfirmed/); }
+        if (!confirmed) { assert.deepEqual(result.metrics, {}); assert.deepEqual(result.artifacts, {}); if (!["mismatched-receipt", "duplicate-receipt", "app-active", "app-missing", "app-mismatch"].includes(mode)) assert.match(result.stdout, /accuracy/); assert.equal(result.failureClass, "unknown"); assert.match(result.stderr, /completion is unconfirmed|application termination is unconfirmed/); }
         else assert.equal(readFileSync(join(root, "result.json"), "utf8"), "verified artifact");
         if (mode === "client-failed") assert.equal(result.exitCode, 3);
         if (mode === "timeout") assert.equal(result.exitCode, 124);
@@ -9215,7 +9231,7 @@ class Image:
     def pip_install(self, *args): return self
     def add_local_dir(self, *args, **kwargs): return self
 class App:
-    def __init__(self, *args): pass
+    def __init__(self, *args): self.app_id = 'ap-contract'
     def function(self, **kwargs):
         def decorate(fn):
             fn.remote = fn
@@ -9470,10 +9486,26 @@ class FunctionCall:
         if mode == 'pending' or self.call_id == 'fc-pending': raise TimeoutError('still running')
         if mode == 'expired': raise RuntimeError('output expired')
         return dict(exitCode=True if mode == 'malformed' else 7 if mode == 'failed' else 0, stdout='accuracy=0.99', stderr='', artifacts={'result.json': 'e30='})
+import sys
+from types import SimpleNamespace as NS
+async def call_metadata(request):
+    return NS(function_call_id='fc-wrong' if os.environ['EVIDRA_MODAL_TEST_MODE']=='app-wrong-metadata' else request.function_call_id, metadata=NS(app_id='ap-owned'))
+async def app_list(request):
+    mode=os.environ['EVIDRA_MODAL_TEST_MODE']
+    app=NS(app_id='ap-owned',state=1 if mode in ('app-active','historical-active','app-active-zero') else 5,n_running_tasks=1 if mode in ('app-active','historical-active','app-stopped-running') else 0)
+    return NS(apps=[] if mode=='app-missing' else [app,app] if mode=='app-ambiguous' else [app])
+class Client:
+    @classmethod
+    async def from_env(cls): return NS(_stub=NS(FunctionCallFromId=call_metadata,AppList=app_list))
+import asyncio
+sys.modules['modal._utils.async_utils']=NS(synchronizer=NS(create_blocking=lambda fn: lambda *args: asyncio.run(fn(*args))))
+sys.modules['modal.client']=NS(_Client=Client)
+sys.modules['modal._object']=NS(_get_environment_name=lambda env: '')
+sys.modules['modal_proto']=NS(api_pb2=NS(FunctionCallFromIdRequest=lambda **kw:NS(**kw),AppListRequest=lambda **kw:NS(**kw),APP_STATE_STOPPED=5))
 `);
     process.env.PYTHONPATH = root;
     process.env.EVIDRA_MODAL_PYTHON = "python3";
-    for (const mode of ["completed", "failed", "pending", "expired", "malformed", "missing-receipt", "multiple", "shared-intent", "shared-experiment"]) {
+    for (const mode of ["completed", "failed", "pending", "expired", "malformed", "missing-receipt", "multiple", "shared-intent", "shared-experiment", "app-active", "app-active-zero", "app-stopped-running", "app-missing", "app-ambiguous", "app-wrong-metadata", "historical-active", "historical-stopped"]) {
       process.env.EVIDRA_MODAL_TEST_MODE = mode;
       const db = join(root, `${mode}.sqlite`), id = `recover-${mode}`;
       const store = new ResearchStore(db);
@@ -9491,9 +9523,10 @@ class FunctionCall:
         store.appendEvent("run.remote.submitting", { ...second, phase: "submitting" });
         store.appendEvent("run.remote.submitted", { ...second, callId: mode === "multiple" ? "fc-pending" : "fc-owned", phase: "submitted" });
       }
+      if (mode.startsWith("historical-")) store.appendEvent("run.remote.terminal", { ...common, callId: "fc-owned", state: "COMPLETED", exitCode: 0, completionEvidence: "sdk-result", phase: "terminal" });
       store.recoverStaleExperiments(0);
       store.close();
-      const completed = ["completed", "failed"].includes(mode);
+      const completed = ["completed", "failed", "historical-stopped"].includes(mode);
       assert.deepEqual(await reconcileRemoteExperiment(db, root, id), { released: completed, queried: ["missing-receipt", "shared-intent", "shared-experiment"].includes(mode) ? 0 : mode === "multiple" ? 2 : 1 }, mode);
       const reopened = new ResearchStore(db);
       try {
@@ -9503,7 +9536,7 @@ class FunctionCall:
         assert.equal(existsSync(join(root, "result.json")), false);
         const terminals = reopened.eventsByType("run.remote.terminal");
         if (mode.startsWith("shared-")) assert.equal(reopened.recordModalTerminalEvidence({ ...common, callId: "fc-owned", state: "COMPLETED", exitCode: 0, completionEvidence: "sdk-result", at: new Date().toISOString() }), false);
-        assert.equal(terminals.length, completed || mode === "multiple" ? 1 : 0);
+        assert.equal(terminals.length, completed || mode === "multiple" || mode === "historical-active" ? 1 : 0);
         if (completed || mode === "multiple") {
           const proof = terminals[0].payload;
           assert.equal(proof.completionEvidence, "sdk-result");
@@ -9511,6 +9544,7 @@ class FunctionCall:
           assert.equal(reopened.recordModalTerminalEvidence({ ...proof, completionEvidence: "client-envelope" }), true);
           assert.equal(reopened.recordModalTerminalEvidence({ ...proof, callId: "fc-other" }), false);
           assert.equal(reopened.eventsByType("run.remote.terminal").length, 1);
+          if (mode === "historical-stopped") assert.equal(reopened.eventsByType("run.remote.allocation.terminal").length, 1);
         }
       } finally { reopened.close(); }
     }
@@ -9552,11 +9586,55 @@ test("Modal call ownership stays bounded and rejects aliases without SQLite JSON
   } finally { store.db.prepare = originalPrepare; store.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
+test("Modal allocation proofs preserve historical records and require causal matching quiescence", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-modal-allocation-proof-"));
+  try {
+    for (const mode of ["migrated", "writer", "json-disabled", "no-allocation", "before-terminal", "duplicate", "wrong-app", "wrong-call", "active", "running", "string-count", "wrong-phase", "wrong-exit", "extra-strong-proof"]) {
+      const db = join(root, `${mode}.sqlite`), id = `allocation-${mode}`;
+      const store = new ResearchStore(db);
+      const common = { executor: "modal", protocol: "modal-call-v1", experimentId: id, submissionId: "12345678-1234-1234-1234-123456789abc", allocationName: "evidra-12345678-1234-1234-1234-123456789abc", callId: "fc-owned" };
+      const terminal = { ...common, phase: "terminal", state: "COMPLETED", exitCode: 0, completionEvidence: "sdk-result" };
+      const allocation = { ...terminal, appId: mode === "wrong-app" ? "ap-other" : "ap-owned", appState: mode === "active" ? "ACTIVE" : "STOPPED", runningTasks: mode === "running" ? 1 : mode === "string-count" ? "0" : 0, at: new Date().toISOString() };
+      if (mode === "wrong-call") allocation.callId = "fc-other";
+      if (mode === "wrong-phase") allocation.phase = "submitted";
+      if (mode === "wrong-exit") allocation.exitCode = 7;
+      store.saveExperiment({ id, payload: { id, status: "running", resources: { executor: "modal" } } });
+      store.reserveComputeBudget({ experimentId: id, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+      store.appendEvent("run.remote.submitting", { ...common, phase: "submitting" });
+      store.appendEvent("run.remote.submitted", { ...common, phase: "submitted", appId: "ap-owned" });
+      if (mode === "before-terminal") store.appendEvent("run.remote.allocation.terminal", allocation);
+      store.appendEvent("run.remote.terminal", mode === "extra-strong-proof" ? { ...terminal, appId: "ap-owned", appState: "STOPPED", runningTasks: 0 } : terminal);
+      if (mode === "json-disabled") {
+        const prepare = store.db.prepare.bind(store.db);
+        store.db.prepare = (sql) => { if (sql.includes("json_extract")) throw new Error("JSON1 unavailable"); return prepare(sql); };
+      }
+      if (["writer", "json-disabled"].includes(mode)) {
+        assert.equal(store.recordModalTerminalEvidence(allocation), true);
+        assert.equal(store.recordModalTerminalEvidence(allocation), true);
+        assert.equal(store.recordModalTerminalEvidence({ ...allocation, appId: "ap-other" }), false);
+        assert.equal(store.eventsByType("run.remote.terminal").length, 1);
+        assert.equal(store.eventsByType("run.remote.allocation.terminal").length, 1);
+      } else if (!["before-terminal", "no-allocation"].includes(mode)) {
+        store.appendEvent("run.remote.allocation.terminal", allocation);
+        if (mode === "duplicate") store.appendEvent("run.remote.allocation.terminal", allocation);
+      }
+      const confirmed = ["migrated", "writer", "json-disabled"].includes(mode);
+      assert.equal(store.remoteExecutionState(id).confirmed, confirmed, mode);
+      store.saveExperiment({ id, payload: { id, status: "failed", resources: { executor: "modal" } } });
+      assert.equal(store.reservedComputeGpuHours(), confirmed ? 0 : 1, mode);
+      store.close();
+      const reopened = new ResearchStore(db);
+      try { assert.equal(reopened.remoteExecutionState(id).confirmed, confirmed, mode); assert.equal(reopened.reservedComputeGpuHours(), confirmed ? 0 : 1, mode); }
+      finally { reopened.close(); }
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Modal reconciliation requires ordered completion evidence for every invocation", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-modal-ledger-"));
   try {
-    for (const mode of ["confirmed", "missing", "duplicate", "reordered", "wrong-receipt", "wrong-exit", "extra-intent", "call-confirmed", "call-mismatched", "call-missing", "call-reused", "spawn-proven", "spawn-receipt", "spawn-wrongcode", "spawn-wrongexit", "spawn-reordered", "spawn-duplicate"]) {
-      const confirmed = ["confirmed", "call-confirmed", "spawn-proven"].includes(mode);
+    for (const mode of ["confirmed", "missing", "duplicate", "reordered", "wrong-receipt", "wrong-exit", "extra-intent", "call-confirmed", "call-mismatched", "call-missing", "call-reused", "spawn-proven", "spawn-receipt", "spawn-wrongcode", "spawn-wrongexit", "spawn-reordered", "spawn-duplicate", "legacy-app-proof"]) {
+      const confirmed = ["call-confirmed", "spawn-proven"].includes(mode);
       const db = join(root, `${mode}.sqlite`);
       const store = new ResearchStore(db);
       const id = `modal-${mode}`;
@@ -9566,10 +9644,12 @@ test("Modal reconciliation requires ordered completion evidence for every invoca
       const intent = { ...common, phase: "submitting" };
       const receipt = { ...common, phase: "submitted", completionEvidence: mode === "wrong-receipt" ? "unverified" : "client-envelope" };
       const terminal = { ...common, phase: "terminal", completionEvidence: "client-envelope", state: "COMPLETED", exitCode: mode === "wrong-exit" ? 256 : 7 };
+      if (mode === "legacy-app-proof") Object.assign(terminal, { appId: "ap-owned", appState: "STOPPED", runningTasks: 0 });
       if (mode.startsWith("call-")) {
         intent.protocol = receipt.protocol = terminal.protocol = "modal-call-v1";
         if (mode !== "call-missing") receipt.callId = "fc-owned";
         terminal.callId = mode === "call-mismatched" ? "fc-other" : "fc-owned";
+        if (mode === "call-confirmed") Object.assign(terminal, { appId: "ap-owned", appState: "STOPPED", runningTasks: 0 });
       }
       if (mode.startsWith("spawn-")) {
         intent.protocol = terminal.protocol = "modal-call-v1";
