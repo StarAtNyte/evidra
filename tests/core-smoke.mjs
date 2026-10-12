@@ -14246,3 +14246,17 @@ test('autonomous workspace guard rejects file and directory symlink escapes', ()
     }
   }finally{rmSync(root,{recursive:true,force:true});rmSync(outside,{recursive:true,force:true});}
 });
+
+test('workspace inspection validates attached path options and directory listings', () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-option-paths-')),outside=mkdtempSync(join(tmpdir(),'evidra-options-outside-'));
+  try {
+    symlinkSync(outside,join(root,'external'),'dir');mkdirSync(join(root,'safe'));
+    for(const [executable,option] of [['grep','--file='],['grep','-f'],['sed','--file='],['rg','--ignore-file='],['grep','--exclude-from='],['du','--files0-from='],['file','--magic-file='],['git','--git-dir='],['git','--work-tree='],['git','-C']]) {
+      for(const path of [join(outside,'fixture'),'external/fixture','../outside'])assert.equal(guardWorkspaceCommand([executable,option+path],root).allowed,false,executable+':'+option+path);
+      assert.equal(guardWorkspaceCommand([executable,option+'safe/fixture'],root).allowed,true,executable+':'+option);
+    }
+    assert.equal(guardWorkspaceCommand(['ls',outside],root).allowed,false);
+    assert.equal(guardWorkspaceCommand(['ls','external'],root).allowed,false);
+    assert.equal(guardWorkspaceCommand(['ls','safe'],root).allowed,true);
+  }finally{rmSync(root,{recursive:true,force:true});rmSync(outside,{recursive:true,force:true});}
+});

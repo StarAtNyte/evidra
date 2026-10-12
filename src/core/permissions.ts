@@ -117,17 +117,23 @@ export function guardWorkspaceCommand(command: string[], root: string): CommandG
   try { rootPath = realpathSync(root); } catch { return { allowed: false, reason: "Workspace root is unavailable." }; }
   const executable = basename(command[0] ?? "").toLowerCase();
   const pathArguments = new Set<number>();
+  const optionPaths: string[] = [];
   if (executable === "git") {
     for (let index = 1; index < command.length - 1; index += 1) if (command[index] === "-C" || command[index] === "--work-tree") pathArguments.add(index + 1);
+    for (const argument of command.slice(1)) {
+      if (argument.startsWith("-C") && argument.length > 2) optionPaths.push(argument.slice(2));
+      for (const option of ["--git-dir=", "--work-tree="]) if (argument.startsWith(option)) optionPaths.push(argument.slice(option.length));
+    }
   }
-  if (["rg", "grep", "find", "sed", "head", "tail", "cat", "du", "file", "wc", "awk", "sha256sum", "shasum", "md5sum"].includes(executable)) {
+  if (["ls", "rg", "grep", "find", "sed", "head", "tail", "cat", "du", "file", "wc", "awk", "sha256sum", "shasum", "md5sum"].includes(executable)) {
     for (let index = 1; index < command.length; index += 1) {
       const value = command[index] ?? "";
       if (!value.startsWith("-")) pathArguments.add(index);
+      for (const option of ["--file=", "--ignore-file=", "--exclude-from=", "--files0-from=", "--magic-file="]) if (value.startsWith(option)) optionPaths.push(value.slice(option.length));
+      if (["rg", "grep", "sed"].includes(executable) && value.startsWith("-f") && value.length > 2) optionPaths.push(value.slice(2));
     }
   }
-  for (const index of pathArguments) {
-    const value = command[index] ?? "";
+  for (const value of [...pathArguments].map((index) => command[index] ?? "").concat(optionPaths)) {
     if (!value || /^https?:\/\//i.test(value)) continue;
     if (value.split(/[\\/]+/).includes("..")) return { allowed: false, reason: `Refusing workspace escape path '${value}'.` };
     const target = resolve(rootPath, value);

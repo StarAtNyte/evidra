@@ -1260,6 +1260,12 @@ external evaluator.
 
 ## Immediate next work
 
+Workspace inspection now checks attached file-list, pattern/script-file,
+ignore-file and magic-file option paths, plus attached Git directory options
+and ls listing paths. Absolute/traversing paths and symlinked outside parents
+are rejected, including missing leaves. Regressions cover recognized option
+forms; this is not a complete parser for every tool option or implicit read.
+
 Autonomous workspace path checks now resolve existing file targets and the
 nearest existing parent of missing targets. Relative file or directory symlinks
 that lead outside the workspace are refused; internal symlinks remain usable.
