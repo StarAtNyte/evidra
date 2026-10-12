@@ -9475,6 +9475,7 @@ test("Modal recovery polls recorded calls without replaying or importing measure
   try {
     writeFileSync(join(root, "modal.py"), `
 import json, os
+class InputCancellation(BaseException): pass
 class FunctionCall:
     @classmethod
     def from_id(cls, call_id):
@@ -9485,8 +9486,11 @@ class FunctionCall:
     def get(self, timeout):
         assert timeout == 0
         mode = os.environ['EVIDRA_MODAL_TEST_MODE']
-        if mode == 'pending' or self.call_id == 'fc-pending': raise TimeoutError('still running')
-        if mode == 'expired': raise RuntimeError('output expired')
+        if mode in ('pending', 'stopped-pending') or self.call_id == 'fc-pending': raise TimeoutError('still running')
+        if mode in ('canceled', 'active-canceled'): raise InputCancellation('input canceled')
+        if mode == 'keyboard-interrupt': raise KeyboardInterrupt()
+        if mode == 'task-interrupt': raise asyncio.CancelledError()
+        if mode in ('expired', 'active-expired', 'historical-expired'): raise RuntimeError('output expired')
         return dict(exitCode=True if mode == 'malformed' else 7 if mode == 'failed' else 0, stdout='accuracy=0.99', stderr='', artifacts={'result.json': 'e30='})
 __version__='runtime-fixture'
 class App:
@@ -9497,11 +9501,11 @@ if os.environ['EVIDRA_MODAL_TEST_MODE']=='runtime-missing-options':
 import sys
 from types import SimpleNamespace as NS
 async def call_metadata(request):
-    return NS(function_call_id='fc-wrong' if os.environ['EVIDRA_MODAL_TEST_MODE']=='app-wrong-metadata' else request.function_call_id, metadata=NS(app_id='ap-owned'))
+    return NS(function_call_id='fc-wrong' if os.environ['EVIDRA_MODAL_TEST_MODE']=='app-wrong-metadata' else request.function_call_id, metadata=NS(app_id='ap-pending' if request.function_call_id=='fc-pending' else 'ap-owned'))
 async def app_list(request):
     mode=os.environ['EVIDRA_MODAL_TEST_MODE']
-    app=NS(app_id='ap-owned',state=1 if mode in ('app-active','historical-active','app-active-zero') else 5,n_running_tasks=1 if mode in ('app-active','historical-active','app-stopped-running') else 0)
-    return NS(apps=[] if mode=='app-missing' else [app,app] if mode=='app-ambiguous' else [app])
+    app=NS(app_id='ap-owned',state=1 if mode in ('app-active','historical-active','app-active-zero','pending','active-expired','active-canceled') else 5,n_running_tasks=1 if mode in ('app-active','historical-active','app-stopped-running','active-expired','active-canceled') else 0)
+    return NS(apps=[] if mode=='app-missing' else [app,app] if mode=='app-ambiguous' else [app,NS(app_id='ap-pending',state=1,n_running_tasks=1)])
 class Client:
     @classmethod
     async def from_env(cls):
@@ -9515,7 +9519,7 @@ sys.modules['modal_proto']=NS(api_pb2=NS(FunctionCallFromIdRequest=lambda **kw:N
 `);
     process.env.PYTHONPATH = root;
     process.env.EVIDRA_MODAL_PYTHON = "python3";
-    for (const mode of ["completed", "failed", "pending", "expired", "malformed", "missing-receipt", "multiple", "shared-intent", "shared-experiment", "app-active", "app-active-zero", "app-stopped-running", "app-missing", "app-ambiguous", "app-wrong-metadata", "historical-active", "historical-stopped", "runtime-capable", "runtime-missing-options"]) {
+    for (const mode of ["completed", "failed", "pending", "expired", "malformed", "missing-receipt", "multiple", "shared-intent", "shared-experiment", "app-active", "app-active-zero", "app-stopped-running", "app-missing", "app-ambiguous", "app-wrong-metadata", "historical-active", "historical-stopped", "runtime-capable", "runtime-missing-options", "active-expired", "stopped-pending", "historical-expired", "canceled", "active-canceled", "keyboard-interrupt", "task-interrupt"]) {
       process.env.EVIDRA_MODAL_TEST_MODE = mode;
       if (mode.startsWith("runtime-")) {
         rmSync(join(root, "sdk-request-started"), { force: true });
@@ -9547,7 +9551,7 @@ sys.modules['modal_proto']=NS(api_pb2=NS(FunctionCallFromIdRequest=lambda **kw:N
       if (mode.startsWith("historical-")) store.appendEvent("run.remote.terminal", { ...common, callId: "fc-owned", state: "COMPLETED", exitCode: 0, completionEvidence: "sdk-result", phase: "terminal" });
       store.recoverStaleExperiments(0);
       store.close();
-      const completed = ["completed", "failed", "historical-stopped"].includes(mode);
+      const completed = ["completed", "failed", "historical-stopped", "expired", "malformed", "stopped-pending", "historical-expired", "canceled"].includes(mode);
       assert.deepEqual(await reconcileRemoteExperiment(db, root, id), { released: completed, queried: ["missing-receipt", "shared-intent", "shared-experiment"].includes(mode) ? 0 : mode === "multiple" ? 2 : 1 }, mode);
       const reopened = new ResearchStore(db);
       try {
@@ -9560,12 +9564,12 @@ sys.modules['modal_proto']=NS(api_pb2=NS(FunctionCallFromIdRequest=lambda **kw:N
         assert.equal(terminals.length, completed || mode === "multiple" || mode === "historical-active" ? 1 : 0);
         if (completed || mode === "multiple") {
           const proof = terminals[0].payload;
-          assert.equal(proof.completionEvidence, "sdk-result");
-          assert.equal(proof.exitCode, mode === "failed" ? 7 : 0);
-          assert.equal(reopened.recordModalTerminalEvidence({ ...proof, completionEvidence: "client-envelope" }), true);
+          assert.equal(proof.completionEvidence, ["expired", "malformed", "stopped-pending", "canceled"].includes(mode) ? "sdk-allocation" : "sdk-result");
+          assert.equal(proof.exitCode, mode === "failed" ? 7 : ["expired", "malformed", "stopped-pending", "canceled"].includes(mode) ? 125 : 0);
+          assert.equal(reopened.recordModalTerminalEvidence({ ...proof, completionEvidence: proof.completionEvidence === "sdk-allocation" ? "sdk-allocation" : "client-envelope" }), true);
           assert.equal(reopened.recordModalTerminalEvidence({ ...proof, callId: "fc-other" }), false);
           assert.equal(reopened.eventsByType("run.remote.terminal").length, 1);
-          if (mode === "historical-stopped") assert.equal(reopened.eventsByType("run.remote.allocation.terminal").length, 1);
+          if (["historical-stopped", "historical-expired"].includes(mode)) assert.equal(reopened.eventsByType("run.remote.allocation.terminal").length, 1);
         }
       } finally { reopened.close(); }
     }
@@ -9610,11 +9614,12 @@ test("Modal call ownership stays bounded and rejects aliases without SQLite JSON
 test("Modal allocation proofs preserve historical records and require causal matching quiescence", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-modal-allocation-proof-"));
   try {
-    for (const mode of ["migrated", "writer", "json-disabled", "no-allocation", "before-terminal", "duplicate", "wrong-app", "wrong-call", "active", "running", "string-count", "wrong-phase", "wrong-exit", "extra-strong-proof"]) {
+    for (const mode of ["migrated", "writer", "json-disabled", "no-allocation", "before-terminal", "duplicate", "wrong-app", "wrong-call", "active", "running", "string-count", "wrong-phase", "wrong-exit", "extra-strong-proof", "allocation-only", "allocation-only-wrong-exit", "allocation-only-wrong-source"]) {
       const db = join(root, `${mode}.sqlite`), id = `allocation-${mode}`;
       const store = new ResearchStore(db);
       const common = { executor: "modal", protocol: "modal-call-v1", experimentId: id, submissionId: "12345678-1234-1234-1234-123456789abc", allocationName: "evidra-12345678-1234-1234-1234-123456789abc", callId: "fc-owned" };
       const terminal = { ...common, phase: "terminal", state: "COMPLETED", exitCode: 0, completionEvidence: "sdk-result" };
+      if (mode.startsWith("allocation-only")) Object.assign(terminal, { state: "ALLOCATION_STOPPED", exitCode: mode === "allocation-only-wrong-exit" ? 0 : 125, completionEvidence: mode === "allocation-only-wrong-source" ? "sdk-result" : "sdk-allocation" });
       const allocation = { ...terminal, appId: mode === "wrong-app" ? "ap-other" : "ap-owned", appState: mode === "active" ? "ACTIVE" : "STOPPED", runningTasks: mode === "running" ? 1 : mode === "string-count" ? "0" : 0, at: new Date().toISOString() };
       if (mode === "wrong-call") allocation.callId = "fc-other";
       if (mode === "wrong-phase") allocation.phase = "submitted";
@@ -9639,7 +9644,7 @@ test("Modal allocation proofs preserve historical records and require causal mat
         store.appendEvent("run.remote.allocation.terminal", allocation);
         if (mode === "duplicate") store.appendEvent("run.remote.allocation.terminal", allocation);
       }
-      const confirmed = ["migrated", "writer", "json-disabled"].includes(mode);
+      const confirmed = ["migrated", "writer", "json-disabled", "allocation-only"].includes(mode);
       assert.equal(store.remoteExecutionState(id).confirmed, confirmed, mode);
       store.saveExperiment({ id, payload: { id, status: "failed", resources: { executor: "modal" } } });
       assert.equal(store.reservedComputeGpuHours(), confirmed ? 0 : 1, mode);

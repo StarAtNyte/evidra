@@ -3791,7 +3791,9 @@ export class ResearchStore {
           allocation = supplemental[0].payload;
         }
         if (allocation.phase !== "terminal" || allocation.state !== proof.state || allocation.exitCode !== proof.exitCode || allocation.executor !== "modal" || allocation.protocol !== intent.payload.protocol || allocation.allocationName !== intent.payload.allocationName || allocation.callId !== receipt.callId || allocation.appState !== "STOPPED" || allocation.runningTasks !== 0 || typeof allocation.appId !== "string" || !/^ap-[A-Za-z0-9]{1,128}$/.test(allocation.appId) || receipt.appId !== undefined && receipt.appId !== allocation.appId) return unresolved;
-        if (!(proof.completionEvidence === "client-envelope" || intent.payload.protocol === "modal-call-v1" && proof.completionEvidence === "sdk-result") || proof.state !== "COMPLETED" || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) return unresolved;
+        const workerCompleted = ["client-envelope", "sdk-result"].includes(String(proof.completionEvidence)) && proof.state === "COMPLETED" && Number.isInteger(proof.exitCode) && Number(proof.exitCode) >= 0 && Number(proof.exitCode) <= 255;
+        const allocationOnly = proof.completionEvidence === "sdk-allocation" && proof.state === "ALLOCATION_STOPPED" && proof.exitCode === 125;
+        if (!workerCompleted && !allocationOnly) return unresolved;
         continue;
       }
       if (intent.payload.executor === "container") {
@@ -3865,7 +3867,7 @@ export class ResearchStore {
   }
 
   /** Both synchronous completion and recovery must agree on the same call. */
-  recordModalTerminalEvidence(event: { experimentId: string; submissionId: string; allocationName: string; callId: string; state: string; exitCode: number; completionEvidence: "client-envelope" | "sdk-result"; appId?: string; appState?: "STOPPED"; runningTasks?: number; at: string }): boolean {
+  recordModalTerminalEvidence(event: { experimentId: string; submissionId: string; allocationName: string; callId: string; state: string; exitCode: number; completionEvidence: "client-envelope" | "sdk-result" | "sdk-allocation"; appId?: string; appState?: "STOPPED"; runningTasks?: number; at: string }): boolean {
     return this.db.transaction(() => {
       if (!this.modalCallOwnershipConfirmed(event.experimentId, event.submissionId, event.callId)) return false;
       const existing = this.remoteEvidenceForSubmission("run.remote.terminal", event.experimentId, event.submissionId).map((record) => record.payload);

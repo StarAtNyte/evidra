@@ -1197,6 +1197,16 @@ external evaluator.
   Other resource types, adversarial subprocess credential recovery and network
   egress remain separate verification gates.
 
+- Modal recovery can now release a verified stopped app with zero containers
+  when worker output is expired, malformed, canceled, or unavailable. Such
+  records use ALLOCATION_STOPPED / sdk-allocation with sentinel 125 for unknown
+  worker outcome; no metrics are imported or worker success inferred. Older
+  worker-result records remain immutable and gain only allocation evidence.
+  Active/missing/mismatched apps and local process interruption remain fenced.
+  A live missing-executable CPU probe failed before emitting an envelope, then
+  recovered after reopening its store using the stopped allocation proof:
+  `docs/research/evidence/modal-live-allocation-only-recovery-2026-10-12.json`.
+
 ## Immediate next work
 
 1. Add/maintain real matched external benchmark adapters and run actual trials

@@ -48,7 +48,7 @@ export async function reconcileModalExperiment(storePath: string, cwd: string, e
       if (terminals.length > 1) continue;
       if (terminals.length === 1) {
         const terminal = terminals[0].payload;
-        if (records.indexOf(receipts[0]) >= records.indexOf(terminals[0]) || terminal.executor !== "modal" || terminal.protocol !== protocol || terminal.phase !== "terminal" || terminal.allocationName !== allocationName || terminal.callId !== callId || terminal.state !== "COMPLETED" || !Number.isInteger(terminal.exitCode) || Number(terminal.exitCode) < 0 || Number(terminal.exitCode) > 255 || !["client-envelope", "sdk-result"].includes(String(terminal.completionEvidence))) continue;
+        if (records.indexOf(receipts[0]) >= records.indexOf(terminals[0]) || terminal.executor !== "modal" || terminal.protocol !== protocol || terminal.phase !== "terminal" || terminal.allocationName !== allocationName || terminal.callId !== callId || !["COMPLETED", "ALLOCATION_STOPPED"].includes(String(terminal.state)) || !Number.isInteger(terminal.exitCode) || Number(terminal.exitCode) < 0 || Number(terminal.exitCode) > 255 || !["client-envelope", "sdk-result", "sdk-allocation"].includes(String(terminal.completionEvidence))) continue;
       }
 
       const remaining = deadline - Date.now();
@@ -59,8 +59,12 @@ export async function reconcileModalExperiment(storePath: string, cwd: string, e
         if (result.exitCode === 130) break;
         if (result.exitCode !== 0 || Buffer.byteLength(result.stdout) > 4096) continue;
         const proof = JSON.parse(result.stdout) as { callId?: unknown; state?: unknown; exitCode?: unknown; appId?: unknown; appState?: unknown; runningTasks?: unknown };
-        if (proof.callId !== callId || proof.state !== "COMPLETED" || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255 || typeof proof.appId !== "string" || !/^ap-[A-Za-z0-9]{1,128}$/.test(proof.appId) || receipt.appId !== undefined && receipt.appId !== proof.appId || proof.appState !== "STOPPED" || proof.runningTasks !== 0) continue;
-        store.recordModalTerminalEvidence({ experimentId, submissionId, allocationName, callId, state: "COMPLETED", exitCode: Number(proof.exitCode), completionEvidence: "sdk-result", appId: proof.appId, appState: "STOPPED", runningTasks: 0, at: new Date().toISOString() });
+        if (proof.callId !== callId || !["COMPLETED", "ALLOCATION_STOPPED"].includes(String(proof.state)) || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255 || typeof proof.appId !== "string" || !/^ap-[A-Za-z0-9]{1,128}$/.test(proof.appId) || receipt.appId !== undefined && receipt.appId !== proof.appId || proof.appState !== "STOPPED" || proof.runningTasks !== 0) continue;
+        if (proof.state === "ALLOCATION_STOPPED" && proof.exitCode !== 125) continue;
+        const historical = proof.state === "ALLOCATION_STOPPED" ? terminals[0]?.payload : undefined;
+        // Allocation proof can supplement an older result without inventing or
+        // replacing that result when its SDK output has expired.
+        store.recordModalTerminalEvidence({ experimentId, submissionId, allocationName, callId, state: historical ? String(historical.state) : String(proof.state), exitCode: historical ? Number(historical.exitCode) : Number(proof.exitCode), completionEvidence: proof.state === "ALLOCATION_STOPPED" ? "sdk-allocation" : "sdk-result", appId: proof.appId, appState: "STOPPED", runningTasks: 0, at: new Date().toISOString() });
       } catch { /* Failed SDK queries cannot establish remote termination. */ }
     }
     return { released: store.reconcileRemoteExperiment(experimentId), queried };

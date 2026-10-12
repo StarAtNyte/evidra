@@ -59,11 +59,21 @@ def inspect_call(call_id: str, wait_stopped_seconds: int = 0) -> dict[str, objec
     import modal
     from modal._utils.async_utils import synchronizer
 
-    call = modal.FunctionCall.from_id(call_id)
+    allocation = synchronizer.create_blocking(inspect_allocation)(call_id, wait_stopped_seconds)
+    stopped = allocation["appState"] == "STOPPED" and type(allocation["runningTasks"]) is int and allocation["runningTasks"] == 0
+    allocation_only = {"callId": call_id, "state": "ALLOCATION_STOPPED", "exitCode": 125, **allocation}
     try:
+        call = modal.FunctionCall.from_id(call_id)
         result = call.get(timeout=0)
-    except TimeoutError:
-        return {"callId": call_id, "state": "PENDING"}
+    except BaseException as error:
+        # Keyboard/process interruption is never remote termination evidence.
+        if isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit, asyncio.CancelledError)):
+            raise
+        if stopped:
+            return allocation_only
+        if isinstance(error, TimeoutError):
+            return {"callId": call_id, "state": "PENDING", **allocation}
+        raise
     if (not isinstance(result, dict)
             or type(result.get("exitCode")) is not int
             or not 0 <= result["exitCode"] <= 255
@@ -71,8 +81,10 @@ def inspect_call(call_id: str, wait_stopped_seconds: int = 0) -> dict[str, objec
             or not isinstance(result.get("stderr"), str)
             or not isinstance(result.get("artifacts"), dict)
             or not all(isinstance(key, str) and isinstance(value, str) for key, value in result["artifacts"].items())):
+        if stopped:
+            return allocation_only
         raise ValueError("Modal call returned malformed worker completion evidence")
-    return {"callId": call_id, "state": "COMPLETED", "exitCode": result["exitCode"], **synchronizer.create_blocking(inspect_allocation)(call_id, wait_stopped_seconds)}
+    return {"callId": call_id, "state": "COMPLETED", "exitCode": result["exitCode"], **allocation}
 
 
 if __name__ == "__main__":

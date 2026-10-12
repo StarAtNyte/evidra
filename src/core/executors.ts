@@ -22,7 +22,7 @@ export interface RemoteExecutionEvent {
   runtime?: "docker" | "podman";
   containerId?: string;
   daemonId?: string;
-  completionEvidence?: "client-envelope" | "sdk-result" | "spawn-error";
+  completionEvidence?: "client-envelope" | "sdk-result" | "sdk-allocation" | "spawn-error";
   spawnErrorCode?: string;
   protocol?: "modal-call-v1";
   callId?: string;
