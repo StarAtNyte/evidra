@@ -1260,6 +1260,16 @@ external evaluator.
 
 ## Immediate next work
 
+Harness-revision prompts now use a valid JSON feedback packet capped at 8000
+UTF-8 bytes rather than cutting a raw benchmark dump. Packets retain protocol
+identity, bounded scorecard/comparison diagnostics and available trial/run
+failures, prioritizing recent records. Explicitly held_out reports are omitted;
+stderr excerpts require an explicit feedback role and are redacted. Unclassified
+and selection records expose no raw traces, and stdout is excluded. Immutable
+benchmark events and retest contracts retain their full controller evidence.
+This filters prompt feedback; benchmark producers still need validated split
+provenance and classification before claiming full held-out isolation.
+
 The shared sensitive-path policy now protects the default .sota controller
 database and its SQLite journals, backup directory, hidden credential/secret
 filenames and additional SSH key names. Structured reads and explicit shell

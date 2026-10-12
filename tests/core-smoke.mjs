@@ -14290,3 +14290,18 @@ test('sensitive path policy protects default controller state and hidden credent
     for(const path of ['.sota/reports/research.md','.sota/experiment-config.json','datasets/database.sqlite','src/model.py'])assert.equal(isSensitiveWorkspacePath(path),false,path);
   }finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test('harness revision feedback remains bounded and excludes declared held-out traces', async () => {
+  const {formatHarnessFeedback}=await import('../dist/core/harness-feedback.js');
+  const records=[{adaptationRole:'held_out',protocolFingerprint:'hidden-evaluator',trials:[{task:'hidden-task',candidateMetric:1}],runs:[{result:{stderr:'hidden-answer'}}]},...Array.from({length:5},(_,index)=>({adaptationRole:index===4?'feedback':'selection',protocolFingerprint:'revision-'+index,trials:Array.from({length:30},()=>({harness:'challenger',task:'😀'.repeat(5000),candidateMetric:0.5,validRun:false,failureClass:'parse'})),runs:Array.from({length:30},()=>({harness:'challenger',result:{exitCode:1,stdout:'gold-answer',stderr:'é'.repeat(5000)+'\nAPI_KEY=fixture-secret'}}))}))];
+  const formatted=formatHarnessFeedback(records),packet=JSON.parse(formatted);
+  assert(Buffer.byteLength(formatted,'utf8')<=8000);assert.equal(packet.omittedHeldOut,1);assert(packet.omittedReports>=2);
+  assert(!formatted.includes('hidden-evaluator'));assert(!formatted.includes('hidden-answer'));assert(!formatted.includes('gold-answer'));assert(!formatted.includes('fixture-secret'));
+  assert(packet.reports.some(report=>report.protocolFingerprint==='revision-4'));
+  assert(formatted.includes('[REDACTED]'));
+  assert.equal(packet.reports.filter(report=>report.role==='selection').flatMap(report=>report.runs).some(run=>'stderrExcerpt' in run),false);
+  const unclassified=JSON.parse(formatHarnessFeedback([{runs:[{result:{stderr:'unclassified-trace'}}]}]));
+  assert.equal(unclassified.reports[0].role,'unclassified');assert(!JSON.stringify(unclassified).includes('unclassified-trace'));
+  const stored=JSON.parse(formatHarnessFeedback([{protocolFingerprint:'stored',scorecards:[{harness:'candidate',competitiveScore:42,failureProfile:{parse:3}}],comparisons:[{incumbent:'baseline',challengerWins:false,reason:'needs retest'}]}]));
+  assert.equal(stored.reports[0].scorecards[0].failureProfile.parse,3);assert.equal(stored.reports[0].comparisons[0].incumbent,'baseline');
+});
