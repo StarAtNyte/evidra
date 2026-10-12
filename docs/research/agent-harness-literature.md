@@ -725,3 +725,18 @@ failed/rejected directions are retained as negative evidence rather than being
 silently repeated unchanged. The agenda is provider- and domain-neutral, so a
 falsification test can describe a metric, artifact, behavior, proof, or system
 check.
+
+### Harness learning from execution feedback
+
+[Zhang et al., Harness Learning Enables Generalizable Test-Time Adaptation](https://arxiv.org/pdf/2609.35738)
+trains a proposer to revise executable harnesses around a frozen solver.
+Held-out questions are excluded from adaptation; iterative gains do not establish
+matched-compute superiority, and multistep training is not consistently better.
+
+For Evidra, the next experiment should give bounded failure traces and revision
+history to the existing change-contract loop. Compare a fixed harness,
+independent proposals and sequential revisions under equal total cost. Preserve
+permissions, evaluators and budgets outside the editable surface. Audit whether
+new tools actually affect answers. Existing adaptation/retest and transfer
+checks provide foundations; trained proposers and validated adaptation gains
+remain unimplemented or unproven.
