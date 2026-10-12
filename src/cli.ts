@@ -6,6 +6,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { externalActionNeedsReconciliation, ResearchStore, queueEffectivePriority, routineRetryDelaySeconds } from "./core/store.js";
 import { externalScoreEvidenceContext, hashExternalArtifact } from "./core/submission-feedback.js";
 import { campaignEvidenceConflictCounts, mergeCampaignToolFailures, recordsForCampaign } from "./core/campaign-scope.js";
@@ -1098,13 +1099,31 @@ program.command("doctor")
     checks.push(`ollama API    ${detail}`);
     diagnostics.push({ name: "ollama-api", status: "unavailable", detail });
   }
-  const modalAuth = process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET
-    ? "environment credentials"
-    : diagnostics.find((check) => check.name === "modal")?.status === "ok"
-      && (await runProcess(["modal", "profile", "current"], root, 10_000).catch(() => undefined))?.exitCode === 0
-      ? "CLI profile selected" : "not configured";
+  let modalRuntimeReady = false;
+  let modalInspectorReady = false;
+  let modalCredentialsConfigured = false;
+  const modalPresent = diagnostics.some((check) => check.name === "modal" && check.status === "ok");
+  const modalVersion = modalPresent ? await runProcess(["modal", "--version"], root, 5_000).catch(() => undefined) : undefined;
+  modalRuntimeReady = modalVersion?.exitCode === 0;
+  const runtimeDetail = modalRuntimeReady ? redactSecrets(modalVersion!.stdout.trim()).slice(0, 300) || "CLI responds" : "CLI missing or unusable";
+  checks.push(`modal runtime ${runtimeDetail}`);
+  diagnostics.push({ name: "modal-runtime", status: modalRuntimeReady ? "ok" : "unavailable", detail: runtimeDetail });
+  if (modalRuntimeReady) {
+    const inspection = await runProcess([process.env.EVIDRA_MODAL_PYTHON ?? "python3", fileURLToPath(new URL("../modal_reconcile.py", import.meta.url)), "--check-runtime", "--check-credentials"], root, 5_000).catch(() => undefined);
+    if (inspection?.exitCode === 0 && Buffer.byteLength(inspection.stdout) <= 4096) {
+      try {
+        const capability = JSON.parse(inspection.stdout) as { ready?: unknown; credentialsConfigured?: unknown };
+        modalInspectorReady = capability.ready === true;
+        modalCredentialsConfigured = modalInspectorReady && capability.credentialsConfigured === true;
+      } catch { /* Malformed capability output is not readiness evidence. */ }
+    }
+  }
+  const inspectorDetail = modalInspectorReady ? "allocation inspector available" : "allocation inspector unavailable; configure EVIDRA_MODAL_PYTHON with a compatible Modal SDK";
+  checks.push(`modal SDK     ${inspectorDetail}`);
+  diagnostics.push({ name: "modal-inspector", status: modalInspectorReady ? "ok" : "unavailable", detail: inspectorDetail });
+  const modalAuth = modalCredentialsConfigured ? "credentials configured; authentication not verified" : "credentials unavailable or SDK inspector unusable";
   checks.push(`modal auth    ${modalAuth}`);
-  diagnostics.push({ name: "modal-auth", status: modalAuth === "not configured" ? "unavailable" : "ok", detail: modalAuth });
+  diagnostics.push({ name: "modal-auth", status: modalCredentialsConfigured ? "ok" : "unavailable", detail: modalAuth });
   if (options.json) {
     console.log(JSON.stringify({
       workspace: root,
@@ -1112,6 +1131,7 @@ program.command("doctor")
       ready: (codexReady || localModelsReady) && ["git", "rg"].every((name) => diagnostics.some((check) => check.name === name && check.status === "ok")),
       requiredTools: Object.fromEntries(["git", "rg"].map((name) => [name, diagnostics.some((check) => check.name === name && check.status === "ok")])),
       providers: { codex: codexReady, local: localModelsReady, fallback: localModelsReady },
+      executors: { modal: { runtime: modalRuntimeReady, allocationInspector: modalInspectorReady, credentialsConfigured: modalCredentialsConfigured, configured: modalRuntimeReady && modalInspectorReady && modalCredentialsConfigured, authenticationVerified: false } },
       checks: diagnostics,
     }, null, 2));
   } else {

@@ -25,6 +25,15 @@ def check_runtime() -> dict[str, object]:
     return {"ready": True, "modalVersion": modal.__version__}
 
 
+def credentials_configured() -> bool:
+    # Match SDK configuration rules without contacting the service or exposing
+    # credential values. Configuration is not proof of valid authentication.
+    from modal.config import config
+    token = [config.get("token_id"), config.get("token_secret")]
+    oauth = [config.get("oauth_refresh_token"), config.get("oauth_client_id"), config.get("oauth_client_secret")]
+    return bool(all(token) and not any(oauth) or all(oauth) and not any(token))
+
+
 async def inspect_allocation(call_id: str, wait_stopped_seconds: int = 0, stop_app_id: str | None = None, expected_app_name: str | None = None) -> dict[str, object]:
     # These are the same SDK RPCs used by `modal app list`. Missing/changed
     # SDK APIs fail closed; a completed call alone never proves quiescence.
@@ -103,12 +112,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("call_id", nargs="?")
     parser.add_argument("--check-runtime", action="store_true")
+    parser.add_argument("--check-credentials", action="store_true")
     parser.add_argument("--wait-stopped-seconds", type=int, choices=range(11), default=0)
     parser.add_argument("--stop-owned-app")
     parser.add_argument("--expected-app-name")
     args = parser.parse_args()
     if args.check_runtime:
-        print(json.dumps(check_runtime()))
+        capability = check_runtime()
+        if args.check_credentials:
+            capability["credentialsConfigured"] = credentials_configured()
+        print(json.dumps(capability))
     elif args.call_id is None:
         parser.error("call_id is required")
     else:

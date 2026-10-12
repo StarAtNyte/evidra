@@ -13329,6 +13329,53 @@ test("doctor exposes a bounded machine-readable diagnostics contract", () => {
   assert.doesNotMatch(output, /sk-[A-Za-z0-9]{12,}|Bearer\s+[A-Za-z0-9._-]+/i);
 });
 
+test("Modal credential diagnostics match SDK configuration rules without invoking authentication", () => {
+  const output = execFileSync("python3", ["-c", `
+import runpy,sys,types
+worker=runpy.run_path(sys.argv[1])
+sys.modules['modal']=types.ModuleType('modal')
+values={}
+sys.modules['modal.config']=types.SimpleNamespace(config=values)
+for configured, expected in [({},False),({'token_id':'id'},False),({'token_id':'id','token_secret':'secret'},True),({'oauth_refresh_token':'refresh','oauth_client_id':'client'},False),({'oauth_refresh_token':'refresh','oauth_client_id':'client','oauth_client_secret':'secret'},True),({'token_id':'id','token_secret':'secret','oauth_refresh_token':'refresh'},False),({'token_id':'id','oauth_refresh_token':'refresh','oauth_client_id':'client','oauth_client_secret':'secret'},False)]:
+    values.clear();values.update(configured)
+    assert worker['credentials_configured']() is expected
+print('credential checks passed')
+`, join(process.cwd(), "modal_reconcile.py")], { encoding: "utf8", timeout: 3000 });
+  assert.equal(output.trim(), "credential checks passed");
+});
+
+test("doctor checks Modal runtime and inspector before reporting configured credentials", () => {
+  for (const mode of ["healthy", "broken-cli", "missing-sdk", "malformed-sdk", "missing-credentials"]) {
+    const root = mkdtempSync(join(tmpdir(), "evidra-doctor-modal-"));
+    try {
+      writeFileSync(join(root, "which"), `#!${process.execPath}
+        if(process.argv[2]==='modal'){console.log(${JSON.stringify(join(root, "modal"))});process.exit(0);}process.exit(1);
+      `, { mode: 0o755 });
+      writeFileSync(join(root, "modal"), `#!${process.execPath}
+        if(!process.argv.includes('--version')){require('node:fs').writeFileSync(${JSON.stringify(join(root, "unexpected-command"))},'yes');process.exit(9);}
+        if(${JSON.stringify(mode)}==='broken-cli'){console.error('broken modal module');process.exit(1);}console.log('modal client version 1.6.1');
+      `, { mode: 0o755 });
+      const inspector = join(root, "sdk-python");
+      if (mode !== "missing-sdk") writeFileSync(inspector, `#!${process.execPath}
+        if(!process.argv.includes('--check-runtime')||!process.argv.includes('--check-credentials'))process.exit(9);
+        require('node:fs').writeFileSync(${JSON.stringify(join(root, "inspector-called"))},'yes');
+        if(${JSON.stringify(mode)}==='malformed-sdk'){console.log('not capability JSON');process.exit(0);}
+        console.log(JSON.stringify({ready:true,credentialsConfigured:${JSON.stringify(mode !== "missing-credentials")}}));
+      `, { mode: 0o755 });
+      const output = execFileSync(process.execPath, [join(process.cwd(), "dist/cli.js"), "doctor", "--json"], { encoding: "utf8", timeout: 30_000, env: { ...process.env, PATH: root, EVIDRA_MODAL_PYTHON: inspector, EVIDRA_CODEX_BIN: "missing-codex", OLLAMA_HOST: "http://127.0.0.1:1/api/chat", MODAL_TOKEN_ID: "test-token-id", MODAL_TOKEN_SECRET: "test-token-secret" } });
+      const report = JSON.parse(output);
+      assert.equal(report.executors.modal.runtime, mode !== "broken-cli");
+      assert.equal(report.executors.modal.allocationInspector, ["healthy", "missing-credentials"].includes(mode));
+      assert.equal(report.executors.modal.credentialsConfigured, mode === "healthy");
+      assert.equal(report.executors.modal.configured, mode === "healthy");
+      assert.equal(report.executors.modal.authenticationVerified, false);
+      assert.equal(existsSync(join(root, "unexpected-command")), false);
+      assert.equal(existsSync(join(root, "inspector-called")), !["broken-cli", "missing-sdk"].includes(mode));
+      assert.doesNotMatch(output, /test-token-id|test-token-secret/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
 test("doctor reports missing optional backends and required tools without crashing", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-doctor-missing-tools-"));
   try {

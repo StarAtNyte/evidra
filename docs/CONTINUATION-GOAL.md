@@ -1232,6 +1232,13 @@ external evaluator.
   after zero-container proof, with no imported measurements. GPU/concurrent
   cancellation remains unverified.
 
+- `doctor --json` now exposes Modal CLI health, SDK allocation-inspector
+  availability, credential configuration and an explicit unverified-authentication
+  flag. A selected profile or credential environment no longer masks a broken
+  CLI or inspector. Capability checks are bounded and local, matching SDK token
+  and OAuth configuration rules without exposing values or contacting Modal.
+  Existing local-provider readiness remains independent of optional Modal.
+
 ## Immediate next work
 
 1. Add/maintain real matched external benchmark adapters and run actual trials

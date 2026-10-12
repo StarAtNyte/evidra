@@ -56,7 +56,7 @@ The model proposes. Evidra measures, records, verifies, and decides whether the 
 Requires Node.js 22.19.0 or newer, Git, and ripgrep (`rg`) on PATH. Git owns
 isolated experiment worktrees; ripgrep powers workspace inventory and search.
 `evidra doctor --json` reports required tooling separately from optional providers
-and execution backends.
+and execution backends. Modal diagnostics separately check CLI health, the SDK allocation inspector, and credential configuration; local configuration does not verify authentication.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/StarAtNyte/evidra/master/install.sh | sh
