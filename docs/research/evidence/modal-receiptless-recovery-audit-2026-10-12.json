@@ -1,0 +1,21 @@
+{
+  "at": "2026-10-12T06:22:44.115Z",
+  "readOnly": {
+    "released": false,
+    "queried": 0
+  },
+  "cancellation": {
+    "released": false,
+    "queried": 0
+  },
+  "quarantineSurvivedReopen": true,
+  "rejectedReplacementStatuses": [
+    "scheduled",
+    "running",
+    "completed"
+  ],
+  "cleanupRequests": 0,
+  "measurementsImported": 0,
+  "eventChain": "valid",
+  "scope": "Offline recovery commands against the actual failed live GPU submission database; no remote SDK queries or app mutations. No reservation existed in this direct-executor probe, so this does not verify live budget retention."
+}

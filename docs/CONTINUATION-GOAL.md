@@ -1269,6 +1269,13 @@ accepted as durable reconciliation proof. Evidence:
 `docs/research/evidence/modal-gpu-submission-rejected-2026-10-12.json`.
 GPU execution and cancellation remain unverified; retry requires account GPU
 availability. The probe retains its database, events and result on failure.
+The actual receipt-less submission database was reopened and audited with both
+plain reconciliation and `cancelModal`: each returned released=false, queried=0.
+Replacement with scheduled/running/completed status was rejected, quarantine
+survived reopen, and no cleanup requests or measurements were recorded. Evidence:
+`docs/research/evidence/modal-receiptless-recovery-audit-2026-10-12.json`.
+This verifies the retry guard, not successful recovery. No compute reservation
+existed in the direct-executor probe, so live budget retention remains untested.
 
 The offline `scripts/probe-modal-worker-isolation.py` probe imports the shipped
 worker with Modal 1.6.1 and checks actual SDK registration metadata: restricted
