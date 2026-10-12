@@ -1,5 +1,13 @@
 import { redactSecrets } from "./redaction.js";
 
+export type HarnessFeedbackRole = "unclassified" | "feedback" | "selection" | "held_out";
+
+export function parseHarnessFeedbackRole(value: unknown): HarnessFeedbackRole {
+  if (value === undefined) return "unclassified";
+  if (value === "unclassified" || value === "feedback" || value === "selection" || value === "held_out") return value;
+  throw new Error("adaptationRole must be unclassified, feedback, selection, or held_out.");
+}
+
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown, limit = 96): string | undefined => typeof value === "string" ? redactSecrets(value).slice(-limit) : undefined;
 

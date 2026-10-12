@@ -1260,6 +1260,14 @@ external evaluator.
 
 ## Immediate next work
 
+Benchmark protocol JSON accepts validated adaptationRole values: feedback,
+selection, held_out or unclassified (the legacy default). Reports and durable
+events retain the role. Retests preserve eligible roles; held-out tasks are
+refused before claiming, and held-out evidence cannot materialize adaptive
+retests or drive automatic revision guidance/change retention. Tests exercise
+actual CLI execution and queued-task refusal. Roles are declared provenance;
+they do not prove task disjointness or prevent independent workspace-file reads.
+
 Harness-revision prompts now use a valid JSON feedback packet capped at 8000
 UTF-8 bytes rather than cutting a raw benchmark dump. Packets retain protocol
 identity, bounded scorecard/comparison diagnostics and available trial/run

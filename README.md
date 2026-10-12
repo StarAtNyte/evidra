@@ -287,6 +287,12 @@ Search rewards are now context-aware and cost-aware as well. Autonomous experime
 
 Harness benchmarking is closed-loop: `benchmark run` records matched outcomes and emits a durable adaptive retest agenda. Losses are classified into reliability, recovery, alignment, efficiency, search, or coverage interventions with falsifiable predictions and acceptance criteria. The next retest preserves task, model, seed, evaluator, metric, and budget, so Evidra is optimized to beat incumbents by improving the harness rather than by changing the comparison.
 
+Benchmark protocol JSON may declare `adaptationRole` as `feedback`, `selection`,
+`held_out`, or `unclassified` (the default). The role persists in reports and
+retests. Held-out records do not drive automatic revision guidance, change
+retention, or adaptive retests. Declaring a role does not establish task
+independence; transfer claims still require the task-disjoint holdout checks.
+
 When a benchmark exposes a credible harness weakness, Evidra materializes one durable `harness.retest` task. A research or challenge campaign can execute that task automatically after the candidate implementation succeeds; operators can inspect the same queue with `evidra queue status` and run a specific task manually:
 
 ```bash

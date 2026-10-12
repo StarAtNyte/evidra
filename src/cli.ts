@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { formatHarnessFeedback } from "./core/harness-feedback.js";
+import { formatHarnessFeedback, parseHarnessFeedbackRole } from "./core/harness-feedback.js";
 import { workspaceBackupDestination } from "./core/backup-path.js";
 import { reconcileRemoteExperiment } from "./core/remote-reconciliation.js";
 import { Command } from "commander";
@@ -1705,6 +1705,7 @@ benchmark.command("run")
   .description("Execute matched arms, score the evidence, and verify the challenger beats incumbents")
   .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string; parallel: string; dryRun?: boolean; retention?: string; retentionRegression: string; holdout?: string; compareProviders?: string; providerHoldout?: string }) => {
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
+    const adaptationRole = parseHarnessFeedbackRole((parsed as { adaptationRole?: unknown } | null)?.adaptationRole);
     const raw = parsed && typeof parsed === "object" && Array.isArray((parsed as { arms?: unknown }).arms) ? (parsed as { arms: unknown[] }).arms : undefined;
     if (!raw?.length) throw new Error("Benchmark protocol must contain a non-empty arms array.");
     const changeValue = parsed && typeof parsed === "object" ? (parsed as { change?: unknown }).change : undefined;
@@ -1728,6 +1729,7 @@ benchmark.command("run")
     if (options.dryRun) {
       console.log(JSON.stringify({
         dryRun: true,
+        adaptationRole,
         workspace: benchmarkWorkspace,
         maxParallel,
         protocolFingerprint: benchmarkProtocolFingerprint(arms),
@@ -1789,10 +1791,10 @@ benchmark.command("run")
       const maximumRegression = Number(options.retentionRegression);
       retention = evaluateHarnessRetention(priorTrials, report.trials, options.challenger, maximumRegression);
     }
-    const output = { ...report, scorecards, ...(policyScorecards ? { policyScorecards, policyComparisons } : {}), pareto, componentFailureEvidence, protocol: matched, challenger: options.challenger, comparisons, ...(providerComparison ? { providerComparison } : {}), ...(providerGeneralization ? { providerGeneralization } : {}), adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, ...(changePresence ? { changePresence } : {}), changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
+    const output = { ...report, adaptationRole, scorecards, ...(policyScorecards ? { policyScorecards, policyComparisons } : {}), pareto, componentFailureEvidence, protocol: matched, challenger: options.challenger, comparisons, ...(providerComparison ? { providerComparison } : {}), ...(providerGeneralization ? { providerGeneralization } : {}), adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, ...(changePresence ? { changePresence } : {}), changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
     if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
     const benchmarkStore = new ResearchStore(statePath);
-    if (change) {
+    if (change && adaptationRole !== "held_out") {
       const changeDecision = changeOutcomes?.some((item) => item.outcome.status === "refuted")
         ? "revert" as const
         : changeOutcomes?.length && changeOutcomes.every((item) => item.outcome.status === "confirmed") && comparisons.every((comparison) => comparison.challengerWins)
@@ -1812,6 +1814,7 @@ benchmark.command("run")
     }
     benchmarkStore.appendEvent("harness.benchmark.completed", {
       suite: "generic",
+      adaptationRole,
       workspace: benchmarkWorkspace,
       maxParallel,
       protocolFingerprint: report.protocolFingerprint,
@@ -1870,6 +1873,10 @@ benchmark.command("retest")
     const retestStore = new ResearchStore(statePath);
     const queued = retestStore.queueTasks().find((task) => task.id === taskId && task.kind === "harness.retest");
     if (!queued) { retestStore.close(); throw new Error(`Harness retest task '${taskId}' was not found.`); }
+    let adaptationRole: ReturnType<typeof parseHarnessFeedbackRole>;
+    try { adaptationRole = parseHarnessFeedbackRole((queued.payload as { benchmarkEvidence?: { adaptationRole?: unknown } } | null)?.benchmarkEvidence?.adaptationRole); }
+    catch (error) { retestStore.close(); throw error; }
+    if (adaptationRole === "held_out") { retestStore.close(); throw new Error("Held-out benchmark evidence cannot drive an adaptive retest."); }
     const claimed = retestStore.claimTask(taskId, ["harness.retest"]);
     if (!claimed) { retestStore.close(); throw new Error(`Harness retest task '${taskId}' is not available; another controller may own it.`); }
     const payload = claimed.payload && typeof claimed.payload === "object" ? claimed.payload as { challenger?: unknown; benchmarkProtocol?: unknown; baselineComponents?: Array<{ path: string; checksum: string }>; benchmarkEvidence?: { protocol?: unknown; protocolFingerprint?: unknown; maxParallel?: unknown; change?: unknown } } : {};
@@ -1931,7 +1938,7 @@ benchmark.command("retest")
       const changeOutcomes = validChange
         ? comparisons.map((comparison) => ({ incumbent: comparison.incumbent, outcome: evaluateHarnessChange(validChange, { baselineScore: validChange.baselineScore, candidateScore: comparison.pairedMeanDelta === null ? undefined : (validChange.baselineScore ?? 0) + comparison.pairedMeanDelta, valid: comparison.validPairedArms > 0 && comparison.pairedLower95 !== null }) }))
         : undefined;
-      const result = { retestOf: taskId, challenger, maxParallel: Math.max(1, Math.min(32, Math.floor(maxParallel))), protocolFingerprint: report.protocolFingerprint, protocol: arms, changePresence: assessHarnessChangePresence(payload.baselineComponents, inventoryHarnessComponents(benchmarkWorkspace), targetComponentIds), scorecards, comparisons, adaptation, ...(validChange ? { change: validChange } : {}), ...(changeOutcomes ? { changeOutcomes } : {}), trials: report.trials, startedAt: report.startedAt };
+      const result = { adaptationRole, retestOf: taskId, challenger, maxParallel: Math.max(1, Math.min(32, Math.floor(maxParallel))), protocolFingerprint: report.protocolFingerprint, protocol: arms, changePresence: assessHarnessChangePresence(payload.baselineComponents, inventoryHarnessComponents(benchmarkWorkspace), targetComponentIds), scorecards, comparisons, adaptation, ...(validChange ? { change: validChange } : {}), ...(changeOutcomes ? { changeOutcomes } : {}), trials: report.trials, startedAt: report.startedAt };
       retestStore.updateTask(taskId, "completed", result);
       retestStore.appendEvent("harness.benchmark.retest.completed", result);
       console.log(`Harness retest complete · task ${taskId}\n${scorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})`).join("\n")}`);
@@ -5300,7 +5307,7 @@ research
         .slice(-3)
         .map((event) => event.payload);
       const harnessBenchmarkEvidence = durableEvents
-        .filter((event) => event.type === "harness.benchmark.completed" || event.type === "harness.benchmark.retest.completed")
+        .filter((event) => (event.type === "harness.benchmark.completed" || event.type === "harness.benchmark.retest.completed") && (event.payload as { adaptationRole?: unknown } | null)?.adaptationRole !== "held_out")
         .slice(-3)
         .map((event) => event.payload)
         .slice(-3);
@@ -5313,7 +5320,7 @@ research
         changedComponents: change.candidateComponents.filter((candidate) => change.baselineComponents.find((baseline) => baseline.path === candidate.path && baseline.checksum !== candidate.checksum)),
       }));
       const latestHarnessBenchmarkEvent = durableEvents
-        .filter((event) => event.type === "harness.benchmark.completed" || event.type === "harness.benchmark.retest.completed")
+        .filter((event) => (event.type === "harness.benchmark.completed" || event.type === "harness.benchmark.retest.completed") && (event.payload as { adaptationRole?: unknown } | null)?.adaptationRole !== "held_out")
         .at(-1);
       const latestHarnessBenchmark = harnessBenchmarkEvidence.at(-1) as { comparisons?: unknown } | undefined;
       const benchmarkRegression = Array.isArray(latestHarnessBenchmark?.comparisons)

@@ -14305,3 +14305,34 @@ test('harness revision feedback remains bounded and excludes declared held-out t
   const stored=JSON.parse(formatHarnessFeedback([{protocolFingerprint:'stored',scorecards:[{harness:'candidate',competitiveScore:42,failureProfile:{parse:3}}],comparisons:[{incumbent:'baseline',challengerWins:false,reason:'needs retest'}]}]));
   assert.equal(stored.reports[0].scorecards[0].failureProfile.parse,3);assert.equal(stored.reports[0].comparisons[0].incumbent,'baseline');
 });
+
+test('benchmark feedback roles validate before execution and held-out evidence cannot create retests', async () => {
+  const {parseHarnessFeedbackRole}=await import('../dist/core/harness-feedback.js');
+  assert.equal(parseHarnessFeedbackRole(undefined),'unclassified');
+  for(const role of ['feedback','selection','held_out','unclassified'])assert.equal(parseHarnessFeedbackRole(role),role);
+  for(const role of ['test',null,{},1])assert.throws(()=>parseHarnessFeedbackRole(role),/adaptationRole/);
+  const plan={schemaVersion:1,challenger:'evidra',incumbents:['baseline'],claimStatus:'not_proven',interventions:[{id:'failure',kind:'reliability',priority:'high',target:'runtime',observedGap:'failure',prediction:'improve',action:'fix',acceptance:'retest'}],retest:{preserve:[],requiredTasks:1,minimumCoverage:1,independentRepetitions:1,noMetricOrBudgetChanges:true}};
+  assert.equal(materializeHarnessRetestTask(plan,'revision',{adaptationRole:'held_out'}),undefined);
+  assert.equal(materializeHarnessRetestTask(plan,'revision',{adaptationRole:'feedback'}).payload.benchmarkEvidence.adaptationRole,'feedback');
+  const root=mkdtempSync(join(tmpdir(),'evidra-benchmark-role-'));
+  try {
+    const cli=join(process.cwd(),'dist','cli.js');
+    const init=spawnSync(process.execPath,[cli,'init','local-research'],{cwd:root,encoding:'utf8'});assert.equal(init.status,0,init.stderr);
+    const input=join(root,'protocol.json'),out=join(root,'report.json');
+    const arms=[{harness:'evidra',task:'fixture',arm:'default',seed:1,model:'fixture',budgetMinutes:1,direction:'maximize',baselineMetric:0,metric:'score',command:[process.execPath,'-e','console.log("score=0.5")']}];
+    writeFileSync(input,JSON.stringify({adaptationRole:'invalid',arms}));
+    const invalid=spawnSync(process.execPath,[cli,'benchmark','run',input,'--out',out],{cwd:root,encoding:'utf8'});assert.notEqual(invalid.status,0);assert.match(invalid.stderr,/adaptationRole/);assert.equal(existsSync(out),false);
+    writeFileSync(input,JSON.stringify({adaptationRole:'held_out',arms}));
+    const executed=spawnSync(process.execPath,[cli,'benchmark','run',input,'--out',out],{cwd:root,encoding:'utf8'});
+    assert(existsSync(out),executed.stderr);assert.equal(JSON.parse(readFileSync(out,'utf8')).adaptationRole,'held_out');
+    const store=new ResearchStore(join(root,'.sota','database.sqlite'));
+    try {
+      assert.equal(store.eventsByType('harness.benchmark.completed').at(-1).payload.adaptationRole,'held_out');
+      store.enqueueTask({id:'heldout-retest',kind:'harness.retest',priority:1,payload:{challenger:'evidra',benchmarkProtocol:arms,benchmarkEvidence:{adaptationRole:'held_out'}}});
+    }finally{store.close();}
+    const refused=spawnSync(process.execPath,[cli,'benchmark','retest','heldout-retest'],{cwd:root,encoding:'utf8'});
+    assert.notEqual(refused.status,0);assert.match(refused.stderr,/Held-out benchmark evidence/);
+    const reopened=new ResearchStore(join(root,'.sota','database.sqlite'));
+    try {const queued=reopened.queueTasks().find(task=>task.id==='heldout-retest');assert.equal(queued.status,'queued');assert.equal(queued.attempts,0);}finally{reopened.close();}
+  }finally{rmSync(root,{recursive:true,force:true});}
+});
