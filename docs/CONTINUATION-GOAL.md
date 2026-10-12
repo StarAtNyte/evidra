@@ -1280,6 +1280,13 @@ The same workspace backup-path helper is now used by the terminal UI command,
 which also closes its store after failures. Automatic startup snapshots retain
 the explicit EVIDRA_BACKUP_DIR separate-volume override; interactive commands
 remain workspace-contained.
+An actual child-process SIGKILL after real SQLite snapshot completion but before
+publication preserved the destination hash and its prior event history; the
+live source retained newer events with valid integrity. The unpublished
+staging directory remained private (0700). Evidence:
+`docs/research/evidence/backup-sigkill-before-publication-2026-10-12.json`.
+Automatic orphan cleanup, power-loss durability and full campaign restoration
+remain unverified.
 
 The default Modal local entrypoint now prints its app identity before spawning
 the function call. The controller journals a causal `run.remote.allocated`

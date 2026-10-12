@@ -1,0 +1,15 @@
+{
+  "at": "2026-10-12T10:21:49.169Z",
+  "signal": "SIGKILL",
+  "destinationHashPreserved": true,
+  "restoredVersions": [
+    1
+  ],
+  "sourceVersions": [
+    1,
+    2
+  ],
+  "unpublishedStagingDirectories": 1,
+  "stagingMode": "0700",
+  "scope": "Actual SIGKILL after real SQLite backup completion and before publication. Previous snapshot and live source remain valid. An orphan staging directory remains private; automatic orphan cleanup, power-loss durability and campaign restoration are not verified."
+}
