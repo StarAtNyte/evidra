@@ -76,7 +76,7 @@ import { formatResearchDecision, runResearchDirector } from "./agents/research-d
 import { boundedPeerBoard, laneToolObservationContext, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic, runResearchSemanticAuditor, type ResearchSemanticAudit } from "./agents/research-lanes.js";
 import { createPaintingJob, runPaintingJob } from "./agents/painting.js";
-import { DEFAULT_CLAUDE_MODEL, effectiveClaudeModel } from "./agents/claude-exec.js";
+import { claudeLoginStatus, DEFAULT_CLAUDE_MODEL, effectiveClaudeModel, resolveClaudeBinary } from "./agents/claude-exec.js";
 import { checkProvider, codexLoginStatus, isToolCapableProvider, codexResearchModelPool, CodexExecAgent, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listCodexModels, listLocalModels, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
@@ -1089,6 +1089,15 @@ program.command("doctor")
   const codexReady = codexResult.exitCode === 0 && !/not authenticated|not logged/i.test(codexAuth);
   checks.push(`codex auth    ${codexAuth}`);
   diagnostics.push({ name: "codex-auth", status: codexReady ? "ok" : "unavailable", detail: redactSecrets(codexAuth) });
+  const claudePath = resolveClaudeBinary();
+  const claudeResult = await runProcess(["which", claudePath], root, 5_000);
+  const claudeBinary = claudeResult.exitCode === 0 ? claudeResult.stdout.trim() : "not found";
+  checks.push(`claude       ${claudeBinary} (${claudePath})`);
+  diagnostics.push({ name: "claude", status: claudeResult.exitCode === 0 ? "ok" : "missing", detail: `${claudeBinary} (${claudePath})` });
+  const claudeAuth = claudeResult.exitCode === 0 ? claudeLoginStatus() : "not authenticated";
+  const claudeReady = claudeResult.exitCode === 0 && /^Logged in/.test(claudeAuth);
+  checks.push(`claude auth   ${claudeAuth}`);
+  diagnostics.push({ name: "claude-auth", status: claudeReady ? "ok" : "unavailable", detail: redactSecrets(claudeAuth) });
   let localModelsReady = false;
   try {
     const models = await listLocalModels();
@@ -1130,9 +1139,9 @@ program.command("doctor")
     console.log(JSON.stringify({
       workspace: root,
       node: process.versions.node,
-      ready: (codexReady || localModelsReady) && ["git", "rg"].every((name) => diagnostics.some((check) => check.name === name && check.status === "ok")),
+      ready: (codexReady || claudeReady || localModelsReady) && ["git", "rg"].every((name) => diagnostics.some((check) => check.name === name && check.status === "ok")),
       requiredTools: Object.fromEntries(["git", "rg"].map((name) => [name, diagnostics.some((check) => check.name === name && check.status === "ok")])),
-      providers: { codex: codexReady, local: localModelsReady, fallback: localModelsReady },
+      providers: { codex: codexReady, claude: claudeReady, local: localModelsReady, fallback: localModelsReady },
       executors: { modal: { runtime: modalRuntimeReady, allocationInspector: modalInspectorReady, credentialsConfigured: modalCredentialsConfigured, configured: modalRuntimeReady && modalInspectorReady && modalCredentialsConfigured, authenticationVerified: false } },
       checks: diagnostics,
     }, null, 2));
