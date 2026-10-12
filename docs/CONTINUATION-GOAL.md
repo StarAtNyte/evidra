@@ -1272,6 +1272,10 @@ journals before creation and immediately before rename. Active or leftover
 journals refuse replacement while preserving the previous snapshot. Tests
 cover an open writable destination, each journal suffix and a journal created
 during backup staging. This is journal detection, not a cross-process lock.
+The CLI also resolves the nearest existing destination parent before creating
+directories. Symlinked parents outside the physical workspace are rejected;
+internal workspace symlinks remain supported. A CLI regression verifies both
+paths, no outside directory creation and restored-backup event integrity.
 
 The default Modal local entrypoint now prints its app identity before spawning
 the function call. The controller journals a causal `run.remote.allocated`

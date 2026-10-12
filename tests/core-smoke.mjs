@@ -14194,3 +14194,23 @@ test('SQLite backup replacement refuses active and leftover destination journals
     await source.backup(destination);
   } finally {source.close();rmSync(root,{recursive:true,force:true});}
 });
+
+test('backup CLI refuses workspace symlink escapes before creating destination directories', () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-backup-cli-boundary-')),outside=mkdtempSync(join(tmpdir(),'evidra-backup-outside-'));
+  try {
+    const cli=join(process.cwd(),'dist','cli.js');
+    const init=spawnSync(process.execPath,[cli,'init','local-research'],{cwd:root,encoding:'utf8'});
+    assert.equal(init.status,0,init.stderr);
+    symlinkSync(outside,join(root,'redirect'),'dir');
+    const escaped=spawnSync(process.execPath,[cli,'backup','redirect/new/state.sqlite'],{cwd:root,encoding:'utf8'});
+    assert.notEqual(escaped.status,0);
+    assert.match(escaped.stderr,/parent resolves outside/);
+    assert.equal(existsSync(join(outside,'new')),false);
+    mkdirSync(join(root,'safe'));
+    symlinkSync(join(root,'safe'),join(root,'internal'),'dir');
+    const allowed=spawnSync(process.execPath,[cli,'backup','internal/nested/state.sqlite'],{cwd:root,encoding:'utf8'});
+    assert.equal(allowed.status,0,allowed.stderr);
+    const restored=new ResearchStore(join(root,'safe','nested','state.sqlite'));
+    try{assert.equal(restored.verifyEventChain().status,'valid');}finally{restored.close();}
+  } finally{rmSync(root,{recursive:true,force:true});rmSync(outside,{recursive:true,force:true});}
+});
