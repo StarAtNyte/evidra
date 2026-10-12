@@ -75,6 +75,10 @@ export const CompetitionConfigSchema = z.object({
     /** Name of an environment variable holding the bearer token; never store the token itself. */
     authEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(),
     fileField: z.string().min(1).max(80).default("file").optional(),
+    /** Run inside the best validated experiment's worktree when a campaign ends, so the
+     * autonomous run itself writes the final submission files. */
+    finalizeCommand: z.array(z.string().min(1)).min(1).optional(),
+    finalizeTimeoutMinutes: z.number().positive().finite().default(120).optional(),
   }).optional(),
   submissionPolicy: z.object({
     requireHumanApproval: z.boolean().default(true),
@@ -100,6 +104,9 @@ export const CompetitionConfigSchema = z.object({
     verificationCommand: z.array(z.string()).min(1).optional(),
     verificationCommands: z.array(z.array(z.string()).min(1)).min(1).optional(),
     requiredArtifacts: z.array(z.string()).default([]),
+    /** Experiments that may run at once; set when the evaluator offloads compute to a remote
+     * backend, so a local executor is not the bottleneck. Defaults to the executor's ceiling. */
+    maxParallelExperiments: z.number().int().min(1).max(8).optional(),
     /** Workspace-relative datasets staged into isolated experiment worktrees. */
     dataPaths: z.array(z.string().min(1)).default([]),
     /** Immutable workspace-local files needed by evaluators but absent from Git worktrees. */

@@ -10,6 +10,7 @@ import { evidraVersion } from "../version.js";
 import { serializeResearchContext } from "../core/context-budget.js";
 import { boundedLocalResponseText, LOCAL_REQUEST_MAX_BYTES, LOCAL_ERROR_MAX_BYTES } from "./local-http.js";
 import { claudeIsLoggedInAsync, runClaudeHeadless } from "./claude-exec.js";
+import { openTranscript } from "./transcripts.js";
 
 export type AgentProvider = "codex" | "claude" | "local";
 export const AGENT_PROVIDERS: readonly AgentProvider[] = ["codex", "claude", "local"];
@@ -183,6 +184,8 @@ export interface ExecAgentOptions {
   onUsage?: (usage: AgentResult["usage"], provider: string, model: string, role: string) => void;
   /** Abort the provider turn and any entitlement-reset wait immediately. */
   interruptSignal?: AbortSignal;
+  /** Receive every raw provider event, unredacted and unbounded, for the turn transcript. */
+  onRawEvent?: (event: unknown) => void;
 }
 
 export interface CodexExecDependencies {
@@ -651,17 +654,37 @@ export class CodexExecAgent {
   constructor(private readonly options: ExecAgentOptions, private readonly dependencies: CodexExecDependencies = {}) {}
 
   async run(task: AgentTask, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
+    const transcript = openTranscript({ role: task.role, provider: this.options.provider, model: this.options.model, cwd: this.options.cwd, sandbox: this.options.sandbox, prompt: this.renderPrompt(task) });
+    if (!transcript) return await this.runTurn(task, onProgress, onProcess);
+    const previous = this.options.onRawEvent;
+    const recording = new CodexExecAgent({ ...this.options, onRawEvent: (event) => { transcript.event(event); previous?.(event); } }, this.dependencies);
+    try {
+      const result = await recording.runTurn(task, onProgress, onProcess);
+      transcript.end({ ok: true, output: result.output });
+      return result;
+    } catch (error) {
+      transcript.end({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+  }
+
+  /** The exact text sent to the provider for a task; shared by the turn and its transcript. */
+  renderPrompt(task: AgentTask): string {
     const submissionBoundary = task.role === "experiment engineer"
       ? "You may create and validate local experiment outputs and evaluator artifacts required by the task, but never submit externally or expose credentials."
       : "Do not submit anything or expose credentials.";
     const responseInstruction = task.role === "experiment engineer"
       ? "Execute the task through to its required local artifact; only summarize after the artifact and verification are complete."
       : "Return a concise, evidence-oriented answer.";
-    const prompt = `${task.objective}\n\nResearch context:\n${serializeResearchContext(task.context)}\n\n` +
+    return `${task.objective}\n\nResearch context:\n${serializeResearchContext(task.context)}\n\n` +
       "You are Evidra, the research and experimentation workbench assistant. The selected provider is only an implementation detail; never introduce yourself as Codex, OpenAI, Claude, Anthropic, Ollama, or another underlying model. " +
       (task.role === "research director" ? "Act as Evidra's research director. " : "Act as Evidra's conversational assistant. ") +
       responseInstruction + " " +
       submissionBoundary;
+  }
+
+  private async runTurn(task: AgentTask, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
+    const prompt = this.renderPrompt(task);
     if (this.options.provider === "local") {
       const result = await this.runOllama(prompt, onProgress, onProcess, task.outputSchema, task.role);
       return result;
@@ -770,6 +793,7 @@ export class CodexExecAgent {
       let repeatedCommands = 0;
       let consecutiveFailedCommands = 0;
       for await (const event of stream.events) {
+        this.options.onRawEvent?.(event);
         const value = event as unknown as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string; query?: string; message?: string; exit_code?: number }; usage?: AgentResult["usage"]; message?: string; error?: { message?: string } };
         if (value.type === "item.started" && value.item?.type === "command_execution" && typeof value.item.command === "string") {
           if (value.item.command === lastCommand) repeatedCommands += 1;
@@ -893,7 +917,9 @@ export class CodexExecAgent {
         signal: abort.signal,
       });
       if (!response.ok) throw new Error(`Ollama request failed: ${response.status} ${redactSecrets(await boundedLocalResponseText(response, LOCAL_ERROR_MAX_BYTES))}`);
-      const payload = JSON.parse(await boundedLocalResponseText(response)) as { done?: boolean; done_reason?: string; error?: unknown; message?: { content?: unknown }; prompt_eval_count?: unknown; eval_count?: unknown; prompt_eval_cached_count?: unknown };
+      const payloadText = await boundedLocalResponseText(response);
+      this.options.onRawEvent?.({ type: "ollama.response", body: payloadText });
+      const payload = JSON.parse(payloadText) as { done?: boolean; done_reason?: string; error?: unknown; message?: { content?: unknown }; prompt_eval_count?: unknown; eval_count?: unknown; prompt_eval_cached_count?: unknown };
       const count = (value: unknown): number | undefined => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
       const counts = { inputTokens: count(payload.prompt_eval_count), outputTokens: count(payload.eval_count), cachedInputTokens: count(payload.prompt_eval_cached_count) };
       const usage = Object.values(counts).some((value) => value !== undefined) ? counts : undefined;

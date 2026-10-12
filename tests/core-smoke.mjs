@@ -14415,3 +14415,38 @@ test("claude provider maps routes, permissions, and headless stream output", asy
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("provider transcripts capture prompt, raw events, and outcome; evidence pack bundles them", async () => {
+  const { openTranscript } = await import("../dist/agents/transcripts.js");
+  const { packEvidence } = await import("../dist/core/evidence-pack.js");
+  const { ResearchStore: Store } = await import("../dist/core/store.js");
+  const dir = mkdtempSync(join(tmpdir(), "evidra-transcript-"));
+  const previous = process.env.EVIDRA_TRANSCRIPT_DIR;
+  process.env.EVIDRA_TRANSCRIPT_DIR = join(dir, ".sota", "transcripts");
+  try {
+    const writer = openTranscript({ role: "experiment engineer", provider: "claude", model: "m", cwd: dir, prompt: "build the model" });
+    writer.event({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "ls" } }] } });
+    writer.end({ ok: true, output: "done" });
+    const lines = readFileSync(writer.path, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(lines.map((line) => line.type), ["turn.start", "provider.event", "turn.end"]);
+    assert.equal(lines[0].prompt, "build the model");
+
+    execFileSync("git", ["init", "-q"], { cwd: dir });
+    writeFileSync(join(dir, "competition.json"), "{}\n");
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "add", "competition.json"], { cwd: dir });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"], { cwd: dir });
+    const store = new Store(join(dir, ".sota", "database.sqlite"));
+    store.appendEvent("baseline.completed", { metric: 1 });
+    const result = packEvidence({ store, stateDirectory: join(dir, ".sota"), projectRoot: dir, evidraRoot: dir, evidraVersion: "test", competitionPath: join(dir, "competition.json"), output: join(dir, "evidence") });
+    store.close();
+    assert.equal(result.transcripts, 1);
+    assert.equal(result.prompts, 1);
+    assert.deepEqual(result.files.map((file) => file.name).sort(), ["harness.tar.gz", "prompts.jsonl.gz", "trajectory.tar.gz"]);
+    const listing = execFileSync("tar", ["-tzf", join(dir, "evidence", "trajectory.tar.gz")], { encoding: "utf8" });
+    assert.match(listing, /transcripts\//);
+    assert.match(listing, /events\.export\.jsonl/);
+  } finally {
+    if (previous === undefined) delete process.env.EVIDRA_TRANSCRIPT_DIR; else process.env.EVIDRA_TRANSCRIPT_DIR = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

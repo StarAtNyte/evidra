@@ -167,6 +167,7 @@ export async function runClaudeHeadless(
   const bashToolIds = new Set<string>();
 
   const handle = (event: Record<string, unknown>): void => {
+    options.onRawEvent?.(event);
     if (event.type === "system" && event.subtype === "init" && typeof event.session_id === "string") {
       sessionId = event.session_id;
       options.onThread?.(sessionId);

@@ -52,7 +52,9 @@ import { persistExecutionStageResult } from "./core/stage-executor.js";
 import { availableResearchTools, executeResearchTool } from "./core/tools.js";
 import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "./core/external-tools.js";
 import { projectVerifiedSubtaskState } from "./core/subtask-state.js";
-import { classifyProcessFailure, executorFor, mergeEvaluatorResult, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "./core/executors.js";
+import { classifyProcessFailure, executorFor, mergeEvaluatorResult, parseMetricOutput, prepareExperimentEnvironment, prepareWorkerHome, safeWorkerEnvironment, validateRunMetrics } from "./core/executors.js";
+import { runCampaignFinalize, selectFinalCandidate } from "./core/finalize.js";
+import { packEvidence } from "./core/evidence-pack.js";
 import { sha256File } from "./core/evidence.js";
 import { captureImplementationSnapshot, captureVerificationSourcePin, implementationChanged, implementationEditRetryPrompt, implementationRetryPrompt, resolveImplementationPaths, seedImplementationArtifacts, seedImplementationSource, seedVerificationImplementation, verifyImplementationSnapshot, type ImplementationSnapshot, type PinnedImplementationArtifact } from "./core/implementation-guard.js";
 import { captureEnvironment } from "./core/environment.js";
@@ -162,6 +164,8 @@ import { assessCodeHealth, assessScopedCodeHealthTrend, snapshotCodeHealth, type
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
 const statePath = join(stateDirectory, "database.sqlite");
+// Full provider transcripts (prompts, raw events, outcomes) for audit evidence.
+process.env.EVIDRA_TRANSCRIPT_DIR ??= join(stateDirectory, "transcripts");
 class CampaignAgentTokenBudgetExceeded extends Error {
   constructor(readonly usedTokens: number, readonly budgetTokens: number) {
     super(`Aggregate agent-token budget exhausted (${usedTokens}/${budgetTokens}).`);
@@ -2588,6 +2592,27 @@ sources.command("adapt")
 program.addCommand(sources);
 
 const evidence = new Command("evidence").description("Inspect and verify durable research evidence");
+evidence.command("pack")
+  .description("Package trajectory, prompts, and harness for competition evidence upload")
+  .option("-o, --output <dir>", "output directory", join(".sota", "evidence"))
+  .action((options: { output: string }) => {
+    const store = new ResearchStore(statePath);
+    try {
+      const result = packEvidence({
+        store,
+        stateDirectory,
+        projectRoot: root,
+        evidraRoot: fileURLToPath(new URL("..", import.meta.url)),
+        evidraVersion: evidraVersion(),
+        competitionPath: join(root, "competition.json"),
+        output: resolve(root, options.output),
+      });
+      console.log(`Evidence package: ${result.directory}\nTranscripts ${result.transcripts} · prompts ${result.prompts}`);
+      for (const file of result.files) console.log(`  ${file.name.padEnd(28)} ${(file.bytes / 1e6).toFixed(1).padStart(8)} MB  ${file.sha256.slice(0, 16)}`);
+    } finally {
+      store.close();
+    }
+  });
 evidence.command("audit").option("--json", "emit machine-readable JSON").description("Audit claim provenance and completion blockers").action((options: { json?: boolean }) => {
   const store = new ResearchStore(statePath);
   const report = auditCurrentClaims(store);
@@ -4777,6 +4802,12 @@ challenge.command("policy").action(() => {
   mkdirSync(stateDirectory, { recursive: true });
   console.log(`Validation policy: ${paths.policy}\nChecksum: ${writeValidationPolicy(paths.policy, policy)}\n${JSON.stringify(policy, null, 2)}`);
 });
+challenge.command("finalize").description("Build final artifacts from the campaign's best experiment (runs submission.finalizeCommand)").action(async () => {
+  const adapter = activeCompetition();
+  requireCompetitionContract(adapter);
+  if (!adapter.config.submission?.finalizeCommand?.length) throw new Error("competition.json declares no submission.finalizeCommand.");
+  await finalizeCampaign(adapter);
+});
 challenge.command("baseline").description("Run the canonical baseline").action(async () => {
   const adapter = activeCompetition();
   requireCompetitionContract(adapter);
@@ -5452,7 +5483,7 @@ research
       // Agent lanes and compute lanes are different resources. Keep local
       // and container execution conservative by default; Modal is the
       // explicit scale-out backend for independent experiment workers.
-      const executorParallelCeiling = options.executor === "modal" || options.executor === "slurm" ? 3 : 1;
+      const executorParallelCeiling = adapter.config.execution?.maxParallelExperiments ?? (options.executor === "modal" || options.executor === "slurm" ? 3 : 1);
       const experimentParallelism = Math.max(1, Math.min(effectiveLaneLimit, executorParallelCeiling));
       store.appendEvent("research.capability_route", { route, predictedTier: route.tier, servedProvider: options.provider, servedModel: selectedModel, recentQuality });
       const currentCampaignClaimIds = new Set(recordsForCampaign(store.claims(), campaign.startedAt).map((claim) => claim.id));
@@ -6884,7 +6915,36 @@ research
       if (criticReview) console.log(`\nCritic: ${criticReview.verdict} · confidence ${criticReview.confidence.toFixed(2)}\n${criticReview.summary}${criticReview.objections.length ? `\nObjections:\n${criticReview.objections.map((item) => `- ${item}`).join("\n")}` : ""}`);
       if (terminal) break;
     } while (true);
+    if (mode === "challenge") await finalizeCampaign(adapter);
   });
+
+/** Build final artifacts from the campaign's own best experiment, without a person in the loop. */
+async function finalizeCampaign(adapter: ReturnType<typeof activeCompetition>): Promise<void> {
+  const command = adapter.config.submission?.finalizeCommand;
+  if (!command?.length) return;
+  const store = new ResearchStore(statePath);
+  try {
+    const metricName = adapter.config.metric.name;
+    const baselinePayload = store.eventsByType("baseline.completed").at(-1)?.payload as { metric?: unknown; stdout?: string } | undefined;
+    const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, metricName).metrics[metricName] : undefined;
+    const candidate = selectFinalCandidate(store, metricName, adapter.config.metric.direction, baselineMetric);
+    if (!candidate) {
+      store.appendEvent("campaign.finalize.skipped", { reason: "no completed experiment beat the baseline", baselineMetric: baselineMetric ?? null });
+      console.log("\nFinalize skipped: no completed experiment beat the baseline.");
+      return;
+    }
+    console.log(`\nFinalizing from ${candidate.experimentId} (${metricName} ${candidate.metric}${candidate.accepted ? ", validated" : ", best unvalidated"})...`);
+    const record = await runCampaignFinalize({
+      store, stateDirectory, root, workspaceRoot: adapter.workspacePath(root), candidate, command,
+      timeoutMs: (adapter.config.submission?.finalizeTimeoutMinutes ?? 120) * 60_000,
+      environment: safeWorkerEnvironment({ ...(adapter.config.execution?.environment ?? {}), HOME: prepareWorkerHome(candidate.worktreePath) }),
+      run: (cmd, cwd, timeoutMs, environment) => runProcess(cmd, cwd, timeoutMs, streamProcessOutput, undefined, environment),
+    });
+    console.log(record.exitCode === 0 ? `Finalize completed · ${join(stateDirectory, "final", "final.json")}` : `Finalize failed (exit ${record.exitCode}) · ${record.stderrTail.slice(-400)}`);
+  } finally {
+    store.close();
+  }
+}
 
 research.command("policy")
   .description("Show empirical search-operator evidence from autonomous cycles")
@@ -7225,7 +7285,12 @@ experiment.command("run")
         throw new Error(`Experiment ${id} blocked by the campaign GPU budget: ${budgetDecision.reason}. Increase --gpu-budget or choose a CPU/reduced-cost route.`);
       }
     }
-    const implementationEvent = store.eventsByType("experiment.implementation.completed").reverse().find((event) => (event.payload as { experimentId?: unknown } | undefined)?.experimentId === id);
+    // A replication has no implementation of its own: it must re-evaluate its
+    // parent's pinned code, never a clean HEAD checkout that silently drops the
+    // candidate change and "replicates" the baseline instead.
+    const implementationEvents = store.eventsByType("experiment.implementation.completed").reverse();
+    const implementationFor = (experimentId: string | undefined) => experimentId ? implementationEvents.find((event) => (event.payload as { experimentId?: unknown } | undefined)?.experimentId === experimentId) : undefined;
+    const implementationEvent = implementationFor(id) ?? (manifest.parent ? implementationFor(manifest.parent) : undefined);
     let pinnedWorktree: string | undefined;
     if (implementationEvent) {
       const payload = implementationEvent.payload as Partial<ImplementationSnapshot>;
