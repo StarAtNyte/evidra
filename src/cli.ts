@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { formatHarnessFeedback, parseHarnessFeedbackRole } from "./core/harness-feedback.js";
+import { formatHarnessFeedback, parseHarnessFeedbackRole, projectHarnessFailureFeedback } from "./core/harness-feedback.js";
 import { workspaceBackupDestination } from "./core/backup-path.js";
 import { reconcileRemoteExperiment } from "./core/remote-reconciliation.js";
 import { Command } from "commander";
@@ -1815,6 +1815,7 @@ benchmark.command("run")
     benchmarkStore.appendEvent("harness.benchmark.completed", {
       suite: "generic",
       adaptationRole,
+      ...(adaptationRole === "feedback" ? projectHarnessFailureFeedback(report.runs) : {}),
       workspace: benchmarkWorkspace,
       maxParallel,
       protocolFingerprint: report.protocolFingerprint,
@@ -1938,7 +1939,7 @@ benchmark.command("retest")
       const changeOutcomes = validChange
         ? comparisons.map((comparison) => ({ incumbent: comparison.incumbent, outcome: evaluateHarnessChange(validChange, { baselineScore: validChange.baselineScore, candidateScore: comparison.pairedMeanDelta === null ? undefined : (validChange.baselineScore ?? 0) + comparison.pairedMeanDelta, valid: comparison.validPairedArms > 0 && comparison.pairedLower95 !== null }) }))
         : undefined;
-      const result = { adaptationRole, retestOf: taskId, challenger, maxParallel: Math.max(1, Math.min(32, Math.floor(maxParallel))), protocolFingerprint: report.protocolFingerprint, protocol: arms, changePresence: assessHarnessChangePresence(payload.baselineComponents, inventoryHarnessComponents(benchmarkWorkspace), targetComponentIds), scorecards, comparisons, adaptation, ...(validChange ? { change: validChange } : {}), ...(changeOutcomes ? { changeOutcomes } : {}), trials: report.trials, startedAt: report.startedAt };
+      const result = { adaptationRole, ...(adaptationRole === "feedback" ? projectHarnessFailureFeedback(report.runs) : {}), retestOf: taskId, challenger, maxParallel: Math.max(1, Math.min(32, Math.floor(maxParallel))), protocolFingerprint: report.protocolFingerprint, protocol: arms, changePresence: assessHarnessChangePresence(payload.baselineComponents, inventoryHarnessComponents(benchmarkWorkspace), targetComponentIds), scorecards, comparisons, adaptation, ...(validChange ? { change: validChange } : {}), ...(changeOutcomes ? { changeOutcomes } : {}), trials: report.trials, startedAt: report.startedAt };
       retestStore.updateTask(taskId, "completed", result);
       retestStore.appendEvent("harness.benchmark.retest.completed", result);
       console.log(`Harness retest complete · task ${taskId}\n${scorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})`).join("\n")}`);

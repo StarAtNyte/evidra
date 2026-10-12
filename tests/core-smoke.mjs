@@ -14336,3 +14336,29 @@ test('benchmark feedback roles validate before execution and held-out evidence c
     try {const queued=reopened.queueTasks().find(task=>task.id==='heldout-retest');assert.equal(queued.status,'queued');assert.equal(queued.attempts,0);}finally{reopened.close();}
   }finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test('feedback benchmark events retain bounded redacted failure traces only for feedback roles', async () => {
+  const {projectHarnessFailureFeedback,formatHarnessFeedback}=await import('../dist/core/harness-feedback.js');
+  const source=[{harness:'successful',result:{exitCode:0,stdout:'successful-answer',stderr:'successful-private'}},...Array.from({length:20},(_,index)=>({harness:'failed-'+index,failureClass:'execution',result:{exitCode:1,stdout:'failed-answer',stderr:'😀'.repeat(10000)+'\nAPI_KEY=fixture-secret'}}))];
+  const projected=projectHarnessFailureFeedback(source),serialized=JSON.stringify(projected);
+  assert(Buffer.byteLength(serialized,'utf8')<=4096);assert(projected.runs.length<=6);assert.equal(projected.totalRunCount,21);assert.equal(projected.omittedFailureRuns,20-projected.runs.length);
+  assert(!serialized.includes('successful-private'));assert(!serialized.includes('failed-answer'));assert(!serialized.includes('fixture-secret'));assert(serialized.includes('[REDACTED]'));
+  const formatted=formatHarnessFeedback([{adaptationRole:'feedback',...projected}]);assert(formatted.includes('failed-19'));assert(formatted.includes('[REDACTED]'));
+  const root=mkdtempSync(join(tmpdir(),'evidra-feedback-trace-cli-'));
+  try {
+    const cli=join(process.cwd(),'dist','cli.js'),input=join(root,'protocol.json'),output=join(root,'report.json');
+    const init=spawnSync(process.execPath,[cli,'init','local-research'],{cwd:root,encoding:'utf8'});assert.equal(init.status,0,init.stderr);
+    for(const role of ['feedback','selection','held_out']) {
+      writeFileSync(input,JSON.stringify({adaptationRole:role,arms:[{harness:'evidra',task:'fixture',arm:'default',seed:1,model:'fixture',budgetMinutes:1,direction:'maximize',baselineMetric:0,metric:'score',command:[process.execPath,'-e','console.error("API_KEY=fixture-secret; parsing failed");process.exit(1)']}]}));
+      const execution=spawnSync(process.execPath,[cli,'benchmark','run',input,'--out',output],{cwd:root,encoding:'utf8'});assert(existsSync(output),execution.stderr);
+      const store=new ResearchStore(join(root,'.sota','database.sqlite'));
+      try {
+        const event=store.eventsByType('harness.benchmark.completed').at(-1).payload;
+        assert.equal(event.adaptationRole,role);
+        if(role==='feedback'){assert.equal(event.runs.length,1);assert(event.runs[0].result.stderr.includes('parsing failed'));assert(!JSON.stringify(event.runs).includes('fixture-secret'));assert(formatHarnessFeedback([event]).includes('parsing failed'));}
+        else assert.equal(event.runs,undefined);
+      }finally{store.close();}
+      rmSync(output);
+    }
+  }finally{rmSync(root,{recursive:true,force:true});}
+});

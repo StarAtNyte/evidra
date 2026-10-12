@@ -11,6 +11,28 @@ export function parseHarnessFeedbackRole(value: unknown): HarnessFeedbackRole {
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown, limit = 96): string | undefined => typeof value === "string" ? redactSecrets(value).slice(-limit) : undefined;
 
+/** Persist only bounded failure diagnostics; raw successful outputs never enter feedback. */
+export function projectHarnessFailureFeedback(source: unknown[]): { runs: unknown[]; totalRunCount: number; omittedFailureRuns: number } {
+  const projected = { runs: [] as unknown[], totalRunCount: source.length, omittedFailureRuns: 0 };
+  let failures = 0;
+  for (const value of source) {
+    const run = record(value), result = record(run.result);
+    if (!(typeof run.failureClass === "string" && run.failureClass || typeof result.exitCode === "number" && Number.isInteger(result.exitCode) && result.exitCode !== 0)) continue;
+    failures += 1;
+    projected.runs.push({ harness: text(run.harness), failureClass: text(run.failureClass), result: {
+      exitCode: typeof result.exitCode === "number" && Number.isInteger(result.exitCode) ? result.exitCode : undefined,
+      stderr: text(result.stderr, 512),
+    } });
+    if (projected.runs.length > 6) projected.runs.shift();
+    projected.omittedFailureRuns = failures - projected.runs.length;
+    while (Buffer.byteLength(JSON.stringify(projected), "utf8") > 4096 && projected.runs.length) {
+      projected.runs.shift();
+      projected.omittedFailureRuns = failures - projected.runs.length;
+    }
+  }
+  return projected;
+}
+
 /** Bounded revision diagnostics, independent of the immutable benchmark records. */
 export function formatHarnessFeedback(evidence: unknown[]): string {
   const packet: { schemaVersion: number; omittedHeldOut: number; omittedReports: number; reports: unknown[] } = { schemaVersion: 1, omittedHeldOut: 0, omittedReports: 0, reports: [] };
@@ -25,6 +47,8 @@ export function formatHarnessFeedback(evidence: unknown[]): string {
     const selected = {
       protocolFingerprint: text(report.protocolFingerprint), startedAt: text(report.startedAt), role,
       trialCount: trials.length, runCount: runs.length,
+      totalRunCount: typeof report.totalRunCount === "number" && Number.isInteger(report.totalRunCount) && report.totalRunCount >= runs.length ? report.totalRunCount : undefined,
+      omittedFailureRuns: typeof report.omittedFailureRuns === "number" && Number.isInteger(report.omittedFailureRuns) && report.omittedFailureRuns >= 0 ? report.omittedFailureRuns : undefined,
       scorecards: (Array.isArray(report.scorecards) ? report.scorecards : []).slice(0, 3).map((value) => {
         const score = record(value);
         return { harness: text(score.harness), competitiveScore: typeof score.competitiveScore === "number" && Number.isFinite(score.competitiveScore) ? score.competitiveScore : undefined,

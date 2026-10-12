@@ -1260,6 +1260,13 @@ external evaluator.
 
 ## Immediate next work
 
+Explicit feedback benchmarks and eligible retests now persist redacted failure
+stderr excerpts for revision prompts. The projection caps itself at 4096 UTF-8
+bytes and six recent failures, retains total-run and omitted-failure counts,
+and excludes stdout and successful-run diagnostics. Selection and held-out
+events omit traces. CLI regressions verify actual failing benchmark events
+feed diagnostic text into the bounded revision packet without fixture secrets.
+
 Benchmark protocol JSON accepts validated adaptationRole values: feedback,
 selection, held_out or unclassified (the legacy default). Reports and durable
 events retain the role. Retests preserve eligible roles; held-out tasks are
