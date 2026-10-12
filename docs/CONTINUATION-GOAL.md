@@ -1239,6 +1239,16 @@ external evaluator.
   and OAuth configuration rules without exposing values or contacting Modal.
   Existing local-provider readiness remains independent of optional Modal.
 
+- Two simultaneous live Modal CPU executions shared one controller store with
+  distinct tagged apps. Killing the target client and canceling its owned app
+  preserved the peer's normal completion, accuracy smoke metric and artifact.
+  The first cancellation observation retained quarantine; a retry established
+  stopped/zero-container termination. Both durable allocations are confirmed,
+  and no peer cleanup was requested or campaign measurements imported. Evidence:
+  `docs/research/evidence/modal-live-concurrent-cancellation-2026-10-12.json`.
+  This proves isolation between two apps; shared-app inputs and GPU cancellation
+  remain unverified.
+
 ## Immediate next work
 
 1. Add/maintain real matched external benchmark adapters and run actual trials
