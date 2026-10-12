@@ -145,6 +145,12 @@ export function guardWorkspaceCommand(command: string[], root: string): CommandG
  */
 export function guardReadOnlyInspection(command: string[]): CommandGuard {
   const executable = basename(command[0] ?? "").toLowerCase();
+  if (executable === "rg") {
+    for (const argument of command.slice(1)) {
+      if (argument === "--") break;
+      if (["--pre", "--hostname-bin"].some((option) => argument === option || argument.startsWith(`${option}=`))) return { allowed: false, reason: "SAFE mode refuses ripgrep options that execute external programs." };
+    }
+  }
   const readOnly = new Set(["true", "pwd", "ls", "find", "rg", "grep", "head", "tail", "sed", "awk", "wc", "du", "file", "which", "sha256sum", "shasum", "md5sum"]);
   if (executable === "git") {
     const allowed = new Set(["status", "rev-parse", "log", "diff", "show", "ls-files", "branch"]);

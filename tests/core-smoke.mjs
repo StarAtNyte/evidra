@@ -14219,3 +14219,8 @@ test('autonomous Git push is rejected behind global options and launch wrappers'
   for(const argv of [['git','-C','.','push'],['git','-c','user.name=fixture','push'],['git','--git-dir=.git','push'],['git','-C.','--no-pager','push'],['env','git','--work-tree','.','push'],['timeout','10','git','-C','.','push'],['git','--unknown-option','value','push']])assert.equal(guardAutonomousCommand(argv).allowed,false,JSON.stringify(argv));
   for(const argv of [['git','-C','.','status'],['git','-c','user.name=push','log'],['git','--no-pager','diff'],['git','log','--grep','push']])assert.equal(guardAutonomousCommand(argv).allowed,true,JSON.stringify(argv));
 });
+
+test('SAFE ripgrep inspection rejects executable hooks but permits literal option patterns', () => {
+  for(const argv of [['rg','--pre','worker','needle','input'],['rg','--pre=worker','needle','input'],['/usr/bin/rg','--hostname-bin','worker','needle'],['rg','--hostname-bin=worker','needle']])assert.equal(guardReadOnlyInspection(argv).allowed,false,JSON.stringify(argv));
+  for(const argv of [['rg','--files'],['rg','--pre-glob=*.txt','needle'],['rg','--','--pre=literal-pattern'],['rg','--','--hostname-bin']])assert.equal(guardReadOnlyInspection(argv).allowed,true,JSON.stringify(argv));
+});

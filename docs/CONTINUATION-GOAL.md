@@ -1260,6 +1260,13 @@ external evaluator.
 
 ## Immediate next work
 
+SAFE inspection refuses ripgrep `--pre` and `--hostname-bin` executable hooks
+in separate or equals forms. Ordinary search and literal option-looking
+patterns after `--` remain allowed. The installed ripgrep help confirms both
+options execute external programs; the safety benchmark now includes a
+preprocessing-hook rejection probe. Environment-configured ripgrep hooks and
+other inspection-tool execution surfaces still require audit.
+
 The autonomous Git mutation guard now parses supported global options before
 checking the subcommand. Push through `git -C`, `-c`, repository/worktree
 options and transparent launch wrappers is refused; unknown global options
