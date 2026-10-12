@@ -1260,6 +1260,13 @@ external evaluator.
 
 ## Immediate next work
 
+Autonomous shell inspection now applies the existing structured-read sensitive
+path policy to lexical and resolved paths. Dotenv, credentials, private keys
+and aliases to those files are refused, including attached file options. A
+SAFE shell tool regression verifies refusal without fixture content disclosure.
+This covers explicit path arguments, not recursive searches, hard-link aliases
+or raw controller-state files outside that existing sensitive-name policy.
+
 Workspace inspection now checks attached file-list, pattern/script-file,
 ignore-file and magic-file option paths, plus attached Git directory options
 and ls listing paths. Absolute/traversing paths and symlinked outside parents

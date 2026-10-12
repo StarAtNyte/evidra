@@ -14260,3 +14260,17 @@ test('workspace inspection validates attached path options and directory listing
     assert.equal(guardWorkspaceCommand(['ls','safe'],root).allowed,true);
   }finally{rmSync(root,{recursive:true,force:true});rmSync(outside,{recursive:true,force:true});}
 });
+
+test('autonomous shell paths apply the structured sensitive-file policy including aliases', async () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-sensitive-inspection-'));
+  try {
+    writeFileSync(join(root,'.env'),'private disposable fixture');writeFileSync(join(root,'notes.txt'),'ordinary fixture');symlinkSync(join(root,'.env'),join(root,'alias'));
+    for(const path of ['.env','.env.local','credentials.json','id_rsa','private.pem','alias']) {
+      for(const argv of [['head',path],['grep','--file='+path,'notes.txt'],['rg','-f'+path,'notes.txt']])assert.equal(guardWorkspaceCommand(argv,root).allowed,false,JSON.stringify(argv));
+    }
+    assert.equal(guardWorkspaceCommand(['head','notes.txt'],root).allowed,true);
+    const result=await executeResearchTool({name:'shell.exec',arguments:{command:['head','alias']}},{root,storePath:join(root,'state.sqlite'),autonomy:'safe'});
+    assert.equal(result.ok,false);assert.match(result.error,/sensitive workspace/);
+    assert.equal(JSON.stringify(result).includes('private disposable fixture'),false);
+  }finally{rmSync(root,{recursive:true,force:true});}
+});

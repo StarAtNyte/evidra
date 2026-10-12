@@ -1,5 +1,6 @@
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { existsSync, realpathSync } from "node:fs";
+import { isSensitiveWorkspacePath } from "./redaction.js";
 
 export type AutonomyLevel = "safe" | "fast" | "yolo";
 
@@ -139,11 +140,13 @@ export function guardWorkspaceCommand(command: string[], root: string): CommandG
     const target = resolve(rootPath, value);
     const targetRelative = relative(rootPath, target);
     if (targetRelative.startsWith("..") || isAbsolute(targetRelative)) return { allowed: false, reason: `Refusing path outside the workspace: '${value}'.` };
+    if (isSensitiveWorkspacePath(targetRelative)) return { allowed: false, reason: `Refusing sensitive workspace path: '${value}'.` };
     let ancestor = target;
     while (!existsSync(ancestor) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor);
     try {
       const physicalRelative = relative(rootPath, realpathSync(ancestor));
       if (physicalRelative === ".." || physicalRelative.startsWith("../") || physicalRelative.startsWith("..\\") || isAbsolute(physicalRelative)) return { allowed: false, reason: `Refusing path that resolves outside the workspace: '${value}'.` };
+      if (isSensitiveWorkspacePath(physicalRelative)) return { allowed: false, reason: `Refusing path resolving to sensitive workspace data: '${value}'.` };
     } catch { return { allowed: false, reason: `Unable to verify workspace path: '${value}'.` }; }
   }
   return { allowed: true };
