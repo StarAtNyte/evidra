@@ -1,5 +1,5 @@
-import { basename, isAbsolute, relative, resolve } from "node:path";
-import { realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
 
 export type AutonomyLevel = "safe" | "fast" | "yolo";
 
@@ -130,10 +130,15 @@ export function guardWorkspaceCommand(command: string[], root: string): CommandG
     const value = command[index] ?? "";
     if (!value || /^https?:\/\//i.test(value)) continue;
     if (value.split(/[\\/]+/).includes("..")) return { allowed: false, reason: `Refusing workspace escape path '${value}'.` };
-    if (!isAbsolute(value)) continue;
-    const target = resolve(value);
+    const target = resolve(rootPath, value);
     const targetRelative = relative(rootPath, target);
     if (targetRelative.startsWith("..") || isAbsolute(targetRelative)) return { allowed: false, reason: `Refusing path outside the workspace: '${value}'.` };
+    let ancestor = target;
+    while (!existsSync(ancestor) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor);
+    try {
+      const physicalRelative = relative(rootPath, realpathSync(ancestor));
+      if (physicalRelative === ".." || physicalRelative.startsWith("../") || physicalRelative.startsWith("..\\") || isAbsolute(physicalRelative)) return { allowed: false, reason: `Refusing path that resolves outside the workspace: '${value}'.` };
+    } catch { return { allowed: false, reason: `Unable to verify workspace path: '${value}'.` }; }
   }
   return { allowed: true };
 }

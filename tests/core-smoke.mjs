@@ -14231,3 +14231,18 @@ test('SAFE inspection requires sed sandbox and rejects awk and find mutation act
   assert.equal(guardReadOnlyInspection(['sed','--sandbox','-n','1,80p','input']).allowed,true);
   assert.equal(guardReadOnlyInspection(['find','.','-type','f','-print']).allowed,true);
 });
+
+test('autonomous workspace guard rejects file and directory symlink escapes', () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-inspection-symlink-')),outside=mkdtempSync(join(tmpdir(),'evidra-inspection-outside-'));
+  try {
+    writeFileSync(join(outside,'fixture'),'private fixture');
+    symlinkSync(join(outside,'fixture'),join(root,'linked-file'));
+    symlinkSync(outside,join(root,'linked-directory'),'dir');
+    mkdirSync(join(root,'safe'));writeFileSync(join(root,'safe','fixture'),'allowed fixture');symlinkSync(join(root,'safe'),join(root,'internal'),'dir');
+    for(const executable of ['head','tail','rg','grep','find','sed','du','file','wc','sha256sum']) {
+      for(const path of ['linked-file','linked-directory/fixture','linked-directory/missing'])assert.equal(guardWorkspaceCommand([executable,path],root).allowed,false,executable+':'+path);
+      assert.equal(guardWorkspaceCommand([executable,'internal/fixture'],root).allowed,true,executable);
+      assert.equal(guardWorkspaceCommand([executable,'safe/missing'],root).allowed,true,executable);
+    }
+  }finally{rmSync(root,{recursive:true,force:true});rmSync(outside,{recursive:true,force:true});}
+});

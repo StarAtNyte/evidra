@@ -1260,6 +1260,13 @@ external evaluator.
 
 ## Immediate next work
 
+Autonomous workspace path checks now resolve existing file targets and the
+nearest existing parent of missing targets. Relative file or directory symlinks
+that lead outside the workspace are refused; internal symlinks remain usable.
+Regressions cover the inspection tools across file, directory and missing-leaf
+escapes. This checks explicit path arguments, not every tool's implicit reads
+or concurrent symlink replacement.
+
 SAFE shell inspection requires sed --sandbox, refuses awk, and rejects find
 execution/confirmation, deletion and file-output actions. Installed GNU sed
 was tested with a disposable file: unsandboxed w wrote the marker, sandboxed
