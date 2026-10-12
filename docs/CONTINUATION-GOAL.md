@@ -1260,6 +1260,16 @@ external evaluator.
 
 ## Immediate next work
 
+The bounded live T4 probe (`scripts/probe-modal-gpu.mjs`, SDK Python and CLI
+paths as arguments) was rejected because the configured Modal account requires
+a payment method for GPU functions. No call receipt or measurements were
+produced; quarantine remained. A read-only SDK listing found its uniquely
+tagged app STOPPED with zero containers, but name-only observation is not
+accepted as durable reconciliation proof. Evidence:
+`docs/research/evidence/modal-gpu-submission-rejected-2026-10-12.json`.
+GPU execution and cancellation remain unverified; retry requires account GPU
+availability. The probe retains its database, events and result on failure.
+
 The offline `scripts/probe-modal-worker-isolation.py` probe imports the shipped
 worker with Modal 1.6.1 and checks actual SDK registration metadata: restricted
 Modal access, single-use containers, no attached secrets and no requested GPU.

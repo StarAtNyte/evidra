@@ -1,0 +1,47 @@
+{
+  "at": "2026-10-12T06:21:15.101Z",
+  "gpuRequested": "T4",
+  "status": "unverified",
+  "reason": "Modal required a payment method for T4 GPU functions",
+  "result": {
+    "runId": "modal-gpu-smoke-1791786035861",
+    "status": "failed",
+    "exitCode": 1,
+    "durationSeconds": 4.779,
+    "metrics": {},
+    "metricsByFold": {},
+    "learningCurve": [],
+    "subgroupDeltas": [],
+    "artifacts": {},
+    "stdout": "\u2713 Initialized. View run at \nhttps://modal.com/apps/whitestjohn0/main/ap-UHP1QUJ9guYzZYCxieTu7F\nStopping app - uncaught exception raised locally: InvalidError('Please add a payment method to use T4 GPU functions.').\n",
+    "stderr": "\u256d\u2500 Error \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n\u2502 Please add a payment method to use T4 GPU functions.                         \u2502\n\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f\n\nModal worker completion is unconfirmed; reconcile before replay.",
+    "command": [
+      "python",
+      "probe.py"
+    ],
+    "cwd": "/tmp/evidra-modal-gpu-zZFdTd/workspace",
+    "failureClass": "unknown"
+  },
+  "events": [
+    {
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "modal-gpu-smoke",
+      "submissionId": "0016274c-ac61-4f38-b173-e97f3af0e8d0",
+      "allocationName": "evidra-0016274c-ac61-4f38-b173-e97f3af0e8d0",
+      "appName": "evidra-0016274c-ac61-4f38-b173-e97f3af0e8d0",
+      "phase": "submitting",
+      "at": "2026-10-12T06:20:31.078Z"
+    }
+  ],
+  "readOnlyAppObservation": [
+    {
+      "appId": "ap-UHP1QUJ9guYzZYCxieTu7F",
+      "state": 5,
+      "runningTasks": 0,
+      "name": "evidra-0016274c-ac61-4f38-b173-e97f3af0e8d0",
+      "stateName": "APP_STATE_STOPPED"
+    }
+  ],
+  "scope": "Submission rejected before a call receipt. No GPU execution, metric, artifact or recovery completion claim. Matching app listing is observational and does not release the durable quarantine."
+}
