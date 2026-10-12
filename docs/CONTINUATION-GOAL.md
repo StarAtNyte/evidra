@@ -1207,6 +1207,16 @@ external evaluator.
   recovered after reopening its store using the stopped allocation proof:
   `docs/research/evidence/modal-live-allocation-only-recovery-2026-10-12.json`.
 
+- A live pending CPU call was confirmed with SDK get(timeout=0), then canceled
+  with terminate_containers=True after an actual local-client SIGKILL. The
+  cancellation acknowledgment was followed by another TimeoutError, and
+  read-only recovery correctly retained quarantine while the app was active.
+  Explicit stop of the probe's owned app enabled stopped/zero-container recovery
+  with ALLOCATION_STOPPED and no imported measurements. Evidence:
+  `docs/research/evidence/modal-live-pending-cancellation-2026-10-12.json`.
+  A user-facing Modal cancellation command, GPU cancellation and concurrent-input
+  cancellation remain open; this probe does not establish those capabilities.
+
 ## Immediate next work
 
 1. Add/maintain real matched external benchmark adapters and run actual trials

@@ -1,0 +1,94 @@
+{
+  "at": "2026-10-12T04:45:54.565Z",
+  "executor": "modal",
+  "gpuRequested": false,
+  "timeoutMinutes": 1,
+  "result": {
+    "runId": "modal-live-client-crash-1791780352365",
+    "status": "failed",
+    "exitCode": 1,
+    "durationSeconds": 12.135,
+    "metrics": {},
+    "metricsByFold": {},
+    "learningCurve": [],
+    "subgroupDeltas": [],
+    "artifacts": {},
+    "stdout": "✓ Initialized. View run at \n[Modal run URL omitted]\n✓ Created objects.\n├── ✓ Uploaded /home/nitiz/Projects/Self/Harness/evidra/modal_app.py\n├── ✓ Uploaded /tmp/evidra-live-modal-crash-jgc3Cy/workspace\n└── ✓ Created Function execute.\n[evidra-call] {\"submissionId\": \"fbbb8937-6f98-4699-91a6-c2fb4c0b7ac3\", \"callId\": \"fc-01M4Q6WMBBJQBEE3JZJV2DD4QY\", \"appId\": \"ap-dR4o4NxowjOReKURAAHStx\"}\n",
+    "stderr": "Modal worker completion is unconfirmed; reconcile before replay.",
+    "command": [
+      "python",
+      "probe.py"
+    ],
+    "cwd": "/tmp/evidra-live-modal-crash-jgc3Cy/workspace",
+    "failureClass": "unknown"
+  },
+  "events": [
+    {
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "modal-live-client-crash",
+      "submissionId": "fbbb8937-6f98-4699-91a6-c2fb4c0b7ac3",
+      "allocationName": "evidra-fbbb8937-6f98-4699-91a6-c2fb4c0b7ac3",
+      "phase": "submitting",
+      "at": "2026-10-12T04:45:40.227Z"
+    },
+    {
+      "callId": "fc-01M4Q6WMBBJQBEE3JZJV2DD4QY",
+      "appId": "ap-dR4o4NxowjOReKURAAHStx",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "modal-live-client-crash",
+      "submissionId": "fbbb8937-6f98-4699-91a6-c2fb4c0b7ac3",
+      "allocationName": "evidra-fbbb8937-6f98-4699-91a6-c2fb4c0b7ac3",
+      "phase": "submitted",
+      "at": "2026-10-12T04:45:44.348Z"
+    }
+  ],
+  "artifact": null,
+  "workerSourceSha256": "73795ba0b854d79db5c836dc2856b6e5e85706dfedb7819e8eb3f4ca2ac71a15",
+  "sdkCancellation": {
+    "callId": "fc-01M4Q6WMBBJQBEE3JZJV2DD4QY",
+    "appId": "ap-dR4o4NxowjOReKURAAHStx",
+    "pendingBeforeCancel": true,
+    "terminateContainersRequested": true,
+    "cancelAcknowledged": true,
+    "resultAfterCancel": "TimeoutError"
+  },
+  "beforeExplicitAppStop": {
+    "released": false,
+    "queried": 1,
+    "app": {
+      "app_id": "ap-dR4o4NxowjOReKURAAHStx",
+      "description": "evidra-experiment",
+      "state": "ephemeral",
+      "tasks": "0",
+      "created_at": "2026-10-12 10:30:42+05:45",
+      "stopped_at": null
+    }
+  },
+  "afterExplicitAppStop": {
+    "released": true,
+    "queried": 1,
+    "terminal": {
+      "experimentId": "modal-live-client-crash",
+      "submissionId": "fbbb8937-6f98-4699-91a6-c2fb4c0b7ac3",
+      "allocationName": "evidra-fbbb8937-6f98-4699-91a6-c2fb4c0b7ac3",
+      "callId": "fc-01M4Q6WMBBJQBEE3JZJV2DD4QY",
+      "state": "ALLOCATION_STOPPED",
+      "exitCode": 125,
+      "completionEvidence": "sdk-allocation",
+      "appId": "ap-dR4o4NxowjOReKURAAHStx",
+      "appState": "STOPPED",
+      "runningTasks": 0,
+      "at": "2026-10-12T04:46:02.659Z",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "phase": "terminal"
+    },
+    "importedRuns": 0,
+    "status": "failed"
+  },
+  "probeSource": "import os,json,pathlib,time\ntime.sleep(45)\nassert os.environ['EVIDRA_EXPERIMENT_ID']=='modal-live-client-crash'\nassert os.environ['EVIDRA_DATASET_VERSION']=='probe-data-v1'\nassert os.environ['EVIDRA_SPLIT_VERSION']=='probe-split-v1'\nassert os.environ['PROBE_VALUE']=='declared'\nassert os.environ['HOME']=='/tmp/evidra-worker-home'\nassert not pathlib.Path('.sota/controller-secret').exists()\nassert not pathlib.Path('.git/config').exists()\npathlib.Path('result.json').write_text(json.dumps({'probe':'passed'}))\nprint('accuracy=1.0')\n",
+  "modalVersion": "1.6.1",
+  "scope": "Live pending CPU call confirmed by SDK timeout=0, then canceled with terminate_containers=True after local client SIGKILL. Cancellation acknowledgment did not release quarantine while app remained active. Explicit stop of the owned app enabled SDK-bound stopped/zero-container recovery; no measurements imported. This does not provide a user-facing Modal cancellation command or validate GPU/concurrent-input cancellation."
+}
