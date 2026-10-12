@@ -1260,6 +1260,18 @@ external evaluator.
 
 ## Immediate next work
 
+The default Modal local entrypoint now prints its app identity before spawning
+the function call. The controller journals a causal `run.remote.allocated`
+event and requires the later call receipt to match that app. Duplicate,
+reordered, malformed and mismatched app records fail closed. An app-only
+failure retains quarantine and its reservation across database reopening.
+This narrows identity loss after entrypoint startup; image/build rejection
+before the entrypoint (including the rejected GPU probe) remains unresolved.
+App-only recovery is not yet authorized by the reconciliation proof model.
+A live two-app CPU probe verified submitting/allocated/submitted ordering and
+matching app identities for both jobs; target cancellation preserved peer
+completion. Evidence: `docs/research/evidence/modal-live-early-app-receipt-2026-10-12.json`.
+
 The bounded live T4 probe (`scripts/probe-modal-gpu.mjs`, SDK Python and CLI
 paths as arguments) was rejected because the configured Modal account requires
 a payment method for GPU functions. No call receipt or measurements were

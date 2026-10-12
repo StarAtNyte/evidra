@@ -307,6 +307,8 @@ def execute(command_json: str, cwd: str, artifacts_json: str = "[]", timeout_sec
 
 @app.local_entrypoint()
 def run(command_json: str, cwd: str = ".", artifacts_json: str = "[]", timeout_seconds: int = 3600, submission_id: str = "", config_sha256: str = "") -> None:
+    # Persist app identity before spawn: an RPC failure can prevent a call receipt.
+    print("[evidra-app] " + json.dumps({"submissionId": submission_id, "appId": app.app_id}), flush=True)
     call = execute.spawn(command_json, cwd, artifacts_json, timeout_seconds, config_sha256)
     print("[evidra-call] " + json.dumps({"submissionId": submission_id, "callId": call.object_id, "appId": app.app_id}), flush=True)
     result = call.get()

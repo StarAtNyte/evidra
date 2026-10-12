@@ -14044,3 +14044,50 @@ test("benchmark protocol rejects mismatched task provenance", () => {
   assert.equal(result.valid, false);
   assert.ok(result.issues.some((issue) => issue.field === "taskMetadata"));
 });
+
+test('Modal journals app allocation before a call receipt without releasing receipt-less work', async () => {
+  const previousPath = process.env.PATH;
+  try {
+    for (const mode of ['app-only', 'bound', 'changed', 'duplicated', 'reordered', 'wrong-submission']) {
+      const root = mkdtempSync(join(tmpdir(), 'evidra-modal-app-allocation-'));
+      const bin = join(root, 'bin'); mkdirSync(bin); installModalAllocationFixture(bin, 'completed');
+      try {
+        writeFileSync(join(bin, 'modal'), `#!${process.execPath}
+          if(process.argv.includes('--version')){console.log('fixture');process.exit(0);}
+          const mode=${JSON.stringify(mode)}, submissionId=process.argv[process.argv.indexOf('--submission-id')+1];
+          const app='[evidra-app] '+JSON.stringify({submissionId:mode==='wrong-submission'?'wrong':submissionId,appId:'ap-contract'});
+          const call='[evidra-call] '+JSON.stringify({submissionId,callId:'fc-contract',appId:mode==='changed'?'ap-other':'ap-contract'});
+          if(mode==='reordered')console.log(call);
+          console.log(app);
+          if(mode==='duplicated')console.log(app);
+          if(mode==='app-only')process.exit(1);
+          if(mode!=='reordered')console.log(call);
+          console.log(JSON.stringify({exitCode:0,stdout:'accuracy=1',stderr:'',artifacts:{}}));
+        `, {mode:0o755});
+        process.env.PATH = bin + ':' + previousPath;
+        const manifest = {id:mode,resources:{executor:'modal',timeoutMinutes:1},evaluation:{requiredArtifacts:[]}};
+        const db = join(root, 'state.sqlite'), store = new ResearchStore(db);
+        store.saveExperiment({id:mode,payload:{...manifest,status:'running'}});
+        store.reserveComputeBudget({experimentId:mode,budgetGpuHours:1,usedGpuHours:0,requestedGpuHours:1,gpu:'T4'});
+        const result = await new ModalExecutor(root,event=>store.appendEvent('run.remote.'+event.phase,event)).run(manifest,root,['train'],undefined,'accuracy');
+        const allocated=store.eventsByType('run.remote.allocated');
+        assert.equal(allocated.length,['reordered','wrong-submission'].includes(mode)?0:1,mode);
+        if(allocated.length)assert.equal(allocated[0].payload.appId,'ap-contract');
+        assert.equal(result.status,mode==='bound'?'completed':'failed',mode);
+        if(mode!=='bound')assert.deepEqual(result.metrics,{});
+        store.saveExperiment({id:mode,payload:{...manifest,status:result.status}});
+        store.close();
+        const reopened=new ResearchStore(db);
+        try {
+          assert.equal(reopened.remoteExecutionState(mode).confirmed,mode==='bound',mode);
+          assert.equal(reopened.reservedComputeGpuHours(),mode==='bound'?0:1,mode);
+          if(mode==='app-only') {
+            assert.equal(reopened.eventsByType('run.remote.submitted').length,0);
+            assert.equal(reopened.eventsByType('run.remote.allocated').length,1);
+            assert.equal(reopened.reconcileRemoteExperiment(mode),false);
+          }
+        } finally {reopened.close();}
+      } finally {rmSync(root,{recursive:true,force:true});}
+    }
+  } finally {if(previousPath===undefined)delete process.env.PATH;else process.env.PATH=previousPath;}
+});

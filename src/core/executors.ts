@@ -12,7 +12,7 @@ export interface RemoteExecutionEvent {
   executor: "slurm" | "container" | "modal";
   experimentId: string;
   submissionId: string;
-  phase: "submitting" | "submitted" | "terminal";
+  phase: "submitting" | "allocated" | "submitted" | "terminal";
   at: string;
   jobId?: string;
   allocationName?: string;
@@ -775,6 +775,7 @@ export class ModalExecutor implements ExperimentExecutor {
     observe("submitting");
     let callId: string | undefined;
     let appId: string | undefined;
+    let appAllocated = false;
     let notStarted = false;
     let spawnErrorCode: string | undefined;
     let pendingLine = "";
@@ -789,10 +790,18 @@ export class ModalExecutor implements ExperimentExecutor {
           else pendingLine += part;
         }
         if (index === parts.length - 1) continue;
+        if (!oversizedLine && pendingLine.startsWith("[evidra-app] ")) {
+          const allocation = JSON.parse(pendingLine.slice("[evidra-app] ".length)) as { submissionId?: unknown; appId?: unknown };
+          if (allocation.submissionId !== submissionId || typeof allocation.appId !== "string" || !/^ap-[A-Za-z0-9]{1,128}$/.test(allocation.appId) || appAllocated || callId) throw new Error("Modal application allocation is malformed, mismatched, duplicated, or reordered.");
+          observe("allocated", { appId: allocation.appId });
+          appId = allocation.appId;
+          appAllocated = true;
+        }
         if (!oversizedLine && pendingLine.startsWith("[evidra-call] ")) {
           const receipt = JSON.parse(pendingLine.slice("[evidra-call] ".length)) as { submissionId?: unknown; callId?: unknown; appId?: unknown };
           if (receipt.submissionId !== submissionId || typeof receipt.callId !== "string" || !/^fc-[A-Za-z0-9]{1,128}$/.test(receipt.callId) || callId) throw new Error("Modal call receipt is malformed, mismatched, or duplicated.");
           if (receipt.appId !== undefined && (typeof receipt.appId !== "string" || !/^ap-[A-Za-z0-9]{1,128}$/.test(receipt.appId))) throw new Error("Modal application receipt is malformed.");
+          if (appAllocated && receipt.appId !== appId) throw new Error("Modal call receipt does not match its recorded application allocation.");
           appId = receipt.appId as string | undefined;
           observe("submitted", { callId: receipt.callId, ...(appId ? { appId } : {}) });
           callId = receipt.callId;
