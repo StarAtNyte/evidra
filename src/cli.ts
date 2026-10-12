@@ -467,6 +467,7 @@ async function implementCampaignHypothesis(
     return status.stdout.split("\0").filter(Boolean).map((entry) => entry.slice(3).split(" -> ").at(-1) ?? entry.slice(3));
   };
   const inventory = await runProcess(["rg", "--files", "-g", "!.git/**", "-g", "!.sota/**", "-g", "!node_modules/**"], worktree, 60_000);
+  const engineerGuidance = loadProjectGuidance(rootPath, "experiment engineer");
   const task = {
     role: "experiment engineer",
     objective: `Implement the selected hypothesis in this isolated worktree. Inspect the existing project, make the smallest reproducible change described by the hypothesis, run relevant smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree, submit anything, or invent a result.${seededImplementation ? " A checksum-verified seed has already been copied to the declared candidate entrypoint; preserve that implementation and make only the hypothesis-specific change." : ""}${stagedArtifacts.length ? " Checksum-pinned auxiliary inputs are staged at the listed paths. Treat them as immutable evidence/input: do not modify them. If the evaluated solution needs fitted parameters at runtime, embed them in source or make the package explicitly include the verified asset." : ""} If the selected provider cannot edit files directly, return ONLY an applicable unified diff whose first line begins with diff --git; otherwise perform the edit and summarize it.`,
@@ -474,6 +475,8 @@ async function implementCampaignHypothesis(
       manifest,
       hypothesis,
       worktree,
+      // The engineer writes the code, so it needs the project's own brief as much as the researchers do.
+      ...(engineerGuidance ? { projectGuidance: { paths: engineerGuidance.paths, text: engineerGuidance.text } } : {}),
       ...(seededImplementation ? { seededImplementation: { sourceSha256: seededImplementation.sourceSha256, targetPath: relative(worktree, seededImplementation.targetPath) } } : {}),
       workspaceFiles: [...new Set([...inventory.stdout.split("\n").filter(Boolean), ...stagedArtifactPaths])].slice(0, 300),
       ...(stagedArtifacts.length ? { stagedImplementationArtifacts: stagedArtifacts.map((artifact) => ({ path: relative(worktree, artifact.targetPath), sha256: artifact.sourceSha256, readOnlyInput: true })) } : {}),
