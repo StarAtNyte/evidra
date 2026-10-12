@@ -6921,6 +6921,12 @@ research
     if (mode === "challenge") await finalizeCampaign(adapter);
   });
 
+function experimentEnvironmentFor(store: ResearchStore, experimentId: string): Record<string, string> {
+  const entry = store.experiments().find((candidate) => candidate.id === experimentId);
+  const parsed = entry ? ExperimentManifestSchema.safeParse(entry.payload) : undefined;
+  return parsed?.success ? { ...(parsed.data.resources.environment ?? {}) } : {};
+}
+
 /** Build final artifacts from the campaign's own best experiment, without a person in the loop. */
 async function finalizeCampaign(adapter: ReturnType<typeof activeCompetition>): Promise<void> {
   const command = adapter.config.submission?.finalizeCommand;
@@ -6940,7 +6946,9 @@ async function finalizeCampaign(adapter: ReturnType<typeof activeCompetition>): 
     const record = await runCampaignFinalize({
       store, stateDirectory, root, workspaceRoot: adapter.workspacePath(root), candidate, command,
       timeoutMs: (adapter.config.submission?.finalizeTimeoutMinutes ?? 120) * 60_000,
-      environment: safeWorkerEnvironment({ ...(adapter.config.execution?.environment ?? {}), HOME: prepareWorkerHome(candidate.worktreePath) }),
+      // Rebuild with exactly the environment the chosen experiment was evaluated under (arms and
+      // ablations are often configured through it), not just the manifest defaults.
+      environment: safeWorkerEnvironment({ ...(adapter.config.execution?.environment ?? {}), ...experimentEnvironmentFor(store, candidate.experimentId), HOME: prepareWorkerHome(candidate.worktreePath) }),
       run: (cmd, cwd, timeoutMs, environment) => runProcess(cmd, cwd, timeoutMs, streamProcessOutput, undefined, environment),
     });
     console.log(record.exitCode === 0 ? `Finalize completed · ${join(stateDirectory, "final", "final.json")}` : `Finalize failed (exit ${record.exitCode}) · ${record.stderrTail.slice(-400)}`);
