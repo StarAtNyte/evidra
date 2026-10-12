@@ -14450,3 +14450,23 @@ test("provider transcripts capture prompt, raw events, and outcome; evidence pac
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("claude turn completes on its result even if background jobs keep the CLI alive", async () => {
+  const { runClaudeHeadless } = await import("../dist/agents/claude-exec.js");
+  const dir = mkdtempSync(join(tmpdir(), "evidra-claude-bg-"));
+  const fake = join(dir, "claude");
+  const previous = process.env.EVIDRA_CLAUDE_BIN;
+  process.env.EVIDRA_CLAUDE_BIN = fake;
+  try {
+    const result = { type: "result", subtype: "success", is_error: false, result: "done", usage: { input_tokens: 1, output_tokens: 1 } };
+    writeFileSync(fake, `#!/bin/sh\ncat >/dev/null\necho '${JSON.stringify({ type: "system", subtype: "init", session_id: "s" })}'\necho '${JSON.stringify(result)}'\nsleep 60\n`);
+    chmodSync(fake, 0o755);
+    const started = Date.now();
+    const out = await runClaudeHeadless("hi", { provider: "claude", model: "default", cwd: dir, timeoutMs: 120_000 });
+    assert.equal(out.output, "done");
+    assert.ok(Date.now() - started < 30_000, "a finished turn must not wait for lingering background jobs");
+  } finally {
+    if (previous === undefined) delete process.env.EVIDRA_CLAUDE_BIN; else process.env.EVIDRA_CLAUDE_BIN = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

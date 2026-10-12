@@ -127,7 +127,13 @@ export async function runClaudeHeadless(
   const child = spawn(resolveClaudeBinary(), claudeHeadlessArgs(options, sandboxMode, model, outputSchemaText), {
     cwd: isolated?.path ?? options.cwd,
     stdio: ["pipe", "pipe", "pipe"],
+    // Own process group, so stopping the turn also stops shell jobs Claude left running.
+    detached: true,
   });
+  const signal = (name: NodeJS.Signals): boolean => {
+    try { if (child.pid) { process.kill(-child.pid, name); return true; } } catch { /* group already gone */ }
+    return child.kill(name);
+  };
   child.stdin.end(input);
 
   let abortReason: string | undefined;
@@ -136,11 +142,20 @@ export async function runClaudeHeadless(
   const stop = (reason: string): void => {
     if (settled || abortReason) return;
     abortReason = reason;
-    if (paused) child.kill("SIGCONT");
-    child.kill("SIGTERM");
-    setTimeout(() => { if (!settled) child.kill("SIGKILL"); }, 5_000).unref();
+    if (paused) signal("SIGCONT");
+    signal("SIGTERM");
+    setTimeout(() => { if (!settled) signal("SIGKILL"); }, 5_000).unref();
   };
-  const timeout = setTimeout(() => stop("Claude request timed out."), options.timeoutMs ?? 30 * 60_000);
+  // The turn is complete once Claude emits its result. Background shell jobs it started can keep the
+  // CLI alive afterwards; stop the process then instead of discarding a finished turn as a timeout.
+  let resultReceived = false;
+  const endAfterResult = (): void => {
+    if (settled) return;
+    if (paused) signal("SIGCONT");
+    signal("SIGTERM");
+    setTimeout(() => { if (!settled) signal("SIGKILL"); }, 5_000).unref();
+  };
+  const timeout = setTimeout(() => { if (resultReceived) endAfterResult(); else stop("Claude request timed out."); }, options.timeoutMs ?? 30 * 60_000);
   const signalHandler = (): void => stop("Claude request interrupted.");
   process.once("SIGTERM", signalHandler);
   process.once("SIGINT", signalHandler);
@@ -148,8 +163,8 @@ export async function runClaudeHeadless(
   if (options.interruptSignal?.aborted) signalHandler();
   // Unlike the Codex SDK, a headless CLI turn is a real process and can be suspended.
   onProcess?.({
-    pause: () => { if (!settled && !paused && child.kill("SIGSTOP")) paused = true; },
-    resume: () => { if (!settled && paused && child.kill("SIGCONT")) paused = false; },
+    pause: () => { if (!settled && !paused && signal("SIGSTOP")) paused = true; },
+    resume: () => { if (!settled && paused && signal("SIGCONT")) paused = false; },
     terminate: () => stop("Claude request interrupted."),
     get paused() { return paused; },
   });
@@ -179,7 +194,14 @@ export async function runClaudeHeadless(
       if (info?.status === "rejected") rejectedResetAt = typeof info.resetsAt === "number" ? info.resetsAt * 1000 : Date.now() + 60 * 60_000;
       return;
     }
-    if (event.type === "result") { result = event; return; }
+    if (event.type === "result") {
+      result = event;
+      if (!resultReceived) {
+        resultReceived = true;
+        setTimeout(endAfterResult, 10_000).unref();
+      }
+      return;
+    }
     const blocks = (event.message as { content?: unknown } | undefined)?.content;
     if (!Array.isArray(blocks)) return;
     for (const block of blocks as Array<Record<string, unknown>>) {
@@ -229,6 +251,8 @@ export async function runClaudeHeadless(
       });
       child.on("error", reject);
       child.on("close", resolve);
+      // After the result, the CLI's own exit ends the turn even if an orphaned job still holds the pipe.
+      child.on("exit", (code) => { if (resultReceived) { child.stdout.destroy(); child.stderr.destroy(); resolve(code); } });
     });
     settled = true;
     if (abortReason) throw new Error(abortReason);
