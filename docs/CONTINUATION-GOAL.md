@@ -1271,6 +1271,13 @@ App-only recovery is not yet authorized by the reconciliation proof model.
 A live two-app CPU probe verified submitting/allocated/submitted ordering and
 matching app identities for both jobs; target cancellation preserved peer
 completion. Evidence: `docs/research/evidence/modal-live-early-app-receipt-2026-10-12.json`.
+Durable call ownership now checks any recorded app allocation against the
+single ordered intent and receipt. Contradictory, duplicate, reordered or
+malformed records refuse terminal writes, cancellation and budget release,
+including after reopening and without SQLite JSON1. Older receipts without
+an app allocation remain supported. A NOT_STARTED spawn proof cannot override
+a recorded allocation. Recovery still requires a call receipt and stopped-app
+proof; the early app record alone never authorizes release.
 
 The bounded live T4 probe (`scripts/probe-modal-gpu.mjs`, SDK Python and CLI
 paths as arguments) was rejected because the configured Modal account requires

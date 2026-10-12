@@ -836,7 +836,7 @@ export class ResearchStore {
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_type_experiment_id_id ON events(type, json_extract(payload_json, '$.experimentId'), id)"); } catch { /* JSON1 unavailable; allocation lookups retain their compatibility fallback */ }
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_modal_call_id ON events(json_extract(payload_json, '$.callId'), id) WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal'"); } catch { /* JSON1 unavailable; call ownership uses a streaming fallback */ }
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_modal_app_id ON events(json_extract(payload_json, '$.appId'), id) WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal'"); } catch { /* JSON1 unavailable; app ownership uses a bounded streaming fallback */ }
-    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_remote_submission_identity ON events(type, json_extract(payload_json, '$.experimentId'), json_extract(payload_json, '$.submissionId'), id) WHERE type IN ('run.remote.submitted', 'run.remote.terminal', 'run.remote.allocation.terminal')"); } catch { /* JSON1 unavailable; allocation proofs use bounded streaming reads */ }
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_remote_submission_identity_v2 ON events(type, json_extract(payload_json, '$.experimentId'), json_extract(payload_json, '$.submissionId'), id) WHERE type IN ('run.remote.submitting', 'run.remote.allocated', 'run.remote.submitted', 'run.remote.terminal', 'run.remote.allocation.terminal')"); } catch { /* JSON1 unavailable; allocation proofs use bounded streaming reads */ }
     this.db.prepare("INSERT OR IGNORE INTO workspace_identity (id, workspace_id, created_at) VALUES (1, ?, ?)").run(`ws_${randomUUID()}`, new Date().toISOString());
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_experiments_created_at ON experiments(created_at);
@@ -3749,10 +3749,10 @@ export class ResearchStore {
   remoteExecutionState(experimentId: string): { recorded: boolean; confirmed: boolean; submissionIds: string[] } {
     let records: Array<{ type: string; payload: unknown }>;
     try {
-      const rows = this.db.prepare("SELECT type, payload_json FROM events WHERE type IN ('run.remote.submitting', 'run.remote.submitted', 'run.remote.terminal') AND json_extract(payload_json, '$.experimentId') = ? ORDER BY id").all(experimentId) as Array<{ type: string; payload_json: string }>;
+      const rows = this.db.prepare("SELECT type, payload_json FROM events WHERE type IN ('run.remote.submitting', 'run.remote.allocated', 'run.remote.submitted', 'run.remote.terminal') AND json_extract(payload_json, '$.experimentId') = ? ORDER BY id").all(experimentId) as Array<{ type: string; payload_json: string }>;
       records = rows.map((row) => ({ type: row.type, payload: JSON.parse(row.payload_json) }));
     } catch {
-      records = this.eventsByTypes(["run.remote.submitting", "run.remote.submitted", "run.remote.terminal"]);
+      records = this.eventsByTypes(["run.remote.submitting", "run.remote.allocated", "run.remote.submitted", "run.remote.terminal"]);
     }
     const events = records.map((event) => ({ phase: event.type.slice("run.remote.".length), payload: event.payload as Record<string, unknown> }))
       .filter((event) => event.payload?.experimentId === experimentId && ["slurm", "container", "modal"].includes(String(event.payload.executor)));
@@ -3769,7 +3769,7 @@ export class ResearchStore {
       const terminal = events.filter((event) => event.phase === "terminal" && event.payload.submissionId === id);
       if (intent.payload.executor === "modal" && intent.payload.protocol === "modal-call-v1" && terminal.length === 1 && terminal[0].payload.state === "NOT_STARTED") {
         const proof = terminal[0].payload;
-        if (submitted.length !== 0 || events.indexOf(intent) >= events.indexOf(terminal[0]) || intent.payload.callId !== undefined || proof.executor !== "modal" || proof.protocol !== intent.payload.protocol || proof.allocationName !== intent.payload.allocationName || proof.callId !== undefined || proof.exitCode !== 127 || proof.completionEvidence !== "spawn-error" || !["ENOENT", "EACCES", "ENOEXEC", "ENOTDIR", "EMFILE", "ENFILE", "E2BIG"].includes(String(proof.spawnErrorCode))) return unresolved;
+        if (events.some((event) => event.phase === "allocated" && event.payload.submissionId === id) || submitted.length !== 0 || events.indexOf(intent) >= events.indexOf(terminal[0]) || intent.payload.callId !== undefined || proof.executor !== "modal" || proof.protocol !== intent.payload.protocol || proof.allocationName !== intent.payload.allocationName || proof.callId !== undefined || proof.exitCode !== 127 || proof.completionEvidence !== "spawn-error" || !["ENOENT", "EACCES", "ENOEXEC", "ENOTDIR", "EMFILE", "ENFILE", "E2BIG"].includes(String(proof.spawnErrorCode))) return unresolved;
         continue;
       }
       if (submitted.length !== 1 || terminal.length !== 1) return unresolved;
@@ -3834,7 +3834,7 @@ export class ResearchStore {
   /** A call receipt cannot be reused by another intent or experiment. */
   private remoteEvidenceForSubmission(type: string, experimentId: string, submissionId: string): Array<{ id: number; payload: Record<string, unknown> }> {
     try {
-      const rows = this.db.prepare("SELECT id, payload_json FROM events WHERE type = ? AND type IN ('run.remote.submitted', 'run.remote.terminal', 'run.remote.allocation.terminal') AND json_extract(payload_json, '$.experimentId') = ? AND json_extract(payload_json, '$.submissionId') = ? ORDER BY id LIMIT 2").all(type, experimentId, submissionId) as Array<{ id: number; payload_json: string }>;
+      const rows = this.db.prepare("SELECT id, payload_json FROM events WHERE type = ? AND type IN ('run.remote.submitting', 'run.remote.allocated', 'run.remote.submitted', 'run.remote.terminal', 'run.remote.allocation.terminal') AND json_extract(payload_json, '$.experimentId') = ? AND json_extract(payload_json, '$.submissionId') = ? ORDER BY id LIMIT 2").all(type, experimentId, submissionId) as Array<{ id: number; payload_json: string }>;
       return rows.map((row) => ({ id: row.id, payload: JSON.parse(row.payload_json) as Record<string, unknown> }));
     } catch {
       const found: Array<{ id: number; payload: Record<string, unknown> }> = [];
@@ -3882,7 +3882,18 @@ export class ResearchStore {
         if (receipts.length === 2) break;
       }
     }
-    return receipts.length === 1 && receipts[0].experimentId === experimentId && receipts[0].submissionId === submissionId && receipts[0].protocol === "modal-call-v1";
+    if (!(receipts.length === 1 && receipts[0].experimentId === experimentId && receipts[0].submissionId === submissionId && receipts[0].protocol === "modal-call-v1")) return false;
+    const allocated = this.remoteEvidenceForSubmission("run.remote.allocated", experimentId, submissionId);
+    if (!allocated.length) return true; // Older call receipts did not journal app startup.
+    const intents = this.remoteEvidenceForSubmission("run.remote.submitting", experimentId, submissionId);
+    const submitted = this.remoteEvidenceForSubmission("run.remote.submitted", experimentId, submissionId);
+    if (allocated.length !== 1 || intents.length !== 1 || submitted.length !== 1 || intents[0].id >= allocated[0].id || allocated[0].id >= submitted[0].id) return false;
+    const app = allocated[0].payload, receipt = submitted[0].payload;
+    return app.executor === "modal" && app.protocol === "modal-call-v1" && app.phase === "allocated" && app.callId === undefined
+      && app.allocationName === `evidra-${submissionId}` && app.appName === app.allocationName
+      && intents[0].payload.allocationName === app.allocationName && intents[0].payload.appName === app.appName
+      && typeof app.appId === "string" && /^ap-[A-Za-z0-9]{1,128}$/.test(app.appId)
+      && receipt.appId === app.appId && receipt.appName === app.appName && receipt.allocationName === app.allocationName;
   }
 
   /** Both synchronous completion and recovery must agree on the same call. */

@@ -14091,3 +14091,44 @@ test('Modal journals app allocation before a call receipt without releasing rece
     }
   } finally {if(previousPath===undefined)delete process.env.PATH;else process.env.PATH=previousPath;}
 });
+
+test('Modal durable ownership rejects contradictory app allocation journals after reopen', async () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-modal-durable-app-'));
+  try {
+    for(const mode of ['valid','legacy','duplicate','changed','before-intent','after-receipt','wrong-phase','wrong-name','wrong-executor','json-disabled','migrated-index']) {
+      const db=join(root,mode+'.sqlite'),id=mode,nonce='12345678-1234-1234-1234-123456789abc';
+      let store=new ResearchStore(db);
+      const common={executor:'modal',protocol:'modal-call-v1',experimentId:id,submissionId:nonce,allocationName:'evidra-'+nonce,appName:'evidra-'+nonce};
+      const app={...common,phase:'allocated',appId:mode==='changed'?'ap-other':'ap-owned'};
+      if(mode==='wrong-phase')app.phase='submitted';
+      if(mode==='wrong-name')app.appName='other';
+      if(mode==='wrong-executor')app.executor='container';
+      store.saveExperiment({id,payload:{id,status:'running',resources:{executor:'modal'}}});
+      store.reserveComputeBudget({experimentId:id,budgetGpuHours:1,usedGpuHours:0,requestedGpuHours:1,gpu:'T4'});
+      if(mode==='before-intent')store.appendEvent('run.remote.allocated',app);
+      store.appendEvent('run.remote.submitting',{...common,phase:'submitting'});
+      if(!['legacy','before-intent','after-receipt'].includes(mode))store.appendEvent('run.remote.allocated',app);
+      if(mode==='duplicate')store.appendEvent('run.remote.allocated',app);
+      store.appendEvent('run.remote.submitted',{...common,phase:'submitted',callId:'fc-owned',appId:'ap-owned'});
+      if(mode==='after-receipt')store.appendEvent('run.remote.allocated',app);
+      store.appendEvent('run.remote.terminal',{...common,phase:'terminal',callId:'fc-owned',appId:'ap-owned',appState:'STOPPED',runningTasks:0,state:'COMPLETED',exitCode:0,completionEvidence:'sdk-result'});
+      if(mode==='migrated-index') {
+        store.db.exec("DROP INDEX IF EXISTS idx_events_remote_submission_identity_v2; CREATE INDEX IF NOT EXISTS idx_events_remote_submission_identity ON events(type, json_extract(payload_json, '$.experimentId'), json_extract(payload_json, '$.submissionId'), id) WHERE type IN ('run.remote.submitted', 'run.remote.terminal', 'run.remote.allocation.terminal')");
+      }
+      store.close();store=new ResearchStore(db);
+      try {
+        if(mode==='migrated-index')assert(store.db.prepare("SELECT name FROM sqlite_master WHERE name = 'idx_events_remote_submission_identity_v2'").get());
+        if(mode==='json-disabled') { const prepare=store.db.prepare.bind(store.db);store.db.prepare=sql=>{if(sql.includes('json_extract'))throw Error('JSON1 unavailable');return prepare(sql);}; }
+        const valid=['valid','legacy','json-disabled','migrated-index'].includes(mode);
+        assert.equal(store.modalCallOwnershipConfirmed(id,nonce,'fc-owned'),valid,mode);
+        assert.equal(store.modalAppOwnershipConfirmed(id,nonce,'ap-owned'),valid,mode);
+        assert.equal(store.remoteExecutionState(id).confirmed,valid,mode);
+        store.saveExperiment({id,payload:{id,status:'failed',resources:{executor:'modal'}}});
+        assert.equal(store.reservedComputeGpuHours(),valid?0:1,mode);
+      } finally {store.close();}
+      if(!['valid','legacy','json-disabled','migrated-index'].includes(mode)) {
+        assert.deepEqual(await reconcileRemoteExperiment(db,root,id,{cancelModal:true}),{released:false,queried:0},mode);
+      }
+    }
+  } finally {rmSync(root,{recursive:true,force:true});}
+});
