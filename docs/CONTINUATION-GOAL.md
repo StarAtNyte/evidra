@@ -1266,6 +1266,13 @@ patterns after `--` remain allowed. The installed ripgrep help confirms both
 options execute external programs; the safety benchmark now includes a
 preprocessing-hook rejection probe. Environment-configured ripgrep hooks and
 other inspection-tool execution surfaces still require audit.
+A disposable integration probe confirmed ambient RIPGREP_CONFIG_PATH is
+removed by the existing SAFE research-tool worker environment. Direct ripgrep
+executed the configured fixture hook; SAFE shell.exec returned the expected
+match without executing it. Evidence:
+`docs/research/evidence/ripgrep-config-safe-inspection-2026-10-12.json`.
+This covers the ambient config path for that tool launch, not explicitly
+declared experiment environments or other executable hooks.
 
 The autonomous Git mutation guard now parses supported global options before
 checking the subcommand. Push through `git -C`, `-c`, repository/worktree

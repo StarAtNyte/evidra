@@ -1,0 +1,7 @@
+{
+  "at": "2026-10-12T10:35:08.784Z",
+  "controlExecutedConfiguredHook": true,
+  "safeInspectionExecutedHook": false,
+  "safeInspectionReturnedMatch": true,
+  "scope": "Actual ripgrep config fixture and SAFE research tool launch. The existing worker environment strips RIPGREP_CONFIG_PATH. No change needed for this ambient-config path; explicitly declared experiment environments and other tool hooks are not covered."
+}
