@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
-import { mkdirSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, renameSync, rmSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { EvidenceClaimSchema } from "./types.js";
 import { compareClaims } from "./claim-consistency.js";
@@ -919,8 +919,25 @@ export class ResearchStore {
 
   /** Create a consistent SQLite backup while keeping the live store open. */
   async backup(destination: string): Promise<void> {
-    mkdirSync(dirname(destination), { recursive: true });
-    await this.db.backup(destination);
+    const target = resolve(destination);
+    if (target === resolve(this.db.name)) throw new Error("Backup must not replace the live database.");
+    if (existsSync(this.db.name) && existsSync(target)) {
+      const source = statSync(this.db.name), existing = statSync(target);
+      if (source.dev === existing.dev && source.ino === existing.ino) throw new Error("Backup must not replace an alias of the live database.");
+    }
+    mkdirSync(dirname(target), { recursive: true });
+    // The private directory protects SQLite's output while it is being written.
+    // Staging beside the destination keeps publication on the same filesystem.
+    const staging = mkdtempSync(join(dirname(target), ".evidra-backup-"));
+    try {
+      chmodSync(staging, 0o700);
+      const snapshot = join(staging, "state.sqlite");
+      await this.db.backup(snapshot);
+      chmodSync(snapshot, 0o600);
+      const descriptor = openSync(snapshot, "r");
+      try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+      renameSync(snapshot, target);
+    } finally { rmSync(staging, { recursive: true, force: true }); }
   }
 
   createProject(project: { id: string; name: string; competitionId: string; config: unknown }): void {

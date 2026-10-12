@@ -1337,6 +1337,9 @@ Use `evidra backup [workspace-relative-path]` or `/backup [path]` before risky m
 environment changes, or long campaigns. The backup is created through SQLite's consistent
 backup API while the live controller remains open, and can be reopened as an independent
 Evidra store for recovery verification.
+Backups are built in a private staging directory and published atomically with
+owner-only file permissions. Failed creation preserves an existing destination;
+the live database and its filesystem aliases cannot be backup destinations.
 Autonomous research and challenge starts also create a timestamped controller-start backup
 after the integrity check and before lease acquisition.
 

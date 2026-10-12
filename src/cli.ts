@@ -1057,9 +1057,10 @@ program.command("backup")
     const workspacePrefix = root.endsWith("/") ? root : `${root}/`;
     if (path === resolve(statePath) || !path.startsWith(workspacePrefix)) throw new Error("Backup destination must be inside the Evidra workspace and must not overwrite the live database.");
     const store = new ResearchStore(statePath);
-    await store.backup(path);
-    store.appendEvent("state.backup.created", { path: relative(root, path) });
-    store.close();
+    try {
+      await store.backup(path);
+      store.appendEvent("state.backup.created", { path: relative(root, path) });
+    } finally { store.close(); }
     console.log(`State backup created\n${path}`);
   });
 

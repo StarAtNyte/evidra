@@ -1260,6 +1260,14 @@ external evaluator.
 
 ## Immediate next work
 
+Controller backups now stage SQLite output in a private directory (0700),
+flush the completed snapshot, set owner-only permissions (0600), then publish
+by rename on the destination filesystem. Failure preserves an existing backup
+and removes staging files. Live database paths and inode aliases are refused;
+the CLI closes its store on backup failures. Focused fault-injection tests
+verify these behaviors, and actual live Modal probe state reopened from a
+private backup with valid event and allocation evidence.
+
 The default Modal local entrypoint now prints its app identity before spawning
 the function call. The controller journals a causal `run.remote.allocated`
 event and requires the later call receipt to match that app. Duplicate,

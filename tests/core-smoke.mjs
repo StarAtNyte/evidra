@@ -14132,3 +14132,35 @@ test('Modal durable ownership rejects contradictory app allocation journals afte
     }
   } finally {rmSync(root,{recursive:true,force:true});}
 });
+
+test('SQLite backups publish privately and preserve an existing snapshot on failure', async () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-private-backup-'));
+  const store=new ResearchStore(join(root,'source.sqlite'));
+  const {statSync,readdirSync,linkSync}=await import('node:fs');
+  try {
+    const destination=join(root,'backup.sqlite');
+    store.appendEvent('before.backup',{value:1});
+    await store.backup(destination);
+    if(process.platform!=='win32')assert.equal(statSync(destination).mode & 0o777,0o600);
+    const prior=readFileSync(destination);
+    const backup=store.db.backup.bind(store.db);
+    store.db.backup=async path=>{
+      assert.notEqual(path,destination);
+      if(process.platform!=='win32')assert.equal(statSync(join(path,'..')).mode & 0o777,0o700);
+      writeFileSync(path,'incomplete SQLite output');
+      throw new Error('injected backup interruption');
+    };
+    await assert.rejects(store.backup(destination),/injected backup interruption/);
+    assert.deepEqual(readFileSync(destination),prior);
+    assert.equal(readdirSync(root).some(name=>name.startsWith('.evidra-backup-')),false);
+    store.db.backup=backup;
+    await assert.rejects(store.backup(store.db.name),/live database/);
+    const alias=join(root,'source-alias.sqlite');linkSync(store.db.name,alias);
+    await assert.rejects(store.backup(alias),/alias of the live database/);
+    store.appendEvent('after.backup',{value:2});
+    await store.backup(destination);
+    const restored=new ResearchStore(destination);
+    try {assert.equal(restored.verifyEventChain().status,'valid');assert.equal(restored.eventsByType('after.backup').length,1);}
+    finally {restored.close();}
+  } finally {store.close();rmSync(root,{recursive:true,force:true});}
+});
