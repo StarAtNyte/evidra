@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { workspaceBackupDestination } from "./core/backup-path.js";
 import { reconcileRemoteExperiment } from "./core/remote-reconciliation.js";
 import { Command } from "commander";
 import { appendFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync, realpathSync } from "node:fs";
@@ -1053,14 +1054,7 @@ program.command("backup")
   .argument("[destination]", "workspace-relative SQLite backup path")
   .description("Create a consistent backup of durable research state")
   .action(async (destination: string | undefined) => {
-    const path = resolve(root, destination ?? join(".sota", "backups", `database-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`));
-    const workspacePrefix = root.endsWith("/") ? root : `${root}/`;
-    if (path === resolve(statePath) || !path.startsWith(workspacePrefix)) throw new Error("Backup destination must be inside the Evidra workspace and must not overwrite the live database.");
-    let ancestor = dirname(path);
-    while (!existsSync(ancestor) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor);
-    const physicalRoot = realpathSync(root), physicalAncestor = realpathSync(ancestor);
-    const physicalPrefix = physicalRoot.endsWith("/") ? physicalRoot : `${physicalRoot}/`;
-    if (physicalAncestor !== physicalRoot && !physicalAncestor.startsWith(physicalPrefix)) throw new Error("Backup destination parent resolves outside the Evidra workspace.");
+    const path = workspaceBackupDestination(root, destination ?? join(".sota", "backups", `database-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`), statePath);
     const store = new ResearchStore(statePath);
     try {
       await store.backup(path);

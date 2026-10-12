@@ -1,3 +1,4 @@
+import { workspaceBackupDestination } from "../core/backup-path.js";
 import React, { useEffect, useRef, useState } from "react";
 import { requiresProviderSetup } from "./onboarding.js";
 import { Box, Static, Text, useApp, useInput } from "ink";
@@ -4737,15 +4738,16 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
     if (request === "/backup" || request.startsWith("/backup ")) {
       const requested = request.slice("/backup".length).trim();
-      const path = resolve(root, requested || join(".sota", "backups", `database-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`));
-      const workspacePrefix = root.endsWith("/") ? root : `${root}/`;
-      if (path === resolve(join(root, ".sota", "database.sqlite")) || !path.startsWith(workspacePrefix)) { append("assistant", "Backup destination must stay inside the workspace and cannot overwrite the live database."); return; }
+      let path: string;
+      try { path = workspaceBackupDestination(root, requested || join(".sota", "backups", `database-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`), join(root, ".sota", "database.sqlite")); }
+      catch (error) { appendError(error); return; }
       setBusy(true); setProgress("Creating a consistent state backup...");
       try {
         const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        await store.backup(path);
-        store.appendEvent("state.backup.created", { path: relative(root, path) });
-        store.close();
+        try {
+          await store.backup(path);
+          store.appendEvent("state.backup.created", { path: relative(root, path) });
+        } finally { store.close(); }
         append("assistant", `State backup created\n  ${path}`);
       } catch (error) { appendError(error); }
       finally { setBusy(false); setProgress(""); }

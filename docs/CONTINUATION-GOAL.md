@@ -1276,6 +1276,10 @@ The CLI also resolves the nearest existing destination parent before creating
 directories. Symlinked parents outside the physical workspace are rejected;
 internal workspace symlinks remain supported. A CLI regression verifies both
 paths, no outside directory creation and restored-backup event integrity.
+The same workspace backup-path helper is now used by the terminal UI command,
+which also closes its store after failures. Automatic startup snapshots retain
+the explicit EVIDRA_BACKUP_DIR separate-volume override; interactive commands
+remain workspace-contained.
 
 The default Modal local entrypoint now prints its app identity before spawning
 the function call. The controller journals a causal `run.remote.allocated`
