@@ -1253,6 +1253,10 @@ external evaluator.
   This launches two live CPU jobs using configured credentials. It prints and
   retains its state directory, bounds receipt waits, records each cancellation
   attempt and waits for executor callbacks before closing SQLite on failures.
+  A `recovery.json` report survives assertion failures and summarizes both
+  executor outcomes and durable allocation state without retaining raw client
+  output. An unavailable-SDK probe verified nonzero failure and report creation
+  without remote execution.
 
 ## Immediate next work
 

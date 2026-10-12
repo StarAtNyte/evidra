@@ -45,9 +45,13 @@ function start(id, seconds) {
     if (result.status === 'failed') store.saveExperiment({ id, payload: { ...manifest, status: 'failed' } });
     return result;
   }).finally(() => { execution.settled = true; });
+  // Observe immediately: a peer can reject while the receipt barrier is pending.
+  // Awaiting the original promise below still propagates its failure.
+  execution.promise.catch(() => {});
   return execution;
 }
 const target = start('target', 45), peer = start('peer', 35);
+let passed = false;
 try {
   const deadline = Date.now() + 120_000;
   while (!receipts.target || !receipts.peer) {
@@ -81,10 +85,23 @@ try {
   assert.equal(store.remoteExecutionState('peer').confirmed, true);
   assert.equal(store.runs().length, 0);
   writeFileSync(join(root, 'evidence.json'), JSON.stringify({ at: new Date().toISOString(), gpuRequested: false, receipts, targetResult: { ...targetResult, stdout: '[client diagnostics omitted]' }, peerResult, cancellationAttempts, events, cleanup, scope: 'Distinct apps in one store; no shared-input or GPU claim.' }, null, 2) + '\n');
+  passed = true;
   console.log(JSON.stringify({ root, status: 'passed' }));
 } finally {
   // Let callbacks finish before closing SQLite, even when an assertion fails.
   // No automatic stop by name: retained receipts identify only owned apps.
-  await Promise.allSettled([target.promise, peer.promise]);
-  store.close();
+  const outcomes = await Promise.allSettled([target.promise, peer.promise]);
+  try {
+    writeFileSync(join(root, 'recovery.json'), JSON.stringify({
+      at: new Date().toISOString(), passed, database: db, receipts,
+      executions: outcomes.map((outcome, index) => ({
+        experimentId: index === 0 ? 'target' : 'peer',
+        promiseStatus: outcome.status,
+        ...(outcome.status === 'fulfilled' ? { status: outcome.value.status, exitCode: outcome.value.exitCode } : {}),
+        remoteState: store.remoteExecutionState(index === 0 ? 'target' : 'peer'),
+      })),
+      cleanup: store.eventsByTypes(['run.remote.cleanup.requested', 'run.remote.cleanup.observed']),
+      instruction: 'Inspect this database and exact recorded identities before retrying; missing receipts do not prove remote termination.',
+    }, null, 2) + '\n');
+  } finally { store.close(); }
 }
