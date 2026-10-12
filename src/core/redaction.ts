@@ -54,7 +54,9 @@ export function redactStructured<T>(value: T): T {
 
 export function isSensitiveWorkspacePath(relativePath: string): boolean {
   const normalized = relativePath.replace(/\\/g, "/");
-  return normalized.split("/").some((part) =>
+  const parts = normalized.split("/");
+  if (parts.some((part, index) => part === ".sota" && (parts[index + 1] === "backups" || /^database\.sqlite(?:-(?:wal|shm|journal))?$/.test(parts[index + 1] ?? "")))) return true;
+  return parts.some((part) =>
     part === ".env" || part.startsWith(".env.") ||
-    /^(?:credentials(?:\..*)?|secrets?(?:\..*)?|id_rsa(?:\..*)?|.*\.(?:pem|key|p12|pfx))$/i.test(part));
+    /^(?:\.?credentials(?:\..*)?|\.?secrets?(?:\..*)?|id_(?:rsa|ed25519|ecdsa)(?:\..*)?|.*\.(?:pem|key|p12|pfx))$/i.test(part));
 }

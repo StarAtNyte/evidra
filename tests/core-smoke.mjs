@@ -6841,7 +6841,7 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.match(malformedShape.error, /arguments must be an object/);
     const protectedState = await executeResearchTool({ name: "workspace.read", arguments: { path: ".sota/database.sqlite" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(protectedState.ok, false);
-    assert.match(protectedState.error, /internal state/);
+    assert.match(protectedState.error, /internal state|sensitive workspace path/);
     const unsupportedTool = await executeResearchTool({ name: "workspace.commands", arguments: { command: ["inspect data"] } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(unsupportedTool.ok, false);
     assert.match(unsupportedTool.error, /Use shell\.exec/);
@@ -14272,5 +14272,21 @@ test('autonomous shell paths apply the structured sensitive-file policy includin
     const result=await executeResearchTool({name:'shell.exec',arguments:{command:['head','alias']}},{root,storePath:join(root,'state.sqlite'),autonomy:'safe'});
     assert.equal(result.ok,false);assert.match(result.error,/sensitive workspace/);
     assert.equal(JSON.stringify(result).includes('private disposable fixture'),false);
+  }finally{rmSync(root,{recursive:true,force:true});}
+});
+
+test('sensitive path policy protects default controller state and hidden credentials', async () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-controller-private-paths-'));
+  try {
+    const privatePaths=['.sota/database.sqlite','.sota/database.sqlite-wal','.sota/database.sqlite-shm','.sota/database.sqlite-journal','.sota/backups/snapshot.sqlite','.credentials','.credentials.json','.secret','id_ed25519','id_ecdsa'];
+    for(const path of privatePaths) {
+      assert.equal(isSensitiveWorkspacePath(path),true,path);
+      assert.equal(guardWorkspaceCommand(['head',path],root).allowed,false,path);
+      const result=await executeResearchTool({name:'workspace.read',arguments:{path}},{root,storePath:join(root,'test-state.sqlite'),autonomy:'safe'});
+      assert.equal(result.ok,false,path);assert.match(result.error,/sensitive workspace path/);
+    }
+    mkdirSync(join(root,'.sota'),{recursive:true});writeFileSync(join(root,'.sota','database.sqlite'),'private controller fixture');symlinkSync(join(root,'.sota','database.sqlite'),join(root,'db-alias'));
+    assert.equal(guardWorkspaceCommand(['head','db-alias'],root).allowed,false);
+    for(const path of ['.sota/reports/research.md','.sota/experiment-config.json','datasets/database.sqlite','src/model.py'])assert.equal(isSensitiveWorkspacePath(path),false,path);
   }finally{rmSync(root,{recursive:true,force:true});}
 });

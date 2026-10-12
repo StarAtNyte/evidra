@@ -1260,6 +1260,14 @@ external evaluator.
 
 ## Immediate next work
 
+The shared sensitive-path policy now protects the default .sota controller
+database and its SQLite journals, backup directory, hidden credential/secret
+filenames and additional SSH key names. Structured reads and explicit shell
+paths refuse these names and resolved aliases. Research reports, experiment
+configuration and unrelated dataset SQLite files remain outside this denylist.
+Custom controller-state locations, recursive tool reads and hard links still
+need confinement beyond these explicit path checks.
+
 Autonomous shell inspection now applies the existing structured-read sensitive
 path policy to lexical and resolved paths. Dotenv, credentials, private keys
 and aliases to those files are refused, including attached file options. A
