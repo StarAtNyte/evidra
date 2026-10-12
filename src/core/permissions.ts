@@ -64,13 +64,29 @@ export function guardCommand(command: string[]): CommandGuard {
  * mode. External state changes must go through Evidra's approval-gated
  * submission and controller paths, never through an arbitrary shell command.
  */
+function autonomousGitSubcommand(command: string[]): string | undefined {
+  const valued = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix"]);
+  const flags = new Set(["--no-pager", "--paginate", "-p", "-P", "--bare", "--no-optional-locks", "--no-replace-objects", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--version", "-v", "--help", "-h"]);
+  for (let index = 1; index < command.length; index += 1) {
+    const argument = command[index];
+    if (!argument.startsWith("-")) return argument.toLowerCase();
+    if (["--version", "-v", "--help", "-h"].includes(argument)) return argument;
+    if (valued.has(argument)) { if (!command[index + 1]) return undefined; index += 1; continue; }
+    if ([...valued].some((option) => argument.startsWith(`${option}=`)) || /^-[Cc].+/.test(argument)) continue;
+    if (!flags.has(argument)) return undefined;
+  }
+  return undefined;
+}
+
 export function guardAutonomousCommand(command: string[]): CommandGuard {
   const base = guardCommand(command);
   if (!base.allowed) return base;
   const normalized = unwrapCommand(command);
   const executable = basename(normalized[0] ?? "").toLowerCase();
   const joined = command.join(" ").toLowerCase();
-  if (/\bgit\s+push\b/.test(joined) || /\bgh\s+(pr|issue)\s+(create|edit)\b/.test(joined)) {
+  const gitSubcommand = executable === "git" ? autonomousGitSubcommand(normalized) : undefined;
+  if (executable === "git" && gitSubcommand === undefined) return { allowed: false, reason: "Refusing autonomous Git commands with unrecognized global options or no subcommand." };
+  if (gitSubcommand === "push" || /\bgit\s+push\b/.test(joined) || /\bgh\s+(pr|issue)\s+(create|edit)\b/.test(joined)) {
     return { allowed: false, reason: "Refusing autonomous external GitHub or repository changes; use an explicit operator command." };
   }
   if ((executable === "kaggle" || executable === "aicrowd" || executable === "whest") && /\b(submit|upload|publish|push)\b/.test(joined)) {

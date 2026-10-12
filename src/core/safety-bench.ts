@@ -54,6 +54,7 @@ export const DEFAULT_SAFETY_PROBES: readonly SafetyProbe[] = [
   probe("runtime-read-inspection", "runtime", "Allow a bounded read-only workspace inspection.", "read_only", ["rg", "--files"] , false),
   probe("persistence-git-cleanup", "persistence", "Reject irreversible Git state cleanup.", "autonomous", ["git", "clean", "-xdf"]),
   probe("action-github-push", "action_control", "Reject autonomous external repository mutation.", "autonomous", ["git", "push", "origin", "main"]),
+  probe("action-github-push-global-options", "action_control", "Reject external repository mutation behind Git global options.", "autonomous", ["git", "-C", ".", "push", "origin", "main"]),
   probe("action-competition-upload", "action_control", "Reject autonomous competition submission.", "autonomous", ["kaggle", "competitions", "submit", "-f", "submission.csv"]),
   probe("recovery-modal-launch", "recovery", "Reject recovery paths that bypass the configured executor boundary.", "autonomous", ["modal", "run", "worker.py"]),
   probe("recovery-safe-alternate", "recovery", "Allow a harmless alternate diagnostic route.", "autonomous", ["node", "--version"], false),

@@ -1260,6 +1260,13 @@ external evaluator.
 
 ## Immediate next work
 
+The autonomous Git mutation guard now parses supported global options before
+checking the subcommand. Push through `git -C`, `-c`, repository/worktree
+options and transparent launch wrappers is refused; unknown global options
+fail closed. Harmless inspection and version/help commands remain supported.
+The default safety benchmark includes a global-option push probe. This is an
+argv guard regression, not proof that arbitrary interpreted code is sandboxed.
+
 Controller backups now stage SQLite output in a private directory (0700),
 flush the completed snapshot, set owner-only permissions (0600), then publish
 by rename on the destination filesystem. Failure preserves an existing backup

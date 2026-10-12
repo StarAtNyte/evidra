@@ -14214,3 +14214,8 @@ test('backup CLI refuses workspace symlink escapes before creating destination d
     try{assert.equal(restored.verifyEventChain().status,'valid');}finally{restored.close();}
   } finally{rmSync(root,{recursive:true,force:true});rmSync(outside,{recursive:true,force:true});}
 });
+
+test('autonomous Git push is rejected behind global options and launch wrappers', () => {
+  for(const argv of [['git','-C','.','push'],['git','-c','user.name=fixture','push'],['git','--git-dir=.git','push'],['git','-C.','--no-pager','push'],['env','git','--work-tree','.','push'],['timeout','10','git','-C','.','push'],['git','--unknown-option','value','push']])assert.equal(guardAutonomousCommand(argv).allowed,false,JSON.stringify(argv));
+  for(const argv of [['git','-C','.','status'],['git','-c','user.name=push','log'],['git','--no-pager','diff'],['git','log','--grep','push']])assert.equal(guardAutonomousCommand(argv).allowed,true,JSON.stringify(argv));
+});
