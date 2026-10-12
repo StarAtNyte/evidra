@@ -1,6 +1,7 @@
 """Read-only recovery of a recorded Evidra Modal call; never launch new work."""
 
 import argparse
+import inspect
 import json
 import re
 import asyncio
@@ -15,6 +16,8 @@ def check_runtime() -> dict[str, object]:
     from modal_proto import api_pb2
     if not callable(_Client.from_env) or not callable(_get_environment_name) or not callable(synchronizer.create_blocking) or not callable(modal.FunctionCall.from_id) or not callable(modal.FunctionCall.get):
         raise RuntimeError("Unsupported Modal allocation inspection runtime")
+    if not {"restrict_modal_access", "single_use_containers"}.issubset(inspect.signature(modal.App.function).parameters):
+        raise RuntimeError("Modal SDK lacks required worker isolation options")
     api_pb2.FunctionCallFromIdRequest(function_call_id="fc-runtimecheck")
     api_pb2.AppListRequest(environment_name="")
     if not isinstance(api_pb2.APP_STATE_STOPPED, int):

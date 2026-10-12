@@ -9233,6 +9233,8 @@ class Image:
 class App:
     def __init__(self, *args): self.app_id = 'ap-contract'
     def function(self, **kwargs):
+        assert kwargs.get("restrict_modal_access") is True
+        assert kwargs.get("single_use_containers") is True
         def decorate(fn):
             fn.remote = fn
             class Call:
@@ -9486,6 +9488,12 @@ class FunctionCall:
         if mode == 'pending' or self.call_id == 'fc-pending': raise TimeoutError('still running')
         if mode == 'expired': raise RuntimeError('output expired')
         return dict(exitCode=True if mode == 'malformed' else 7 if mode == 'failed' else 0, stdout='accuracy=0.99', stderr='', artifacts={'result.json': 'e30='})
+__version__='runtime-fixture'
+class App:
+    def function(self, *, restrict_modal_access=False, single_use_containers=False):
+        raise AssertionError('preflight must not register or launch work')
+if os.environ['EVIDRA_MODAL_TEST_MODE']=='runtime-missing-options':
+    App.function=lambda self: None
 import sys
 from types import SimpleNamespace as NS
 async def call_metadata(request):
@@ -9496,7 +9504,9 @@ async def app_list(request):
     return NS(apps=[] if mode=='app-missing' else [app,app] if mode=='app-ambiguous' else [app])
 class Client:
     @classmethod
-    async def from_env(cls): return NS(_stub=NS(FunctionCallFromId=call_metadata,AppList=app_list))
+    async def from_env(cls):
+        open(os.path.join(os.path.dirname(__file__), "sdk-request-started"), "w").write("yes")
+        return NS(_stub=NS(FunctionCallFromId=call_metadata,AppList=app_list))
 import asyncio
 sys.modules['modal._utils.async_utils']=NS(synchronizer=NS(create_blocking=lambda fn: lambda *args: asyncio.run(fn(*args))))
 sys.modules['modal.client']=NS(_Client=Client)
@@ -9505,8 +9515,19 @@ sys.modules['modal_proto']=NS(api_pb2=NS(FunctionCallFromIdRequest=lambda **kw:N
 `);
     process.env.PYTHONPATH = root;
     process.env.EVIDRA_MODAL_PYTHON = "python3";
-    for (const mode of ["completed", "failed", "pending", "expired", "malformed", "missing-receipt", "multiple", "shared-intent", "shared-experiment", "app-active", "app-active-zero", "app-stopped-running", "app-missing", "app-ambiguous", "app-wrong-metadata", "historical-active", "historical-stopped"]) {
+    for (const mode of ["completed", "failed", "pending", "expired", "malformed", "missing-receipt", "multiple", "shared-intent", "shared-experiment", "app-active", "app-active-zero", "app-stopped-running", "app-missing", "app-ambiguous", "app-wrong-metadata", "historical-active", "historical-stopped", "runtime-capable", "runtime-missing-options"]) {
       process.env.EVIDRA_MODAL_TEST_MODE = mode;
+      if (mode.startsWith("runtime-")) {
+        rmSync(join(root, "sdk-request-started"), { force: true });
+        const checked = spawnSync("python3", [join(process.cwd(), "modal_reconcile.py"), "--check-runtime"], { encoding: "utf8", timeout: 3000 });
+        assert.equal(checked.error, undefined);
+        assert.equal(checked.status === 0, mode === "runtime-capable", checked.stderr);
+        if (checked.status === 0) assert.equal(JSON.parse(checked.stdout).ready, true);
+        else assert.match(checked.stderr, /lacks required worker isolation options/);
+        assert.equal(existsSync(join(root, "sdk-request-started")), false);
+        continue;
+      }
+
       const db = join(root, `${mode}.sqlite`), id = `recover-${mode}`;
       const store = new ResearchStore(db);
       const common = { executor: "modal", protocol: "modal-call-v1", experimentId: id, submissionId: "12345678-1234-1234-1234-123456789abc", allocationName: "evidra-12345678-1234-1234-1234-123456789abc" };

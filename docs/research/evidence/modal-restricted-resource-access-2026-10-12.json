@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 1,
+  "modalVersion": "1.6.1",
+  "restricted": {
+    "denial": {
+      "denied": true,
+      "errorType": "AuthError",
+      "message": "Received :status = '401'"
+    },
+    "at": "2026-10-12T03:55:45.558Z",
+    "executor": "modal",
+    "gpuRequested": false,
+    "timeoutMinutes": 2,
+    "result": {
+      "runId": "modal-live-cpu-smoke-1791777345557",
+      "status": "completed",
+      "exitCode": 0,
+      "durationSeconds": 17.89,
+      "metrics": {
+        "accuracy": 1
+      },
+      "metricsByFold": {},
+      "learningCurve": [],
+      "subgroupDeltas": [],
+      "artifacts": {
+        "result.json": "/tmp/evidra-live-modal-gHBFnW/workspace/result.json",
+        "resource-access.json": "/tmp/evidra-live-modal-gHBFnW/workspace/resource-access.json"
+      },
+      "stdout": "accuracy=1.0\n",
+      "stderr": "",
+      "command": [
+        "python",
+        "probe.py"
+      ],
+      "cwd": "/tmp/evidra-live-modal-gHBFnW/workspace"
+    },
+    "events": [
+      {
+        "executor": "modal",
+        "protocol": "modal-call-v1",
+        "experimentId": "modal-live-cpu-smoke",
+        "submissionId": "9f424d58-2302-44bb-9f7a-090e72d40101",
+        "allocationName": "evidra-9f424d58-2302-44bb-9f7a-090e72d40101",
+        "phase": "submitting",
+        "at": "2026-10-12T03:55:27.659Z"
+      },
+      {
+        "callId": "fc-01M4Q40QCQAWGTCFX2QSN8XBZK",
+        "appId": "ap-ZmmKnhZgkssdx8AeFGAgZ4",
+        "executor": "modal",
+        "protocol": "modal-call-v1",
+        "experimentId": "modal-live-cpu-smoke",
+        "submissionId": "9f424d58-2302-44bb-9f7a-090e72d40101",
+        "allocationName": "evidra-9f424d58-2302-44bb-9f7a-090e72d40101",
+        "phase": "submitted",
+        "at": "2026-10-12T03:55:33.099Z"
+      },
+      {
+        "callId": "fc-01M4Q40QCQAWGTCFX2QSN8XBZK",
+        "appId": "ap-ZmmKnhZgkssdx8AeFGAgZ4",
+        "appState": "STOPPED",
+        "runningTasks": 0,
+        "completionEvidence": "client-envelope",
+        "state": "COMPLETED",
+        "exitCode": 0,
+        "executor": "modal",
+        "protocol": "modal-call-v1",
+        "experimentId": "modal-live-cpu-smoke",
+        "submissionId": "9f424d58-2302-44bb-9f7a-090e72d40101",
+        "allocationName": "evidra-9f424d58-2302-44bb-9f7a-090e72d40101",
+        "phase": "terminal",
+        "at": "2026-10-12T03:55:45.551Z"
+      }
+    ],
+    "artifact": {
+      "probe": "passed"
+    },
+    "workerSourceSha256": "73795ba0b854d79db5c836dc2856b6e5e85706dfedb7819e8eb3f4ca2ac71a15",
+    "probeSource": "import os,json,pathlib\nassert os.environ['EVIDRA_EXPERIMENT_ID']=='modal-live-cpu-smoke'\nassert os.environ['EVIDRA_DATASET_VERSION']=='probe-data-v1'\nassert os.environ['EVIDRA_SPLIT_VERSION']=='probe-split-v1'\nassert os.environ['PROBE_VALUE']=='declared'\nassert os.environ['HOME']=='/tmp/evidra-worker-home'\nassert not pathlib.Path('.sota/controller-secret').exists()\nassert not pathlib.Path('.git/config').exists()\npathlib.Path('result.json').write_text(json.dumps({'probe':'passed'}))\nprint('accuracy=1.0')\n",
+    "sdkLookupProbe": "modal.Queue.from_name(\"evidra-restricted-probe-unused\", create_if_missing=False).len()",
+    "temporaryProbeModuleSha256": "65ddd140ef34a192c23f162334628a2b546f3406a8c2850a1330841f049d8ccd"
+  },
+  "unrestrictedControl": {
+    "denial": {
+      "denied": false,
+      "errorType": "NotFoundError",
+      "message": "Queue 'evidra-restricted-probe-unused' not found in environment 'main'"
+    },
+    "at": "2026-10-12T03:57:18.967Z",
+    "executor": "modal",
+    "gpuRequested": false,
+    "timeoutMinutes": 2,
+    "result": {
+      "runId": "modal-live-cpu-smoke-1791777438967",
+      "status": "completed",
+      "exitCode": 0,
+      "durationSeconds": 13.396,
+      "metrics": {
+        "accuracy": 1
+      },
+      "metricsByFold": {},
+      "learningCurve": [],
+      "subgroupDeltas": [],
+      "artifacts": {
+        "result.json": "/tmp/evidra-live-modal-12OJnK/workspace/result.json",
+        "resource-access.json": "/tmp/evidra-live-modal-12OJnK/workspace/resource-access.json"
+      },
+      "stdout": "accuracy=1.0\n",
+      "stderr": "",
+      "command": [
+        "python",
+        "probe.py"
+      ],
+      "cwd": "/tmp/evidra-live-modal-12OJnK/workspace"
+    },
+    "events": [
+      {
+        "executor": "modal",
+        "protocol": "modal-call-v1",
+        "experimentId": "modal-live-cpu-smoke",
+        "submissionId": "3687982e-8dcf-4646-991a-13dc2c6921d1",
+        "allocationName": "evidra-3687982e-8dcf-4646-991a-13dc2c6921d1",
+        "phase": "submitting",
+        "at": "2026-10-12T03:57:05.562Z"
+      },
+      {
+        "callId": "fc-01M4Q43QHJCSXAP2P5ZYPBB8RE",
+        "appId": "ap-rAbtMrpApOCOGtAj6Df8JO",
+        "executor": "modal",
+        "protocol": "modal-call-v1",
+        "experimentId": "modal-live-cpu-smoke",
+        "submissionId": "3687982e-8dcf-4646-991a-13dc2c6921d1",
+        "allocationName": "evidra-3687982e-8dcf-4646-991a-13dc2c6921d1",
+        "phase": "submitted",
+        "at": "2026-10-12T03:57:11.251Z"
+      },
+      {
+        "callId": "fc-01M4Q43QHJCSXAP2P5ZYPBB8RE",
+        "appId": "ap-rAbtMrpApOCOGtAj6Df8JO",
+        "appState": "STOPPED",
+        "runningTasks": 0,
+        "completionEvidence": "client-envelope",
+        "state": "COMPLETED",
+        "exitCode": 0,
+        "executor": "modal",
+        "protocol": "modal-call-v1",
+        "experimentId": "modal-live-cpu-smoke",
+        "submissionId": "3687982e-8dcf-4646-991a-13dc2c6921d1",
+        "allocationName": "evidra-3687982e-8dcf-4646-991a-13dc2c6921d1",
+        "phase": "terminal",
+        "at": "2026-10-12T03:57:18.961Z"
+      }
+    ],
+    "artifact": {
+      "probe": "passed"
+    },
+    "workerSourceSha256": "73795ba0b854d79db5c836dc2856b6e5e85706dfedb7819e8eb3f4ca2ac71a15",
+    "probeSource": "import os,json,pathlib\nassert os.environ['EVIDRA_EXPERIMENT_ID']=='modal-live-cpu-smoke'\nassert os.environ['EVIDRA_DATASET_VERSION']=='probe-data-v1'\nassert os.environ['EVIDRA_SPLIT_VERSION']=='probe-split-v1'\nassert os.environ['PROBE_VALUE']=='declared'\nassert os.environ['HOME']=='/tmp/evidra-worker-home'\nassert not pathlib.Path('.sota/controller-secret').exists()\nassert not pathlib.Path('.git/config').exists()\npathlib.Path('result.json').write_text(json.dumps({'probe':'passed'}))\nprint('accuracy=1.0')\n",
+    "sdkLookupProbe": "modal.Queue.from_name(\"evidra-restricted-probe-unused\", create_if_missing=False).len()",
+    "temporaryProbeModuleSha256": "5ab852df48eb88982ccd9558def036c9716e9e2d8127a60f42046673ed156479"
+  },
+  "resourceCreated": false,
+  "scope": "Live noncreating Queue lookup from worker wrapper SDK context: restricted policy rejected access; unrestricted control reached resource lookup and returned not-found. CPU experiment, metrics/artifacts and allocation termination succeeded. Other Modal resource types, adversarial subprocess credential recovery and network egress were not exercised."
+}

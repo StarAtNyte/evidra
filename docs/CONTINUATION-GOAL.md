@@ -1187,6 +1187,16 @@ external evaluator.
   This supersedes the compute-release gap above. Pending-call cancellation,
   GPU workloads, concurrency and live nondefault environments remain open.
 
+- Modal workers now enable restricted resource access and single-use containers.
+  SDK preflight requires both isolation options before launching remote compute.
+  A live CPU probe using the wrapper's SDK context received AuthError for a
+  noncreating Queue lookup; the unrestricted control reached the lookup and
+  received NotFoundError. Both returned their normal metrics/artifacts and
+  stopped with zero containers. Evidence:
+  `docs/research/evidence/modal-restricted-resource-access-2026-10-12.json`.
+  Other resource types, adversarial subprocess credential recovery and network
+  egress remain separate verification gates.
+
 ## Immediate next work
 
 1. Add/maintain real matched external benchmark adapters and run actual trials

@@ -208,6 +208,8 @@ app = modal.App("evidra-experiment")
 
 @app.function(
     image=image,
+    restrict_modal_access=True,
+    single_use_containers=True,
     gpu=GPU,
     timeout=int(os.environ.get("EVIDRA_MODAL_TIMEOUT_SECONDS", "3600")),
 )
