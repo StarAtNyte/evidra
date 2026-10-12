@@ -1248,6 +1248,11 @@ external evaluator.
   `docs/research/evidence/modal-live-concurrent-cancellation-2026-10-12.json`.
   This proves isolation between two apps; shared-app inputs and GPU cancellation
   remain unverified.
+  Reproduce with `npm run build`, then
+  `node scripts/probe-modal-concurrent-cancellation.mjs /absolute/sdk/bin/python /absolute/sdk/bin/modal`.
+  This launches two live CPU jobs using configured credentials. It prints and
+  retains its state directory, bounds receipt waits, records each cancellation
+  attempt and waits for executor callbacks before closing SQLite on failures.
 
 ## Immediate next work
 
