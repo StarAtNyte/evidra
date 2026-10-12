@@ -14362,3 +14362,56 @@ test('feedback benchmark events retain bounded redacted failure traces only for 
     }
   }finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test("claude provider maps routes, permissions, and headless stream output", async () => {
+  const { claudeHeadlessArgs, effectiveClaudeModel, DEFAULT_CLAUDE_MODEL, runClaudeHeadless } = await import("../dist/agents/claude-exec.js");
+  const { isToolCapableProvider, shouldUseLocalFallback, ProviderUsageLimitError } = await import("../dist/agents/codex-exec.js");
+  assert.equal(effectiveClaudeModel("default"), DEFAULT_CLAUDE_MODEL);
+  assert.equal(effectiveClaudeModel(DEFAULT_CODEX_MODEL), DEFAULT_CLAUDE_MODEL, "a Codex default is never sent to Claude");
+  assert.equal(effectiveClaudeModel("claude-sonnet-5-5"), "claude-sonnet-5-5");
+  assert.equal(isToolCapableProvider("claude"), true);
+  assert.equal(isToolCapableProvider("local"), false);
+  assert.equal(shouldUseLocalFallback(new Error("usage limit reached"), { provider: "claude", limitPolicy: "auto" }, "auto"), true);
+
+  const readOnly = claudeHeadlessArgs({ provider: "claude", model: "m", cwd: ".", webSearchMode: "disabled" }, "read-only", "m");
+  assert.equal(readOnly[readOnly.indexOf("--permission-mode") + 1], "dontAsk");
+  assert.equal(readOnly.includes("Bash"), false, "read-only roles never receive shell");
+  assert.equal(readOnly.includes("WebSearch"), false, "disabled web search is not granted");
+  assert.equal(readOnly[readOnly.indexOf("--setting-sources") + 1], "", "ambient user settings never shape a run");
+  const writable = claudeHeadlessArgs({ provider: "claude", model: "m", cwd: ".", threadId: "s-1", reasoningEffort: "minimal" }, "workspace-write", "m", "{}");
+  assert.equal(writable[writable.indexOf("--permission-mode") + 1], "bypassPermissions");
+  assert.equal(writable[writable.indexOf("--resume") + 1], "s-1");
+  assert.equal(writable[writable.indexOf("--effort") + 1], "low");
+  assert.equal(writable[writable.indexOf("--json-schema") + 1], "{}");
+
+  const dir = mkdtempSync(join(tmpdir(), "evidra-claude-"));
+  const fake = join(dir, "claude");
+  const previous = process.env.EVIDRA_CLAUDE_BIN;
+  process.env.EVIDRA_CLAUDE_BIN = fake;
+  try {
+    const events = [
+      { type: "system", subtype: "init", session_id: "sess-1" },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "a" }] } },
+      { type: "result", subtype: "success", is_error: false, result: "{\"ok\":true}", structured_output: { ok: true }, usage: { input_tokens: 3, cache_read_input_tokens: 10, cache_creation_input_tokens: 2, output_tokens: 5 } },
+    ];
+    writeFileSync(fake, `#!/bin/sh\ncat >/dev/null\ncat <<'JSON'\n${events.map((event) => JSON.stringify(event)).join("\n")}\nJSON\n`);
+    chmodSync(fake, 0o755);
+    const activity = [];
+    let thread;
+    const result = await runClaudeHeadless("hi", { provider: "claude", model: "default", cwd: dir, onActivity: (_source, line) => activity.push(line), onThread: (id) => { thread = id; } }, undefined, undefined, "{}");
+    assert.equal(result.provider, "claude");
+    assert.equal(result.model, DEFAULT_CLAUDE_MODEL);
+    assert.equal(result.threadId, "sess-1");
+    assert.equal(thread, "sess-1");
+    assert.deepEqual(JSON.parse(result.output), { ok: true });
+    assert.deepEqual(result.usage, { inputTokens: 15, outputTokens: 5, cachedInputTokens: 10, cacheWriteInputTokens: 2, reasoningOutputTokens: undefined });
+    assert.equal(activity.some((line) => line.includes("Bash: ls")), true);
+
+    writeFileSync(fake, `#!/bin/sh\ncat >/dev/null\necho '${JSON.stringify({ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: Math.floor(Date.now() / 1000) + 600 } })}'\necho '${JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true, result: "limit" })}'\n`);
+    await assert.rejects(runClaudeHeadless("hi", { provider: "claude", model: "default", cwd: dir }), (error) => error instanceof ProviderUsageLimitError && error.retryAfterMs > 0);
+  } finally {
+    if (previous === undefined) delete process.env.EVIDRA_CLAUDE_BIN; else process.env.EVIDRA_CLAUDE_BIN = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

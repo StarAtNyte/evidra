@@ -288,7 +288,7 @@ export interface ResearchRoutine {
   budgetMinutes: number;
   intervalSeconds: number;
   stopCondition: string;
-  provider: "codex" | "local";
+  provider: "codex" | "claude" | "local";
   model: string;
   thinking: string;
   autonomy: "safe" | "fast" | "yolo";
@@ -344,7 +344,7 @@ function validateRoutine(routine: Pick<ResearchRoutine, "name" | "goal" | "mode"
   if (!Number.isFinite(routine.budgetMinutes) || routine.budgetMinutes <= 0) throw new Error("Routine budget must be positive.");
   if (!Number.isFinite(routine.intervalSeconds) || routine.intervalSeconds < 60) throw new Error("Routine interval must be at least 1 minute.");
   if (!["research", "challenge"].includes(routine.mode)) throw new Error("Routine mode must be 'research' or 'challenge'.");
-  if (!["codex", "local"].includes(routine.provider)) throw new Error("Routine provider must be 'codex' or 'local'.");
+  if (!["codex", "claude", "local"].includes(routine.provider)) throw new Error("Routine provider must be 'codex', 'claude', or 'local'.");
   if (!routine.model.trim()) throw new Error("Routine model must not be empty.");
   if (!routine.thinking.trim()) throw new Error("Routine thinking effort must not be empty.");
   if (!["safe", "fast", "yolo"].includes(routine.autonomy)) throw new Error("Routine autonomy must be safe, fast, or yolo.");

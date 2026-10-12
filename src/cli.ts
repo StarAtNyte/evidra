@@ -76,7 +76,8 @@ import { formatResearchDecision, runResearchDirector } from "./agents/research-d
 import { boundedPeerBoard, laneToolObservationContext, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic, runResearchSemanticAuditor, type ResearchSemanticAudit } from "./agents/research-lanes.js";
 import { createPaintingJob, runPaintingJob } from "./agents/painting.js";
-import { checkProvider, codexLoginStatus, codexResearchModelPool, CodexExecAgent, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listCodexModels, listLocalModels, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
+import { DEFAULT_CLAUDE_MODEL, effectiveClaudeModel } from "./agents/claude-exec.js";
+import { checkProvider, codexLoginStatus, isToolCapableProvider, codexResearchModelPool, CodexExecAgent, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listCodexModels, listLocalModels, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -357,7 +358,7 @@ async function implementCampaignHypothesis(
   experimentId: string,
   hypothesis: unknown,
   manifest: unknown,
-  options: { provider: "codex" | "local"; model: string; thinking: string; fallbackLocalModel?: string; limitPolicy?: "auto" | "wait" | "fallback" | "stop"; protectedCommands?: string[][]; workspaceRelativePath?: string },
+  options: { provider: "codex" | "claude" | "local"; model: string; thinking: string; fallbackLocalModel?: string; limitPolicy?: "auto" | "wait" | "fallback" | "stop"; protectedCommands?: string[][]; workspaceRelativePath?: string },
 ): Promise<void> {
   const worktree = await ensureWorktree(rootPath, rootPath, experimentId);
   const manifestMode = (manifest as { implementationMode?: unknown }).implementationMode;
@@ -476,7 +477,7 @@ async function implementCampaignHypothesis(
     },
   } as const;
   let implementationFailure: string | undefined;
-  if (options.provider === "codex") {
+  if (isToolCapableProvider(options.provider)) {
     const result = await runWithLocalFallback(task, {
       provider: options.provider,
       model: options.model,
@@ -517,7 +518,7 @@ async function implementCampaignHypothesis(
     console.log(`Experiment ${experimentId} · candidate source unchanged${implementationFailure ? ` (${implementationFailure})` : ""}; attempting up to two validated patch recoveries`);
     let patchFailure: string | undefined;
     let recovered = false;
-    if (options.provider === "codex") {
+    if (isToolCapableProvider(options.provider)) {
       try {
         await runWithLocalFallback({
           ...task,
@@ -1236,10 +1237,10 @@ program.command("dashboard").alias("web")
             if (action === "start") {
               const goal = typeof body.goal === "string" ? body.goal.trim() : "";
               const budget = typeof body.budget === "string" ? body.budget.trim() : "";
-              const provider = body.provider === "local" ? "local" : body.provider === "codex" ? "codex" : undefined;
+              const provider = body.provider === "local" ? "local" : body.provider === "codex" ? "codex" : body.provider === "claude" ? "claude" : undefined;
               if (goal.length < 5 || goal.length > 4_000) { fail(400, "Goal must be between 5 and 4,000 characters."); return; }
               if (!budget || !/^\\d{1,5}(?:\\.\\d{1,2})?(?:m|h|d)$/i.test(budget)) { fail(400, "Enter a time budget such as 90m, 4h, or 2d."); return; }
-              if (!provider) { fail(400, "Select Codex or Local as the provider."); return; }
+              if (!provider) { fail(400, "Select Codex, Claude, or Local as the provider."); return; }
               const profile = typeof body.profile === "string" ? body.profile : "general";
               const profileGuidance: Record<string, string> = {
                 build: "Build / Engineering profile: prioritize a working implementation, repository inspection, tests, and reviewable artifacts.",
@@ -1249,7 +1250,7 @@ program.command("dashboard").alias("web")
                 custom: "Custom profile: follow the goal and any workspace guidance; ask for missing constraints before consequential work.",
               };
               const finalGoal = profileGuidance[profile] ? `${goal}\n\n${profileGuidance[profile]}` : goal;
-              const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : provider === "codex" ? DEFAULT_CODEX_MODEL : await resolveLocalFallbackModel("auto");
+              const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : provider === "codex" ? DEFAULT_CODEX_MODEL : provider === "claude" ? DEFAULT_CLAUDE_MODEL : await resolveLocalFallbackModel("auto");
               const stop = typeof body.stop === "string" ? body.stop.trim() : "";
               if (stop.length < 3 || stop.length > 4_000) { fail(400, "Add a measurable stopping condition."); return; }
               await checkProvider({ provider, model, cwd: selected.workspace });
@@ -1319,8 +1320,8 @@ program.command("dashboard").alias("web")
       if (requestUrl.pathname === "/api/workbench/models") {
         void (async () => {
           const provider = requestUrl.searchParams.get("provider");
-          const models = provider === "codex" ? await listCodexModels() : provider === "local" ? await listLocalModels() : [];
-          const defaultModel = provider === "codex" ? DEFAULT_CODEX_MODEL : provider === "local" ? await resolveLocalFallbackModel("auto").catch(() => "") : "";
+          const models = provider === "codex" ? await listCodexModels() : provider === "claude" ? [DEFAULT_CLAUDE_MODEL, "claude-sonnet-5-5", "claude-fable-5-1", "claude-haiku-5-5"].map((id) => ({ id, displayName: id })) : provider === "local" ? await listLocalModels() : [];
+          const defaultModel = provider === "codex" ? DEFAULT_CODEX_MODEL : provider === "claude" ? DEFAULT_CLAUDE_MODEL : provider === "local" ? await resolveLocalFallbackModel("auto").catch(() => "") : "";
           response.writeHead(200, jsonHeaders); response.end(JSON.stringify({ models: models.map(m => ({ id: m.id, displayName: m.displayName ?? m.id })), defaultModel }));
         })().catch(error => { response.writeHead(500, jsonHeaders); response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); });
         return;
@@ -4475,7 +4476,7 @@ routine.command("create")
   .option("--every <duration>", "interval between runs, e.g. 6h or 1d", "1d")
   .option("--budget <duration>", "campaign budget per run", "4h")
   .option("--stop <condition>", "stopping condition", "stop when the stated goal has sufficient reproducible evidence")
-  .option("--provider <provider>", "codex or local", "codex")
+  .option("--provider <provider>", "codex, claude, or local", "codex")
   .option("--model <model>", "provider model", DEFAULT_CODEX_MODEL)
   .option("--thinking <effort>", "reasoning effort", "medium")
   .option("--autonomy <level>", "safe, fast, or yolo", "safe")
@@ -4487,7 +4488,8 @@ routine.command("create")
   .option("--catch-up <policy>", "coalesce missed triggers or replay them (max 8)", "coalesce")
   .action((options: { name: string; goal: string; mode: string; every: string; budget: string; stop: string; provider: string; model: string; thinking: string; autonomy: string; limitPolicy: string; executor: string; lanes: string; maxRuns: string; onEvent?: string; catchUp: string }) => {
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Routine mode must be 'research' or 'challenge'.");
-    if (options.provider !== "codex" && options.provider !== "local") throw new Error("Routine provider must be 'codex' or 'local'.");
+    if (options.provider !== "codex" && options.provider !== "claude" && options.provider !== "local") throw new Error("Routine provider must be 'codex', 'claude', or 'local'.");
+    if (options.provider === "claude") options.model = effectiveClaudeModel(options.model);
     if (!["safe", "fast", "yolo"].includes(options.autonomy)) throw new Error("Routine autonomy must be 'safe', 'fast', or 'yolo'.");
     if (!["auto", "wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Routine limit policy must be 'auto', 'wait', 'fallback', or 'stop'.");
     if (options.catchUp !== "coalesce" && options.catchUp !== "replay") throw new Error("Routine catch-up must be 'coalesce' or 'replay'.");
@@ -4497,7 +4499,7 @@ routine.command("create")
     const maxRunsValue = Number.parseInt(options.maxRuns, 10);
     if (!Number.isInteger(maxRunsValue) || maxRunsValue < 0) throw new Error("Routine max-runs must be zero or a positive integer.");
     const store = new ResearchStore(statePath);
-    const entry = store.createRoutine({ name: options.name.trim(), mode: options.mode as "research" | "challenge", goal: options.goal.trim(), budgetMinutes: durationMinutes(options.budget), intervalSeconds: durationMinutes(options.every) * 60, stopCondition: options.stop.trim(), provider: options.provider as "codex" | "local", model: options.model, thinking: options.thinking, autonomy: options.autonomy as "safe" | "fast" | "yolo", limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", executor: options.executor as "local" | "container" | "modal" | "slurm", lanes, maxRuns: maxRunsValue === 0 ? null : maxRunsValue, triggerEvent: options.onEvent?.trim() || null, catchUpPolicy: options.catchUp as "coalesce" | "replay" });
+    const entry = store.createRoutine({ name: options.name.trim(), mode: options.mode as "research" | "challenge", goal: options.goal.trim(), budgetMinutes: durationMinutes(options.budget), intervalSeconds: durationMinutes(options.every) * 60, stopCondition: options.stop.trim(), provider: options.provider as "codex" | "claude" | "local", model: options.model, thinking: options.thinking, autonomy: options.autonomy as "safe" | "fast" | "yolo", limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", executor: options.executor as "local" | "container" | "modal" | "slurm", lanes, maxRuns: maxRunsValue === 0 ? null : maxRunsValue, triggerEvent: options.onEvent?.trim() || null, catchUpPolicy: options.catchUp as "coalesce" | "replay" });
     store.close();
     console.log(`Routine created: ${entry.id}\nNext run: ${entry.nextRunAt}\nTrigger: ${entry.triggerEvent ?? "interval only"}\nCatch-up: ${entry.catchUpPolicy}\nUse evidra routine run ${entry.id} or schedule it from cron.`);
   });
@@ -4784,9 +4786,9 @@ challenge.command("start")
   .option("--budget <duration>", "autonomous budget, e.g. 90m, 4h, or 2d (5m is only a smoke test)", "4h")
   .option("--gpu-budget <hours>", "maximum GPU-hours for this campaign; 0 means unlimited", "0")
   .option("--stop <condition>", "campaign stopping condition", "stop after a replicated improvement or when evidence is exhausted")
-  .option("--provider <provider>", "agent provider: codex or local", "codex")
+  .option("--provider <provider>", "agent provider: codex, claude, or local", "codex")
   .option("--model <model>", "provider model", DEFAULT_CODEX_MODEL)
-  .option("--fallback-model <model>", "local Ollama model to use when Codex is exhausted or unavailable", process.env.EVIDRA_FALLBACK_MODEL ?? "auto")
+  .option("--fallback-model <model>", "local Ollama model to use when Codex/Claude is exhausted or unavailable", process.env.EVIDRA_FALLBACK_MODEL ?? "auto")
   .option("--thinking <effort>", "reasoning effort", "medium")
   .option("--lanes <count>", "maximum concurrent research lanes (non-safe teams may use bounded waves)", "3")
   .option("--lane-budget <duration>", "optional hard budget per specialist lane, e.g. 20m or 1h")
@@ -4971,9 +4973,9 @@ research
   .option("--budget <duration>", "autonomous budget, e.g. 90m, 4h, or 2d (5m is only a smoke test)", "4h")
   .option("--gpu-budget <hours>", "maximum GPU-hours for this campaign; 0 means unlimited", "0")
   .option("--stop <condition>", "campaign stopping condition", "stop when the research director has sufficient evidence for the stated goal")
-  .option("--provider <provider>", "agent provider: codex or local", "codex")
+  .option("--provider <provider>", "agent provider: codex, claude, or local", "codex")
   .option("--model <model>", "provider model", DEFAULT_CODEX_MODEL)
-  .option("--fallback-model <model>", "local Ollama model to use when Codex is exhausted or unavailable", process.env.EVIDRA_FALLBACK_MODEL ?? "auto")
+  .option("--fallback-model <model>", "local Ollama model to use when Codex/Claude is exhausted or unavailable", process.env.EVIDRA_FALLBACK_MODEL ?? "auto")
   .option("--thinking <effort>", "reasoning effort", "medium")
   .option("--lanes <count>", "maximum concurrent research lanes (non-safe teams may use bounded waves)", "3")
   .option("--lane-budget <duration>", "optional hard budget per specialist lane, e.g. 20m or 1h")
@@ -5029,7 +5031,9 @@ research
     // Keep the cost-conscious default migration, but preserve an explicitly
     // selected model when resuming (including an opt-in Astra route).
     if (options.provider === "codex" && options.model === "default") options.model = DEFAULT_CODEX_MODEL;
-    if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
+    // The shared --model default is a Codex model; never send it to Claude.
+    if (options.provider === "claude") options.model = effectiveClaudeModel(options.model);
+    if (options.provider !== "codex" && options.provider !== "claude" && options.provider !== "local") throw new Error("Provider must be 'codex', 'claude', or 'local'.");
     if (options.routineId && !/^[a-zA-Z0-9_.:-]{1,160}$/.test(options.routineId)) throw new Error("Routine id must be a bounded identifier.");
     if (!["auto", "wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'auto', 'wait', 'fallback', or 'stop'.");
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Mode must be 'research' or 'challenge'.");
@@ -5074,7 +5078,7 @@ research
     } else {
       selectedModel = options.model;
     }
-    let researchModelPool: Array<{ provider: "codex" | "local"; model: string }> = [{ provider: options.provider as "codex" | "local", model: selectedModel }];
+    let researchModelPool: Array<{ provider: "codex" | "claude" | "local"; model: string }> = [{ provider: options.provider as "codex" | "claude" | "local", model: selectedModel }];
     if (options.provider === "local") {
       try {
         const models = await listLocalModels();
@@ -5082,12 +5086,13 @@ research
       } catch { /* The already-validated primary model remains usable if discovery briefly fails. */ }
     }
     const laneLimit = Math.max(1, Math.min(6, Number.parseInt(options.lanes, 10) || 1));
-    const startupRoute = await resolveStartupProvider({ provider: options.provider as "codex" | "local", model: selectedModel, cwd: root, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop" }, options.limitPolicy === "auto" || options.limitPolicy === "fallback" ? options.fallbackModel : "auto");
+    const startupRoute = await resolveStartupProvider({ provider: options.provider as "codex" | "claude" | "local", model: selectedModel, cwd: root, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop" }, options.limitPolicy === "auto" || options.limitPolicy === "fallback" ? options.fallbackModel : "auto");
     if (startupRoute.fallback) {
+      const requestedProvider = options.provider;
       options.provider = startupRoute.provider;
       selectedModel = startupRoute.model;
-      researchModelPool = [{ provider: "local", model: selectedModel }];
-      console.log(`Codex startup unavailable; using local/${selectedModel} before beginning the campaign.`);
+      researchModelPool = [{ provider: startupRoute.provider, model: selectedModel }];
+      console.log(`${requestedProvider === "claude" ? "Claude" : "Codex"} startup unavailable; using ${startupRoute.provider}/${selectedModel} before beginning the campaign.`);
     }
     if (options.provider === "codex" && laneLimit > 1) {
       try {
@@ -5420,7 +5425,7 @@ research
         .map((route) => `- experiment ${String(route.experimentId ?? "unknown")}: ${String(route.routeKey ?? route.failureClass ?? "unknown")} after ${String(route.attempts ?? "?")} attempt(s). ${String(route.instruction ?? "Choose an alternate route; do not replay the same manifest.")}`)
         .join("\n");
       const routeEvidence = recordsForCampaign(store.eventsByType("research.capability_outcome"), campaign.startedAt);
-      const route = routeCapability({ objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}`, mode, provider: options.provider as "codex" | "local", model: selectedModel, autonomy, recentFailureCount: recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length, failureClasses, recentQuality, recentOutcomes: routeEvidence.map((event) => {
+      const route = routeCapability({ objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}`, mode, provider: options.provider as "codex" | "claude" | "local", model: selectedModel, autonomy, recentFailureCount: recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length, failureClasses, recentQuality, recentOutcomes: routeEvidence.map((event) => {
         const payload = event.payload as { mode?: unknown; servedProvider?: unknown; servedModel?: unknown; outcome?: unknown; quality?: unknown };
         return { mode: typeof payload.mode === "string" ? payload.mode : undefined, provider: typeof payload.servedProvider === "string" ? payload.servedProvider : undefined, model: typeof payload.servedModel === "string" ? payload.servedModel : undefined, outcome: typeof payload.outcome === "string" ? payload.outcome : undefined, quality: typeof payload.quality === "string" ? payload.quality : undefined };
       }), budgetRemainingMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)), requestedParallel: laneLimit });
@@ -5888,7 +5893,7 @@ research
             agentRoleReviews,
             goalId: phaseGoal?.id ?? null,
           }, {
-            provider: options.provider as "codex" | "local",
+            provider: options.provider as "codex" | "claude" | "local",
             model: selectedModel,
             modelPool: researchModelPool,
             fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined,
@@ -5949,7 +5954,7 @@ research
                 goalId: phaseGoal?.id ?? null,
               },
               {
-                provider: options.provider as "codex" | "local",
+                provider: options.provider as "codex" | "claude" | "local",
                 model: selectedModel,
                 modelPool: researchModelPool,
                 fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined,
@@ -5999,7 +6004,7 @@ research
           const verifiedStateStore = new ResearchStore(statePath);
           const verifiedState = phaseGoal ? projectVerifiedSubtaskState(verifiedStateStore.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined);
           verifiedStateStore.close();
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, authoritativeEvidence: researchMemory.authoritativeObservations, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, laneToolResults: laneToolObservationContext(laneReports), crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness, triggerContext: campaign.triggerContext ? { eventType: campaign.triggerContext.eventType, eventCreatedAt: campaign.triggerContext.eventCreatedAt, trust: "external_wakeup_signal" } : null }, { provider: options.provider as "codex" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, taskId: cycleTaskId, goalId: phaseGoal?.id ?? null, parentTaskId: cycleTaskId, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, onToolBudgetExhausted: (details) => {
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, authoritativeEvidence: researchMemory.authoritativeObservations, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, laneToolResults: laneToolObservationContext(laneReports), crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness, triggerContext: campaign.triggerContext ? { eventType: campaign.triggerContext.eventType, eventCreatedAt: campaign.triggerContext.eventCreatedAt, trust: "external_wakeup_signal" } : null }, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, taskId: cycleTaskId, goalId: phaseGoal?.id ?? null, parentTaskId: cycleTaskId, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, onToolBudgetExhausted: (details) => {
             const exhaustedStore = new ResearchStore(statePath);
             exhaustedStore.appendEvent("research.director.tool_budget.exhausted", { cycle, goalId: phaseGoal?.id ?? null, ...details });
             exhaustedStore.close();
@@ -6026,7 +6031,7 @@ research
           campaign = recordCampaignCheckpoint(campaign, mode, cycle, "research-critic");
           criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
             authoritativeEvidence: researchMemory.authoritativeObservations,
-            provider: options.provider as "codex" | "local",
+            provider: options.provider as "codex" | "claude" | "local",
             model: selectedModel,
             modelPool: researchModelPool,
             fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined,
@@ -6056,7 +6061,7 @@ research
             laneReports: laneToolObservationContext(laneReports),
             critic: criticReview,
           }, {
-            provider: options.provider as "codex" | "local",
+            provider: options.provider as "codex" | "claude" | "local",
             model: selectedModel,
             modelPool: researchModelPool,
                 fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined,
@@ -6684,7 +6689,7 @@ research
             decisionStore.close();
             let run: { exitCode: number; stdout: string; stderr: string };
             try {
-              await implementCampaignHypothesis(root, experimentId, selectedHypothesis, manifest, { provider: options.provider as "codex" | "local", model: selectedModel, thinking: options.thinking, fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", protectedCommands: [adapter.config.evaluator.command], workspaceRelativePath: relative(root, adapter.workspacePath(root)) });
+              await implementCampaignHypothesis(root, experimentId, selectedHypothesis, manifest, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, thinking: options.thinking, fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", protectedCommands: [adapter.config.evaluator.command], workspaceRelativePath: relative(root, adapter.workspacePath(root)) });
               if (candidateHalvingEnabled) {
                 run = await runCampaignExperiment(root, experimentId, "reduced", campaignRemainingMs(campaign));
                 const screenStore = new ResearchStore(statePath);

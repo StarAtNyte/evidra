@@ -9,8 +9,20 @@ import { redactSecrets } from "../core/redaction.js";
 import { evidraVersion } from "../version.js";
 import { serializeResearchContext } from "../core/context-budget.js";
 import { boundedLocalResponseText, LOCAL_REQUEST_MAX_BYTES, LOCAL_ERROR_MAX_BYTES } from "./local-http.js";
+import { claudeIsLoggedInAsync, runClaudeHeadless } from "./claude-exec.js";
 
-export type AgentProvider = "codex" | "local";
+export type AgentProvider = "codex" | "claude" | "local";
+export const AGENT_PROVIDERS: readonly AgentProvider[] = ["codex", "claude", "local"];
+
+export function isAgentProvider(value: unknown): value is AgentProvider {
+  return typeof value === "string" && (AGENT_PROVIDERS as readonly string[]).includes(value);
+}
+
+/** Remote providers run a native tool loop that can edit files and run shell;
+ * the local Ollama route only returns text. */
+export function isToolCapableProvider(provider: AgentProvider | string): boolean {
+  return provider === "codex" || provider === "claude";
+}
 
 /** Share one base URL across discovery, health checks, and generation. */
 export function ollamaEndpoint(endpoint: "tags" | "show" | "chat" | "version"): string {
@@ -214,7 +226,7 @@ export function isRetryableAgentError(error: unknown): boolean {
 
 /** Decide whether an active Codex failure may change to the configured local route. */
 export function shouldUseLocalFallback(error: unknown, options: Pick<ExecAgentOptions, "provider" | "limitPolicy">, fallbackModel?: string): boolean {
-  return options.provider === "codex"
+  return isToolCapableProvider(options.provider)
     && Boolean(fallbackModel)
     && (options.limitPolicy === "auto" || options.limitPolicy === "fallback")
     && isProviderFallbackEligible(error);
@@ -605,6 +617,10 @@ export async function checkProvider(options: ExecAgentOptions): Promise<void> {
     if (!await codexIsLoggedInAsync()) throw new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription.");
     return;
   }
+  if (options.provider === "claude") {
+    if (!await claudeIsLoggedInAsync()) throw new Error("Claude is not logged in. Run `claude` once and sign in, or set ANTHROPIC_API_KEY.");
+    return;
+  }
 
   await requireOllamaContextControls(options);
   const models = await listLocalModels(options);
@@ -621,7 +637,10 @@ export async function resolveStartupProvider(options: ExecAgentOptions, fallback
     await checkProvider(options);
     return { provider: options.provider, model: options.model, fallback: false };
   } catch (error) {
-    if (options.provider !== "codex" || !options.limitPolicy || !["auto", "fallback"].includes(options.limitPolicy) || !isProviderFallbackEligible(error)) throw error;
+    if (!isToolCapableProvider(options.provider) || !options.limitPolicy || !["auto", "fallback"].includes(options.limitPolicy) || !isProviderFallbackEligible(error)) throw error;
+    if (options.provider === "claude" && await codexIsLoggedInAsync()) {
+      return { provider: "codex", model: DEFAULT_CODEX_MODEL, fallback: true, reason: error instanceof Error ? error.message : String(error) };
+    }
     const model = await resolveLocalFallbackModel(fallbackModel, options);
     await checkProvider({ ...options, provider: "local", model });
     return { provider: "local", model, fallback: true, reason: error instanceof Error ? error.message : String(error) };
@@ -639,12 +658,17 @@ export class CodexExecAgent {
       ? "Execute the task through to its required local artifact; only summarize after the artifact and verification are complete."
       : "Return a concise, evidence-oriented answer.";
     const prompt = `${task.objective}\n\nResearch context:\n${serializeResearchContext(task.context)}\n\n` +
-      "You are Evidra, the research and experimentation workbench assistant. The selected provider is only an implementation detail; never introduce yourself as Codex, OpenAI, Ollama, or another underlying model. " +
+      "You are Evidra, the research and experimentation workbench assistant. The selected provider is only an implementation detail; never introduce yourself as Codex, OpenAI, Claude, Anthropic, Ollama, or another underlying model. " +
       (task.role === "research director" ? "Act as Evidra's research director. " : "Act as Evidra's conversational assistant. ") +
       responseInstruction + " " +
       submissionBoundary;
     if (this.options.provider === "local") {
       const result = await this.runOllama(prompt, onProgress, onProcess, task.outputSchema, task.role);
+      return result;
+    }
+    if (this.options.provider === "claude") {
+      const result = await runClaudeHeadless(prompt, this.options, onProgress, onProcess, task.outputSchema);
+      this.options.onUsage?.(result.usage, result.provider, result.model ?? this.options.model, task.role);
       return result;
     }
 
@@ -906,6 +930,11 @@ export async function runWithLocalFallback(
     return await new CodexExecAgent(options).run(task, onProgress, onProcess);
   } catch (error) {
     const limitReached = isProviderUsageLimit(error);
+    if (options.provider === "claude" && (options.limitPolicy === "auto" || options.limitPolicy === "fallback") && isProviderFallbackEligible(error) && await codexIsLoggedInAsync()) {
+      onProgress?.(`${limitReached ? "Claude usage limit reached" : "Claude route unavailable"}; switching to codex/${DEFAULT_CODEX_MODEL}...`);
+      // Provider sessions are not portable, so the Codex turn starts fresh.
+      return await runWithLocalFallback(task, { ...options, provider: "codex", model: DEFAULT_CODEX_MODEL, threadId: undefined }, fallbackModel, onProgress, onProcess);
+    }
     if (!shouldUseLocalFallback(error, options, fallbackModel)) throw error;
     let localModel: string;
     try {
@@ -918,13 +947,15 @@ export async function runWithLocalFallback(
       // boundary; an inner six-hour wait could outlive the campaign.
       throw error;
     }
-    onProgress?.(`${limitReached ? "Codex usage limit reached" : "Codex route unavailable"}; switching to local/${localModel}...`);
+    const routeName = options.provider === "claude" ? "Claude" : "Codex";
+    onProgress?.(`${limitReached ? `${routeName} usage limit reached` : `${routeName} route unavailable`}; switching to local/${localModel}...`);
     try {
       await checkProvider({ ...options, provider: "local", model: localModel });
       return await new CodexExecAgent({
         ...options,
         provider: "local",
         model: localModel,
+        threadId: undefined,
       }).run(task, onProgress, onProcess);
     } catch (localError) {
       if (options.interruptSignal?.aborted || options.limitPolicy !== "auto") throw localError;

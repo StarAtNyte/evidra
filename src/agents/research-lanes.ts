@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { ResearchStore } from "../core/store.js";
 import type { AgentProvider, CodexWebSearchMode, ExecAgentOptions } from "./codex-exec.js";
 import type { AgentResult } from "../core/types.js";
-import { isProviderUsageLimit, isRetryableAgentError, researchSandboxMode, resolveLocalFallbackModel, runWithLocalFallback } from "./codex-exec.js";
+import { isProviderUsageLimit, isRetryableAgentError, isToolCapableProvider, researchSandboxMode, resolveLocalFallbackModel, runWithLocalFallback } from "./codex-exec.js";
 import type { ProcessControl } from "../core/process.js";
 import type { AutonomyLevel } from "../core/permissions.js";
 import { availableResearchTools, normalizeResearchToolResult, RESEARCH_TOOLS, toolFailureTrust, type ResearchToolCall, type ResearchToolResult } from "../core/tools.js";
@@ -947,7 +947,7 @@ export async function runResearchCritic(
           sandbox: researchSandboxMode(),
           onActivity: options.onActivity,
           onAssistant: options.onAssistant,
-        }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
+        }, isToolCapableProvider(provider) ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
       } catch (error) {
         lastError = error;
         if (!isRetryableAgentError(error) || attempt === 3 || (isProviderUsageLimit(error) && options.limitPolicy === "wait")) throw error;
@@ -1071,7 +1071,7 @@ export async function runResearchSemanticAuditor(
       sandbox: researchSandboxMode(),
       onActivity: options.onActivity,
       onAssistant: options.onAssistant,
-    }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
+    }, isToolCapableProvider(provider) ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
     options.onUsage?.(result.usage, result.provider, result.model ?? model, role, { taskId: options.taskId ?? null, goalId: options.goalId ?? null, parentTaskId: options.parentTaskId ?? null });
     const evidenceStore = new ResearchStore(options.storePath);
     const validEvidence = new Set<string>([
@@ -1153,7 +1153,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
   // silently become part of this task's evidence.
   const sessionScope = researchLaneSessionScope(options.goalId, options.parentTaskId);
   let resumableThreadId: string | undefined;
-  if (laneRoute.provider === "codex") {
+  if (isToolCapableProvider(laneRoute.provider)) {
     const sessionStore = new ResearchStore(options.storePath);
     resumableThreadId = sessionStore.agentSession(role, sessionScope, laneRoute.provider, laneRoute.model)?.threadId;
     sessionStore.close();
@@ -1317,7 +1317,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         const result = await runWithLocalFallback({ role, objective: lanePrompt(role, objective, review, directives.slice(-4), roleGuidance, persistedContract ? agentRoleContract(role, persistedContract) : undefined), context: bounded.context, outputSchema: RESEARCH_LANE_OUTPUT_SCHEMA }, {
           provider,
           model,
-          ...(provider === "codex" && model === laneRoute.model && resumableThreadId ? { threadId: resumableThreadId } : {}),
+          ...(isToolCapableProvider(provider) && model === laneRoute.model && resumableThreadId ? { threadId: resumableThreadId } : {}),
           limitPolicy: options.limitPolicy,
           reasoningEffort: options.reasoningEffort,
           networkAccessEnabled: options.networkAccessEnabled ?? true,
@@ -1327,9 +1327,9 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
           sandbox: researchSandboxMode(),
           onActivity: options.onActivity,
           onAssistant: options.onAssistant,
-        }, provider === "codex" ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
+        }, isToolCapableProvider(provider) ? options.fallbackLocalModel : undefined, options.onProgress, options.onProcess);
         options.onUsage?.(result.usage, result.provider, result.model ?? model, role, { taskId: laneTaskId, goalId: options.goalId ?? null, parentTaskId: options.parentTaskId ?? null });
-        if (result.provider === "codex" && result.threadId) {
+        if (isToolCapableProvider(result.provider) && result.threadId) {
           const sessionStore = new ResearchStore(options.storePath);
           sessionStore.saveAgentSession({ role, scopeKey: sessionScope, provider: result.provider, model: result.model ?? model, threadId: result.threadId, taskId: laneTaskId });
           sessionStore.close();
@@ -1340,7 +1340,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
         lastError = error;
         if (options.isCancelled?.()) throw error;
         if (!isRetryableAgentError(error) || attempt === 3 || (isProviderUsageLimit(error) && options.limitPolicy === "wait")) throw error;
-        if (attempt === 1 && provider === "codex" && options.fallbackLocalModel && (options.limitPolicy === "fallback" || options.limitPolicy === "auto") && isProviderUsageLimit(error)) {
+        if (attempt === 1 && isToolCapableProvider(provider) && options.fallbackLocalModel && (options.limitPolicy === "fallback" || options.limitPolicy === "auto") && isProviderUsageLimit(error)) {
           model = await resolveLocalFallbackModel(options.fallbackLocalModel);
           provider = "local";
           resumableThreadId = undefined;
