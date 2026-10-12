@@ -14224,3 +14224,10 @@ test('SAFE ripgrep inspection rejects executable hooks but permits literal optio
   for(const argv of [['rg','--pre','worker','needle','input'],['rg','--pre=worker','needle','input'],['/usr/bin/rg','--hostname-bin','worker','needle'],['rg','--hostname-bin=worker','needle']])assert.equal(guardReadOnlyInspection(argv).allowed,false,JSON.stringify(argv));
   for(const argv of [['rg','--files'],['rg','--pre-glob=*.txt','needle'],['rg','--','--pre=literal-pattern'],['rg','--','--hostname-bin']])assert.equal(guardReadOnlyInspection(argv).allowed,true,JSON.stringify(argv));
 });
+
+test('SAFE inspection requires sed sandbox and rejects awk and find mutation actions', () => {
+  for(const argv of [['sed','1w marker','input'],['sed','e touch marker','input'],['sed','-n','1p','input'],['sed','--','--sandbox'],['sed','--sandbox','-i','1p','input'],['awk','BEGIN { print "x" > "marker" }'],['awk','BEGIN { "touch marker" | getline }']])assert.equal(guardReadOnlyInspection(argv).allowed,false,JSON.stringify(argv));
+  for(const action of ['-exec','-execdir','-ok','-okdir','-delete','-fprint','-fprint0','-fprintf','-fls'])assert.equal(guardReadOnlyInspection(['find','.',action,'marker']).allowed,false,action);
+  assert.equal(guardReadOnlyInspection(['sed','--sandbox','-n','1,80p','input']).allowed,true);
+  assert.equal(guardReadOnlyInspection(['find','.','-type','f','-print']).allowed,true);
+});

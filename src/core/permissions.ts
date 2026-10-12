@@ -151,7 +151,7 @@ export function guardReadOnlyInspection(command: string[]): CommandGuard {
       if (["--pre", "--hostname-bin"].some((option) => argument === option || argument.startsWith(`${option}=`))) return { allowed: false, reason: "SAFE mode refuses ripgrep options that execute external programs." };
     }
   }
-  const readOnly = new Set(["true", "pwd", "ls", "find", "rg", "grep", "head", "tail", "sed", "awk", "wc", "du", "file", "which", "sha256sum", "shasum", "md5sum"]);
+  const readOnly = new Set(["true", "pwd", "ls", "find", "rg", "grep", "head", "tail", "sed", "wc", "du", "file", "which", "sha256sum", "shasum", "md5sum"]);
   if (executable === "git") {
     const allowed = new Set(["status", "rev-parse", "log", "diff", "show", "ls-files", "branch"]);
     if (!allowed.has(command[1]?.toLowerCase() ?? "")) return { allowed: false, reason: "SAFE mode only permits read-only Git inspection commands." };
@@ -178,9 +178,12 @@ export function guardReadOnlyInspection(command: string[]): CommandGuard {
   }
   if (!readOnly.has(executable)) return { allowed: false, reason: `SAFE mode does not permit '${executable}' for autonomous shell work.` };
   const joined = command.join(" ").toLowerCase();
-  if (executable === "find" && /(^|\s)-(exec|execdir|delete)(\s|$)/.test(joined)) return { allowed: false, reason: "SAFE mode refuses find actions that can execute or delete files." };
+  if (executable === "find" && /(^|\s)-(exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)(\s|$)/.test(joined)) return { allowed: false, reason: "SAFE mode refuses find actions that execute programs, delete files, or write output files." };
   if (executable === "sed" && command.some((argument) => argument === "-i" || argument.startsWith("-i"))) return { allowed: false, reason: "SAFE mode refuses in-place sed edits." };
-  if (executable === "awk" && /\bsystem\s*\(/.test(joined)) return { allowed: false, reason: "SAFE mode refuses awk system calls." };
+  if (executable === "sed") {
+    const options = command.slice(1, command.includes("--") ? command.indexOf("--") : undefined);
+    if (!options.includes("--sandbox")) return { allowed: false, reason: "SAFE sed inspection requires --sandbox to disable read/write/execute commands." };
+  }
   return { allowed: true };
 }
 

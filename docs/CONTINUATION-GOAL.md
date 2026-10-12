@@ -1260,6 +1260,13 @@ external evaluator.
 
 ## Immediate next work
 
+SAFE shell inspection requires sed --sandbox, refuses awk, and rejects find
+execution/confirmation, deletion and file-output actions. Installed GNU sed
+was tested with a disposable file: unsandboxed w wrote the marker, sandboxed
+w failed without creating it, and sandboxed printing retained the expected
+output. Guard regressions and safety probes cover these surfaces. Platforms
+without sed sandbox support can use ripgrep or structured workspace tools.
+
 SAFE inspection refuses ripgrep `--pre` and `--hostname-bin` executable hooks
 in separate or equals forms. Ordinary search and literal option-looking
 patterns after `--` remain allowed. The installed ripgrep help confirms both
