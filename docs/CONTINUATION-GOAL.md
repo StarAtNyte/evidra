@@ -1278,6 +1278,15 @@ including after reopening and without SQLite JSON1. Older receipts without
 an app allocation remain supported. A NOT_STARTED spawn proof cannot override
 a recorded allocation. Recovery still requires a call receipt and stopped-app
 proof; the early app record alone never authorizes release.
+The tightened durable binding checks passed a fresh live two-app CPU
+cancellation probe: the target was reconciled and its peer completed with the
+smoke metric and artifact. A consistent SQLite backup taken while the peer was
+unresolved reopened independently with valid event integrity and both call/app
+bindings preserved; the snapshot retained the peer's unconfirmed state.
+Evidence: `docs/research/evidence/modal-live-durable-binding-2026-10-12.json`
+and `docs/research/evidence/modal-live-backup-binding-2026-10-12.json`.
+This proves snapshot consistency, not controller takeover, full campaign
+restoration or artifact backup.
 
 The bounded live T4 probe (`scripts/probe-modal-gpu.mjs`, SDK Python and CLI
 paths as arguments) was rejected because the configured Modal account requires
