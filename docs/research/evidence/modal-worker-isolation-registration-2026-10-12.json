@@ -1,0 +1,13 @@
+{
+  "at": "2026-10-12T06:19:30.952840+00:00",
+  "modalVersion": "1.6.1",
+  "workerSha256": "7810f35cf56c1873f7fa4a61e01e6687a0301c10ff80ce0bccba8ba638c7d124",
+  "rpcPerformed": false,
+  "restrictModalAccess": true,
+  "singleUseContainers": true,
+  "blockNetwork": false,
+  "attachedSecrets": 0,
+  "gpuRequested": false,
+  "environmentFilterPassed": true,
+  "scope": "Actual SDK registration and local environment filtering only. Does not prove server enforcement, subprocess credential recovery resistance, or network isolation."
+}

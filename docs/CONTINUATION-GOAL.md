@@ -1260,6 +1260,14 @@ external evaluator.
 
 ## Immediate next work
 
+The offline `scripts/probe-modal-worker-isolation.py` probe imports the shipped
+worker with Modal 1.6.1 and checks actual SDK registration metadata: restricted
+Modal access, single-use containers, no attached secrets and no requested GPU.
+It verifies subprocess environment filtering with disposable sentinel values.
+Evidence: `docs/research/evidence/modal-worker-isolation-registration-2026-10-12.json`.
+Network access is enabled. This adds registration evidence, not server enforcement
+or adversarial credential-recovery proof; those isolation gates remain open.
+
 1. Add/maintain real matched external benchmark adapters and run actual trials
    when runnable harness commands and credentials are available; never fabricate
    comparative scores.
