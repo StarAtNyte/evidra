@@ -7126,10 +7126,11 @@ experiment.command("reconcile")
   .argument("<id>", "experiment identifier")
   .description("Release a remote quarantine only when every allocation has durable termination evidence")
   .option("--cancel-container", "remove unresolved owned Docker workers and their anonymous volumes before reconciliation")
-  .action(async (id: string, options: { cancelContainer?: boolean }) => {
-    const result = await reconcileRemoteExperiment(statePath, root, id, { cancelContainer: options.cancelContainer });
+  .option("--cancel-modal", "stop a uniquely owned ephemeral Modal app before verifying termination")
+  .action(async (id: string, options: { cancelContainer?: boolean; cancelModal?: boolean }) => {
+    const result = await reconcileRemoteExperiment(statePath, root, id, { cancelContainer: options.cancelContainer, cancelModal: options.cancelModal });
     if (!result.released) throw new Error(`Experiment ${id} has no complete terminal allocation evidence; quarantine remains in place.`);
-    console.log(`Experiment ${id}: remote termination reconciled; measurement remains unvalidated.`);
+    console.log(`Experiment ${id}: remote termination reconciled; no measurements were imported.`);
   });
 experiment.command("run")
   .argument("<id>", "experiment identifier")

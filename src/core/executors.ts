@@ -27,6 +27,7 @@ export interface RemoteExecutionEvent {
   protocol?: "modal-call-v1";
   callId?: string;
   appId?: string;
+  appName?: string;
   appState?: "STOPPED";
   runningTasks?: number;
 }
@@ -767,7 +768,7 @@ export class ModalExecutor implements ExperimentExecutor {
     const submissionId = randomUUID();
     const args = ["modal", "run", modalEntrypoint, "--command-json", commandJson, "--cwd", ".", "--artifacts-json", JSON.stringify(manifest.evaluation?.requiredArtifacts ?? []), "--timeout-seconds", String(timeoutSeconds), "--submission-id", submissionId, "--config-sha256", experimentEnvironment.EVIDRA_EXPERIMENT_CONFIG_SHA256!];
     const observe = (phase: RemoteExecutionEvent["phase"], details: Partial<RemoteExecutionEvent> = {}): void => {
-      this.onRemoteExecution?.({ ...details, executor: "modal", protocol: "modal-call-v1", experimentId: manifest.id, submissionId, allocationName: `evidra-${submissionId}`, phase, at: new Date().toISOString() });
+      this.onRemoteExecution?.({ ...details, executor: "modal", protocol: "modal-call-v1", experimentId: manifest.id, submissionId, allocationName: `evidra-${submissionId}`, appName: `evidra-${submissionId}`, phase, at: new Date().toISOString() });
     };
     // Persist before launch: losing the client cannot prove the remote worker
     // stopped, even when the local process exits or never returns a receipt.
@@ -805,6 +806,7 @@ export class ModalExecutor implements ExperimentExecutor {
       result = await runProcess(args, launchRoot, manifest.resources.timeoutMinutes * 60_000, receive, onProcess, {
         ...process.env,
         EVIDRA_MODAL_WORKSPACE: experimentWorkspace,
+        EVIDRA_MODAL_SUBMISSION_ID: submissionId,
         ...(manifest.resources.gpu ? { EVIDRA_MODAL_GPU: manifest.resources.gpu } : {}),
         EVIDRA_MODAL_TIMEOUT_SECONDS: String(timeoutSeconds),
         EVIDRA_EXPERIMENT_ID: manifest.id,

@@ -9486,7 +9486,7 @@ class FunctionCall:
     def get(self, timeout):
         assert timeout == 0
         mode = os.environ['EVIDRA_MODAL_TEST_MODE']
-        if mode in ('pending', 'stopped-pending') or self.call_id == 'fc-pending': raise TimeoutError('still running')
+        if mode.startswith('cancel-') or mode in ('pending', 'stopped-pending') or self.call_id == 'fc-pending': raise TimeoutError('still running')
         if mode in ('canceled', 'active-canceled'): raise InputCancellation('input canceled')
         if mode == 'keyboard-interrupt': raise KeyboardInterrupt()
         if mode == 'task-interrupt': raise asyncio.CancelledError()
@@ -9501,25 +9501,38 @@ if os.environ['EVIDRA_MODAL_TEST_MODE']=='runtime-missing-options':
 import sys
 from types import SimpleNamespace as NS
 async def call_metadata(request):
-    return NS(function_call_id='fc-wrong' if os.environ['EVIDRA_MODAL_TEST_MODE']=='app-wrong-metadata' else request.function_call_id, metadata=NS(app_id='ap-pending' if request.function_call_id=='fc-pending' else 'ap-owned'))
+    return NS(function_call_id='fc-wrong' if os.environ['EVIDRA_MODAL_TEST_MODE']=='app-wrong-metadata' else request.function_call_id,num_inputs=2 if os.environ['EVIDRA_MODAL_TEST_MODE']=='cancel-multiple-inputs' else 1, metadata=NS(app_id='ap-pending' if request.function_call_id=='fc-pending' else 'ap-owned'))
+stop_observations = 0
 async def app_list(request):
+    global stop_observations
     mode=os.environ['EVIDRA_MODAL_TEST_MODE']
     app=NS(app_id='ap-owned',state=1 if mode in ('app-active','historical-active','app-active-zero','pending','active-expired','active-canceled') else 5,n_running_tasks=1 if mode in ('app-active','historical-active','app-stopped-running','active-expired','active-canceled') else 0)
+    if mode.startswith('cancel-'):
+        app.description='unrelated' if mode=='cancel-wrong-name' else 'evidra-12345678-1234-1234-1234-123456789abc'
+        app.state=3 if mode=='cancel-deployed' else 5 if os.path.exists(os.path.join(os.path.dirname(__file__),'stop-called')) else 1
+        if mode=='cancel-stopping' and app.state==5:
+            stop_observations += 1
+            if stop_observations==1: app.state=4
+        app.n_running_tasks=0 if app.state==5 else 1
     return NS(apps=[] if mode=='app-missing' else [app,app] if mode=='app-ambiguous' else [app,NS(app_id='ap-pending',state=1,n_running_tasks=1)])
+async def app_stop(request):
+    if os.environ['EVIDRA_MODAL_TEST_MODE']=='cancel-refused': raise RuntimeError('stop refused')
+    assert request.app_id=='ap-owned'
+    open(os.path.join(os.path.dirname(__file__), 'stop-called'), 'w').write('yes')
 class Client:
     @classmethod
     async def from_env(cls):
         open(os.path.join(os.path.dirname(__file__), "sdk-request-started"), "w").write("yes")
-        return NS(_stub=NS(FunctionCallFromId=call_metadata,AppList=app_list))
+        return NS(_stub=NS(FunctionCallFromId=call_metadata,AppList=app_list,AppStop=app_stop))
 import asyncio
 sys.modules['modal._utils.async_utils']=NS(synchronizer=NS(create_blocking=lambda fn: lambda *args: asyncio.run(fn(*args))))
 sys.modules['modal.client']=NS(_Client=Client)
 sys.modules['modal._object']=NS(_get_environment_name=lambda env: '')
-sys.modules['modal_proto']=NS(api_pb2=NS(FunctionCallFromIdRequest=lambda **kw:NS(**kw),AppListRequest=lambda **kw:NS(**kw),APP_STATE_STOPPED=5))
+sys.modules['modal_proto']=NS(api_pb2=NS(FunctionCallFromIdRequest=lambda **kw:NS(**kw),AppListRequest=lambda **kw:NS(**kw),AppStopRequest=lambda **kw:NS(**kw),APP_STOP_SOURCE_CLI=1,APP_STATE_EPHEMERAL=1,APP_STATE_STOPPING=4,APP_STATE_STOPPED=5))
 `);
     process.env.PYTHONPATH = root;
     process.env.EVIDRA_MODAL_PYTHON = "python3";
-    for (const mode of ["completed", "failed", "pending", "expired", "malformed", "missing-receipt", "multiple", "shared-intent", "shared-experiment", "app-active", "app-active-zero", "app-stopped-running", "app-missing", "app-ambiguous", "app-wrong-metadata", "historical-active", "historical-stopped", "runtime-capable", "runtime-missing-options", "active-expired", "stopped-pending", "historical-expired", "canceled", "active-canceled", "keyboard-interrupt", "task-interrupt"]) {
+    for (const mode of ["completed", "failed", "pending", "expired", "malformed", "missing-receipt", "multiple", "shared-intent", "shared-experiment", "app-active", "app-active-zero", "app-stopped-running", "app-missing", "app-ambiguous", "app-wrong-metadata", "historical-active", "historical-stopped", "runtime-capable", "runtime-missing-options", "active-expired", "stopped-pending", "historical-expired", "canceled", "active-canceled", "keyboard-interrupt", "task-interrupt", "cancel-owned", "cancel-wrong-name", "cancel-deployed", "cancel-multiple-inputs", "cancel-shared-app", "cancel-legacy", "cancel-refused", "cancel-wrong-id", "cancel-stopping"]) {
       process.env.EVIDRA_MODAL_TEST_MODE = mode;
       if (mode.startsWith("runtime-")) {
         rmSync(join(root, "sdk-request-started"), { force: true });
@@ -9532,13 +9545,15 @@ sys.modules['modal_proto']=NS(api_pb2=NS(FunctionCallFromIdRequest=lambda **kw:N
         continue;
       }
 
+      rmSync(join(root, "stop-called"), { force: true });
       const db = join(root, `${mode}.sqlite`), id = `recover-${mode}`;
       const store = new ResearchStore(db);
       const common = { executor: "modal", protocol: "modal-call-v1", experimentId: id, submissionId: "12345678-1234-1234-1234-123456789abc", allocationName: "evidra-12345678-1234-1234-1234-123456789abc" };
+      if (mode.startsWith("cancel-") && mode !== "cancel-legacy") common.appName = common.allocationName;
       store.saveExperiment({ id, payload: { id, status: "running", resources: { executor: "modal" } } });
       store.reserveComputeBudget({ experimentId: id, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
       store.appendEvent("run.remote.submitting", { ...common, phase: "submitting" });
-      if (mode !== "missing-receipt") store.appendEvent("run.remote.submitted", { ...common, callId: "fc-owned", phase: "submitted" });
+      if (mode !== "missing-receipt") store.appendEvent("run.remote.submitted", { ...common, callId: "fc-owned", ...(mode.startsWith("cancel-") ? { appId: mode === "cancel-wrong-id" ? "ap-other" : "ap-owned" } : {}), phase: "submitted" });
       if (["multiple", "shared-intent", "shared-experiment"].includes(mode)) {
         const second = { ...common, experimentId: mode === "shared-experiment" ? `${id}-other` : id, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" };
         if (mode === "shared-experiment") {
@@ -9548,24 +9563,36 @@ sys.modules['modal_proto']=NS(api_pb2=NS(FunctionCallFromIdRequest=lambda **kw:N
         store.appendEvent("run.remote.submitting", { ...second, phase: "submitting" });
         store.appendEvent("run.remote.submitted", { ...second, callId: mode === "multiple" ? "fc-pending" : "fc-owned", phase: "submitted" });
       }
+      if (mode === "cancel-shared-app") {
+        const other = { ...common, experimentId: `${id}-other`, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc", appName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" };
+        store.appendEvent("run.remote.submitted", { ...other, appId: "ap-owned", callId: "fc-other", phase: "submitted" });
+      }
       if (mode.startsWith("historical-")) store.appendEvent("run.remote.terminal", { ...common, callId: "fc-owned", state: "COMPLETED", exitCode: 0, completionEvidence: "sdk-result", phase: "terminal" });
       store.recoverStaleExperiments(0);
       store.close();
-      const completed = ["completed", "failed", "historical-stopped", "expired", "malformed", "stopped-pending", "historical-expired", "canceled"].includes(mode);
-      assert.deepEqual(await reconcileRemoteExperiment(db, root, id), { released: completed, queried: ["missing-receipt", "shared-intent", "shared-experiment"].includes(mode) ? 0 : mode === "multiple" ? 2 : 1 }, mode);
+      const completed = ["completed", "failed", "historical-stopped", "expired", "malformed", "stopped-pending", "historical-expired", "canceled", "cancel-owned", "cancel-stopping"].includes(mode);
+      assert.deepEqual(await reconcileRemoteExperiment(db, root, id, { cancelModal: mode.startsWith("cancel-") }), { released: completed, queried: ["missing-receipt", "shared-intent", "shared-experiment", "cancel-legacy", "cancel-shared-app"].includes(mode) ? 0 : mode === "multiple" ? 2 : 1 }, mode);
+      if (["cancel-owned", "cancel-stopping"].includes(mode)) assert.deepEqual(await reconcileRemoteExperiment(db, root, id, { cancelModal: true }), { released: true, queried: 0 });
       const reopened = new ResearchStore(db);
       try {
         assert.equal(reopened.reservedComputeGpuHours(), completed ? 0 : mode === "shared-experiment" ? 2 : 1);
         assert.equal(reopened.experiments()[0].payload.status, completed ? "failed" : "blocked");
         assert.equal(reopened.runs().length, 0);
+        if (mode.startsWith("cancel-")) assert.equal(existsSync(join(root, "stop-called")), ["cancel-owned", "cancel-stopping"].includes(mode), mode);
+        if (mode.startsWith("cancel-") && !["cancel-shared-app", "cancel-legacy"].includes(mode)) {
+          assert.equal(reopened.eventsByType("run.remote.cleanup.requested").length, 1);
+          assert.equal(reopened.eventsByType("run.remote.cleanup.observed")[0].payload.verifiedStopped, ["cancel-owned", "cancel-stopping"].includes(mode));
+          if (!["cancel-owned", "cancel-stopping"].includes(mode)) assert.ok(reopened.eventsByType("run.remote.cleanup.observed")[0].payload.diagnostic.length <= 2000);
+        }
+
         assert.equal(existsSync(join(root, "result.json")), false);
         const terminals = reopened.eventsByType("run.remote.terminal");
         if (mode.startsWith("shared-")) assert.equal(reopened.recordModalTerminalEvidence({ ...common, callId: "fc-owned", state: "COMPLETED", exitCode: 0, completionEvidence: "sdk-result", at: new Date().toISOString() }), false);
         assert.equal(terminals.length, completed || mode === "multiple" || mode === "historical-active" ? 1 : 0);
         if (completed || mode === "multiple") {
           const proof = terminals[0].payload;
-          assert.equal(proof.completionEvidence, ["expired", "malformed", "stopped-pending", "canceled"].includes(mode) ? "sdk-allocation" : "sdk-result");
-          assert.equal(proof.exitCode, mode === "failed" ? 7 : ["expired", "malformed", "stopped-pending", "canceled"].includes(mode) ? 125 : 0);
+          assert.equal(proof.completionEvidence, ["expired", "malformed", "stopped-pending", "canceled", "cancel-owned", "cancel-stopping"].includes(mode) ? "sdk-allocation" : "sdk-result");
+          assert.equal(proof.exitCode, mode === "failed" ? 7 : ["expired", "malformed", "stopped-pending", "canceled", "cancel-owned", "cancel-stopping"].includes(mode) ? 125 : 0);
           assert.equal(reopened.recordModalTerminalEvidence({ ...proof, completionEvidence: proof.completionEvidence === "sdk-allocation" ? "sdk-allocation" : "client-envelope" }), true);
           assert.equal(reopened.recordModalTerminalEvidence({ ...proof, callId: "fc-other" }), false);
           assert.equal(reopened.eventsByType("run.remote.terminal").length, 1);
@@ -9609,6 +9636,22 @@ test("Modal call ownership stays bounded and rejects aliases without SQLite JSON
       assert.equal(store.modalCallOwnershipConfirmed("owned", "intent", "fc-owned"), false);
     }
   } finally { store.db.prepare = originalPrepare; store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Modal app ownership rejects aliases through indexed and JSON-disabled lookups", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-modal-app-owner-")), store = new ResearchStore(join(root, "state.sqlite"));
+  const common = { executor: "modal", protocol: "modal-call-v1", experimentId: "owned", submissionId: "12345678-1234-1234-1234-123456789abc", allocationName: "evidra-12345678-1234-1234-1234-123456789abc", appName: "evidra-12345678-1234-1234-1234-123456789abc", appId: "ap-owned", callId: "fc-owned", phase: "submitted" };
+  try {
+    store.appendEvent("run.remote.submitted", common);
+    assert.equal(store.modalAppOwnershipConfirmed("owned", common.submissionId, "ap-owned"), true);
+    const plan = store.db.prepare("EXPLAIN QUERY PLAN SELECT payload_json FROM events WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal' AND json_extract(payload_json, '$.appId') = ? ORDER BY id LIMIT 2").all("ap-owned");
+    assert.ok(plan.some(row => row.detail.includes("idx_events_modal_app_id")));
+    const prepare = store.db.prepare.bind(store.db);
+    store.db.prepare = sql => { if (sql.includes("json_extract")) throw new Error("JSON1 unavailable"); return prepare(sql); };
+    assert.equal(store.modalAppOwnershipConfirmed("owned", common.submissionId, "ap-owned"), true);
+    store.appendEvent("run.remote.submitted", { ...common, experimentId: "other", callId: "fc-other" });
+    assert.equal(store.modalAppOwnershipConfirmed("owned", common.submissionId, "ap-owned"), false);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
 test("Modal allocation proofs preserve historical records and require causal matching quiescence", () => {

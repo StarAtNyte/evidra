@@ -1217,6 +1217,21 @@ external evaluator.
   A user-facing Modal cancellation command, GPU cancellation and concurrent-input
   cancellation remain open; this probe does not establish those capabilities.
 
+- Added `experiment reconcile <id> --cancel-modal`. New default workers name
+  their ephemeral app with the unique submission tag. Cancellation requires a
+  single recorded app owner, SDK call/app/tag binding, one input and ephemeral
+  lifecycle; deployed, shared and older untagged apps are refused. Requests and
+  observations are durable, failed SDK diagnostics are bounded/redacted, and
+  compute is released only on stopped state with zero containers. Plain
+  reconciliation remains read-only. Live CLI evidence:
+  `docs/research/evidence/modal-live-cancel-command-2026-10-12.json` and
+  `docs/research/evidence/modal-live-cancel-command-pending-2026-10-12.json`.
+  The first pending probe retained quarantine on a transient STOPPING state.
+  Diagnostics identified that transition; bounded verification now waits through
+  it. A fresh live pending-call CLI probe stopped the owned app and released only
+  after zero-container proof, with no imported measurements. GPU/concurrent
+  cancellation remains unverified.
+
 ## Immediate next work
 
 1. Add/maintain real matched external benchmark adapters and run actual trials

@@ -1,0 +1,103 @@
+{
+  "at": "2026-10-12T05:22:45.602Z",
+  "executor": "modal",
+  "gpuRequested": false,
+  "timeoutMinutes": 1,
+  "result": {
+    "runId": "modal-live-client-crash-1791782565597",
+    "status": "failed",
+    "exitCode": 1,
+    "durationSeconds": 11.92,
+    "metrics": {},
+    "metricsByFold": {},
+    "learningCurve": [],
+    "subgroupDeltas": [],
+    "artifacts": {},
+    "stdout": "✓ Initialized. View run at \n[Modal run URL omitted]\n✓ Created objects.\n├── ✓ Uploaded /home/nitiz/Projects/Self/Harness/evidra/modal_app.py\n├── ✓ Uploaded /tmp/evidra-live-modal-crash-9FtXBf/workspace\n└── ✓ Created Function execute.\n[evidra-call] {\"submissionId\": \"74be792a-5cbe-48a7-9a66-e00dcc78250e\", \"callId\": \"fc-01M4Q905QJRFGQ5S5JT6N35YPW\", \"appId\": \"ap-68CV0k5uzBrcATt722wNRL\"}\n",
+    "stderr": "Modal worker completion is unconfirmed; reconcile before replay.",
+    "command": [
+      "python",
+      "probe.py"
+    ],
+    "cwd": "/tmp/evidra-live-modal-crash-9FtXBf/workspace",
+    "failureClass": "unknown"
+  },
+  "events": [
+    {
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "modal-live-client-crash",
+      "submissionId": "74be792a-5cbe-48a7-9a66-e00dcc78250e",
+      "allocationName": "evidra-74be792a-5cbe-48a7-9a66-e00dcc78250e",
+      "appName": "evidra-74be792a-5cbe-48a7-9a66-e00dcc78250e",
+      "phase": "submitting",
+      "at": "2026-10-12T05:22:33.673Z"
+    },
+    {
+      "callId": "fc-01M4Q905QJRFGQ5S5JT6N35YPW",
+      "appId": "ap-68CV0k5uzBrcATt722wNRL",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "modal-live-client-crash",
+      "submissionId": "74be792a-5cbe-48a7-9a66-e00dcc78250e",
+      "allocationName": "evidra-74be792a-5cbe-48a7-9a66-e00dcc78250e",
+      "appName": "evidra-74be792a-5cbe-48a7-9a66-e00dcc78250e",
+      "phase": "submitted",
+      "at": "2026-10-12T05:22:37.579Z"
+    }
+  ],
+  "artifact": null,
+  "workerSourceSha256": "7810f35cf56c1873f7fa4a61e01e6687a0301c10ff80ce0bccba8ba638c7d124",
+  "cliOutput": "Experiment modal-live-client-crash: remote termination reconciled; no measurements were imported.\n",
+  "terminal": {
+    "experimentId": "modal-live-client-crash",
+    "submissionId": "74be792a-5cbe-48a7-9a66-e00dcc78250e",
+    "allocationName": "evidra-74be792a-5cbe-48a7-9a66-e00dcc78250e",
+    "callId": "fc-01M4Q905QJRFGQ5S5JT6N35YPW",
+    "state": "ALLOCATION_STOPPED",
+    "exitCode": 125,
+    "completionEvidence": "sdk-allocation",
+    "appId": "ap-68CV0k5uzBrcATt722wNRL",
+    "appState": "STOPPED",
+    "runningTasks": 0,
+    "at": "2026-10-12T05:22:58.790Z",
+    "executor": "modal",
+    "protocol": "modal-call-v1",
+    "phase": "terminal"
+  },
+  "cleanup": [
+    {
+      "type": "run.remote.cleanup.requested",
+      "payload": {
+        "executor": "modal",
+        "experimentId": "modal-live-client-crash",
+        "submissionId": "74be792a-5cbe-48a7-9a66-e00dcc78250e",
+        "callId": "fc-01M4Q905QJRFGQ5S5JT6N35YPW",
+        "appId": "ap-68CV0k5uzBrcATt722wNRL",
+        "appName": "evidra-74be792a-5cbe-48a7-9a66-e00dcc78250e",
+        "requestId": "b0126675-58d0-47f6-81bc-d40861226c2c",
+        "at": "2026-10-12T05:22:46.642Z"
+      },
+      "createdAt": "2026-10-12T05:22:46.642Z",
+      "eventHash": "be86a59394b7f329c2e214dbdaac4f88dc741c44b2cae314c07e7ff0707a00c1"
+    },
+    {
+      "type": "run.remote.cleanup.observed",
+      "payload": {
+        "executor": "modal",
+        "experimentId": "modal-live-client-crash",
+        "submissionId": "74be792a-5cbe-48a7-9a66-e00dcc78250e",
+        "callId": "fc-01M4Q905QJRFGQ5S5JT6N35YPW",
+        "appId": "ap-68CV0k5uzBrcATt722wNRL",
+        "requestId": "b0126675-58d0-47f6-81bc-d40861226c2c",
+        "exitCode": 0,
+        "verifiedStopped": true,
+        "at": "2026-10-12T05:22:58.789Z"
+      },
+      "createdAt": "2026-10-12T05:22:58.789Z",
+      "eventHash": "2e9a4560acb64d9ea706a24eb069af233aadad7341198f6eef4bd437f702f28b"
+    }
+  ],
+  "importedRuns": 0,
+  "scope": "Actual CLI cancel-modal operation against a uniquely tagged owned CPU app after client SIGKILL; SDK verified ownership, stopped app and zero containers before release, with no measurements imported. GPU and concurrent-input cancellation remain unverified."
+}

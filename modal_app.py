@@ -203,7 +203,7 @@ def ignore_workspace_path(path: Path) -> bool:
 
 
 image = modal.Image.debian_slim(python_version="3.11").pip_install("uv").add_local_dir(WORKSPACE, remote_path=str(REMOTE_WORKSPACE), ignore=ignore_workspace_path)
-app = modal.App("evidra-experiment")
+app = modal.App("evidra-" + os.environ["EVIDRA_MODAL_SUBMISSION_ID"] if os.environ.get("EVIDRA_MODAL_SUBMISSION_ID") else "evidra-experiment")
 
 
 @app.function(

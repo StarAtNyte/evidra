@@ -1,12 +1,13 @@
 import { ResearchStore } from "./store.js";
 import { parseSlurmAccounting } from "./executors.js";
+import { redactStructured } from "./redaction.js";
 import { runProcess } from "./process.js";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-export interface RemoteReconciliationOptions { timeoutMs?: number; cancelContainer?: boolean }
+export interface RemoteReconciliationOptions { timeoutMs?: number; cancelContainer?: boolean; cancelModal?: boolean }
 
-/** Recovery is read-only unless container cancellation is explicitly requested. */
+/** Recovery is read-only unless executor-specific cancellation is requested. */
 export async function reconcileRemoteExperiment(storePath: string, cwd: string, experimentId: string, options: RemoteReconciliationOptions = {}): Promise<{ released: boolean; queried: number }> {
   const store = new ResearchStore(storePath);
   let executor: unknown;
@@ -14,14 +15,16 @@ export async function reconcileRemoteExperiment(storePath: string, cwd: string, 
     const entry = store.experiments().find((item) => item.id === experimentId);
     executor = (entry?.payload as { resources?: { executor?: unknown } } | undefined)?.resources?.executor;
   } finally { store.close(); }
+  if (options.cancelModal && options.cancelContainer) throw new Error("Choose one executor-specific cancellation option.");
+  if (options.cancelModal && executor !== "modal") throw new Error("Modal cancellation requires a quarantined Modal experiment.");
   if (executor === "container") return reconcileContainerExperiment(storePath, cwd, experimentId, options);
   if (options.cancelContainer) throw new Error("Container cancellation requires a quarantined container experiment.");
   if (executor === "modal") return reconcileModalExperiment(storePath, cwd, experimentId, options);
   return reconcileSlurmExperiment(storePath, cwd, experimentId, options);
 }
 
-/** Poll only recorded Modal calls; pending/errors/expired outputs stay fenced. */
-export async function reconcileModalExperiment(storePath: string, cwd: string, experimentId: string, options: { timeoutMs?: number } = {}): Promise<{ released: boolean; queried: number }> {
+/** Inspect recorded Modal allocations; stopping requires explicit owned-app authorization. */
+export async function reconcileModalExperiment(storePath: string, cwd: string, experimentId: string, options: { timeoutMs?: number; cancelModal?: boolean } = {}): Promise<{ released: boolean; queried: number }> {
   const store = new ResearchStore(storePath);
   let queried = 0;
   const deadline = Date.now() + Math.max(1, Math.min(15_000, Number.isFinite(options.timeoutMs) ? options.timeoutMs! : 15_000));
@@ -29,7 +32,8 @@ export async function reconcileModalExperiment(storePath: string, cwd: string, e
     if (store.verifyEventChain().status !== "valid") return { released: false, queried };
     const entry = store.experiments().find((item) => item.id === experimentId);
     const payload = entry?.payload as { remoteReconciliationRequired?: unknown; resources?: { executor?: unknown } } | undefined;
-    if (payload?.remoteReconciliationRequired !== true || payload.resources?.executor !== "modal") return { released: false, queried };
+    if (payload?.resources?.executor !== "modal") return { released: false, queried };
+    if (payload.remoteReconciliationRequired !== true) return { released: store.remoteExecutionState(experimentId).confirmed, queried };
     if (store.reconcileRemoteExperiment(experimentId)) return { released: true, queried };
     const records = store.eventsByTypes(["run.remote.submitting", "run.remote.submitted", "run.remote.terminal"])
       .map((event) => ({ type: event.type, payload: event.payload as Record<string, unknown> }))
@@ -53,9 +57,22 @@ export async function reconcileModalExperiment(storePath: string, cwd: string, e
 
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
-      queried += 1;
       try {
-        const result = await runProcess([process.env.EVIDRA_MODAL_PYTHON ?? "python3", fileURLToPath(new URL("../../modal_reconcile.py", import.meta.url)), callId], cwd, remaining);
+        const command = [process.env.EVIDRA_MODAL_PYTHON ?? "python3", fileURLToPath(new URL("../../modal_reconcile.py", import.meta.url)), callId];
+        let requestId: string | undefined;
+        if (options.cancelModal) {
+          if (intent.payload.appName !== allocationName || receipt.appName !== allocationName || typeof receipt.appId !== "string" || !/^ap-[A-Za-z0-9]{1,128}$/.test(receipt.appId) || !store.modalAppOwnershipConfirmed(experimentId, submissionId, receipt.appId)) continue;
+          command.push("--stop-owned-app", receipt.appId, "--expected-app-name", String(allocationName), "--wait-stopped-seconds", "10");
+          requestId = randomUUID();
+          store.appendEvent("run.remote.cleanup.requested", { executor: "modal", experimentId, submissionId, callId, appId: receipt.appId, appName: allocationName, requestId, at: new Date().toISOString() });
+        }
+        queried += 1;
+        const result = await runProcess(command, cwd, remaining);
+        if (requestId) {
+          let verifiedStopped = false;
+          try { const observed = JSON.parse(result.stdout); verifiedStopped = result.exitCode === 0 && observed.callId === callId && observed.appId === receipt.appId && observed.appState === "STOPPED" && observed.runningTasks === 0; } catch { /* Unknown outcomes cannot release compute. */ }
+          store.appendEvent("run.remote.cleanup.observed", { executor: "modal", experimentId, submissionId, callId, appId: receipt.appId, requestId, exitCode: result.exitCode, verifiedStopped, ...(result.exitCode !== 0 ? { diagnostic: String(redactStructured(result.stderr)).slice(-2000) } : {}), at: new Date().toISOString() });
+        }
         if (result.exitCode === 130) break;
         if (result.exitCode !== 0 || Buffer.byteLength(result.stdout) > 4096) continue;
         const proof = JSON.parse(result.stdout) as { callId?: unknown; state?: unknown; exitCode?: unknown; appId?: unknown; appState?: unknown; runningTasks?: unknown };

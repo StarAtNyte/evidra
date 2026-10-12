@@ -835,6 +835,7 @@ export class ResearchStore {
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_type_task_id_id ON events(type, json_extract(payload_json, '$.taskId'), id)"); } catch { /* JSON1 unavailable; event APIs retain their compatibility fallback */ }
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_type_experiment_id_id ON events(type, json_extract(payload_json, '$.experimentId'), id)"); } catch { /* JSON1 unavailable; allocation lookups retain their compatibility fallback */ }
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_modal_call_id ON events(json_extract(payload_json, '$.callId'), id) WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal'"); } catch { /* JSON1 unavailable; call ownership uses a streaming fallback */ }
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_modal_app_id ON events(json_extract(payload_json, '$.appId'), id) WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal'"); } catch { /* JSON1 unavailable; app ownership uses a bounded streaming fallback */ }
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_remote_submission_identity ON events(type, json_extract(payload_json, '$.experimentId'), json_extract(payload_json, '$.submissionId'), id) WHERE type IN ('run.remote.submitted', 'run.remote.terminal', 'run.remote.allocation.terminal')"); } catch { /* JSON1 unavailable; allocation proofs use bounded streaming reads */ }
     this.db.prepare("INSERT OR IGNORE INTO workspace_identity (id, workspace_id, created_at) VALUES (1, ?, ?)").run(`ws_${randomUUID()}`, new Date().toISOString());
     this.db.exec(`
@@ -3846,6 +3847,24 @@ export class ResearchStore {
       }
       return found;
     }
+  }
+
+  modalAppOwnershipConfirmed(experimentId: string, submissionId: string, appId: string): boolean {
+    let found: Array<Record<string, unknown>>;
+    try {
+      const rows = this.db.prepare("SELECT payload_json FROM events WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal' AND json_extract(payload_json, '$.appId') = ? ORDER BY id LIMIT 2").all(appId) as Array<{ payload_json: string }>;
+      found = rows.map((row) => JSON.parse(row.payload_json) as Record<string, unknown>);
+    } catch {
+      found = [];
+      const rows = this.db.prepare("SELECT payload_json FROM events WHERE type = 'run.remote.submitted' ORDER BY id").iterate() as IterableIterator<{ payload_json: string }>;
+      for (const row of rows) {
+        const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+        if (payload?.executor !== "modal" || payload.appId !== appId) continue;
+        found.push(payload);
+        if (found.length === 2) break;
+      }
+    }
+    return found.length === 1 && found[0].experimentId === experimentId && found[0].submissionId === submissionId && found[0].appName === `evidra-${submissionId}` && this.modalCallOwnershipConfirmed(experimentId, submissionId, String(found[0].callId));
   }
 
   modalCallOwnershipConfirmed(experimentId: string, submissionId: string, callId: string): boolean {
