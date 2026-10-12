@@ -925,6 +925,10 @@ export class ResearchStore {
       const source = statSync(this.db.name), existing = statSync(target);
       if (source.dev === existing.dev && source.ino === existing.ino) throw new Error("Backup must not replace an alias of the live database.");
     }
+    const requireNoJournals = (): void => {
+      if (["-wal", "-shm", "-journal"].some((suffix) => existsSync(target + suffix))) throw new Error("Backup destination has SQLite journal files; close or recover that database before replacing it.");
+    };
+    requireNoJournals();
     mkdirSync(dirname(target), { recursive: true });
     // The private directory protects SQLite's output while it is being written.
     // Staging beside the destination keeps publication on the same filesystem.
@@ -936,6 +940,7 @@ export class ResearchStore {
       chmodSync(snapshot, 0o600);
       const descriptor = openSync(snapshot, "r");
       try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+      requireNoJournals();
       renameSync(snapshot, target);
     } finally { rmSync(staging, { recursive: true, force: true }); }
   }

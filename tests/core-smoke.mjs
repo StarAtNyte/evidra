@@ -14164,3 +14164,33 @@ test('SQLite backups publish privately and preserve an existing snapshot on fail
     finally {restored.close();}
   } finally {store.close();rmSync(root,{recursive:true,force:true});}
 });
+
+test('SQLite backup replacement refuses active and leftover destination journals', async () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-backup-journals-'));
+  const source=new ResearchStore(join(root,'source.sqlite'));
+  try {
+    const destination=join(root,'backup.sqlite');
+    await source.backup(destination);
+    const opened=new ResearchStore(destination);
+    try {
+      opened.appendEvent('existing.snapshot.private',{value:1});
+      await assert.rejects(source.backup(destination),/SQLite journal files/);
+      assert.equal(opened.eventsByType('existing.snapshot.private').length,1);
+      assert.equal(opened.verifyEventChain().status,'valid');
+    } finally {opened.close();}
+    for(const suffix of ['-wal','-shm','-journal']) {
+      writeFileSync(destination+suffix,'leftover SQLite state');
+      const before=readFileSync(destination);
+      await assert.rejects(source.backup(destination),/SQLite journal files/);
+      assert.deepEqual(readFileSync(destination),before);
+      rmSync(destination+suffix);
+    }
+    const backup=source.db.backup.bind(source.db);
+    source.db.backup=async path=>{const result=await backup(path);writeFileSync(destination+'-wal','appeared during snapshot');return result;};
+    const before=readFileSync(destination);
+    await assert.rejects(source.backup(destination),/SQLite journal files/);
+    assert.deepEqual(readFileSync(destination),before);
+    rmSync(destination+'-wal');source.db.backup=backup;
+    await source.backup(destination);
+  } finally {source.close();rmSync(root,{recursive:true,force:true});}
+});

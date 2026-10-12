@@ -1267,6 +1267,11 @@ and removes staging files. Live database paths and inode aliases are refused;
 the CLI closes its store on backup failures. Focused fault-injection tests
 verify these behaviors, and actual live Modal probe state reopened from a
 private backup with valid event and allocation evidence.
+Backup publication also checks destination WAL, shared-memory and rollback
+journals before creation and immediately before rename. Active or leftover
+journals refuse replacement while preserving the previous snapshot. Tests
+cover an open writable destination, each journal suffix and a journal created
+during backup staging. This is journal detection, not a cross-process lock.
 
 The default Modal local entrypoint now prints its app identity before spawning
 the function call. The controller journals a causal `run.remote.allocated`

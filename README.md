@@ -1340,6 +1340,8 @@ Evidra store for recovery verification.
 Backups are built in a private staging directory and published atomically with
 owner-only file permissions. Failed creation preserves an existing destination;
 the live database and its filesystem aliases cannot be backup destinations.
+Replacement is refused when the destination has SQLite journal files; close
+or recover that snapshot database before reusing its path.
 Autonomous research and challenge starts also create a timestamped controller-start backup
 after the integrity check and before lease acquisition.
 
