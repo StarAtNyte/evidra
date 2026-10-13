@@ -33,6 +33,18 @@ export function normalizeResearchDecisionPayload(value: unknown): unknown {
         if (adaptation.repository === null) delete adaptation.repository;
         hypothesis.sourceAdaptation = adaptation;
       }
+      // A director often credits project-local notes (briefs, research files) that are not durable
+      // literature sources. Rejecting the whole decision for that costs a full research cycle; keep
+      // the hypothesis and record the uncited adaptation as an explicit assumption instead.
+      const sourceIds = Array.isArray(hypothesis.evidenceSourceIds) ? hypothesis.evidenceSourceIds : [];
+      if (hypothesis.sourceAdaptation && sourceIds.length === 0) {
+        const adaptation = hypothesis.sourceAdaptation as Record<string, unknown>;
+        const label = [adaptation.sourceTitle, adaptation.section, adaptation.repository].filter((part) => typeof part === "string" && part).join(" · ");
+        const assumptions = Array.isArray(hypothesis.assumptions) ? [...hypothesis.assumptions] : [];
+        assumptions.push(`Adapted from an uncited, non-durable source${label ? ` (${label})` : ""}; treat as unverified guidance.`);
+        hypothesis.assumptions = assumptions;
+        delete hypothesis.sourceAdaptation;
+      }
       return hypothesis;
     });
   }

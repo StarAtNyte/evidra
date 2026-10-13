@@ -476,11 +476,20 @@ test("shared project skills are discovered deterministically and remain bounded 
 });
 
 test("strict Codex research output normalizes nullable optional fields", () => {
-  const payload = normalizeResearchDecisionPayload({ selectedHypothesis: null, hypotheses: [{ expectedOutcome: null, sourceAdaptation: { sourceTitle: "paper", section: null, repository: null, originalSetting: "setting", competitionDifference: "difference", expectedFailureModes: ["failure"] } }] });
+  const payload = normalizeResearchDecisionPayload({ selectedHypothesis: null, hypotheses: [{ expectedOutcome: null, evidenceSourceIds: ["src-1"], sourceAdaptation: { sourceTitle: "paper", section: null, repository: null, originalSetting: "setting", competitionDifference: "difference", expectedFailureModes: ["failure"] } }] });
   assert.equal(payload.hypotheses[0].expectedOutcome, undefined);
   assert.equal(payload.hypotheses[0].sourceAdaptation.section, undefined);
   assert.equal(payload.hypotheses[0].sourceAdaptation.repository, undefined);
   assert.equal(payload.selectedHypothesis, null);
+});
+
+test("an uncited source adaptation becomes an assumption instead of rejecting the decision", () => {
+  const payload = normalizeResearchDecisionPayload({ hypotheses: [{ assumptions: ["a"], evidenceSourceIds: [], sourceAdaptation: { sourceTitle: "research/t1_external_data.md", section: "Top plan", repository: null, originalSetting: "s", competitionDifference: "d", expectedFailureModes: ["f"] } }] });
+  assert.equal(payload.hypotheses[0].sourceAdaptation, undefined);
+  assert.equal(payload.hypotheses[0].assumptions.length, 2);
+  assert.match(payload.hypotheses[0].assumptions[1], /research\/t1_external_data\.md · Top plan/);
+  const cited = normalizeResearchDecisionPayload({ hypotheses: [{ evidenceSourceIds: ["src-9"], sourceAdaptation: { sourceTitle: "paper" } }] });
+  assert.equal(cited.hypotheses[0].sourceAdaptation.sourceTitle, "paper");
 });
 
 test("provider-native command aliases map to the bounded shell research tool", () => {
