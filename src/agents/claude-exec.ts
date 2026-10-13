@@ -107,8 +107,49 @@ function toolActivity(name: string, input: Record<string, unknown> | undefined):
   return progressLine(`Claude · ${name}${typeof detail === "string" ? `: ${detail}` : ""}`);
 }
 
-/** Run one Claude Code headless turn and normalize it to Evidra's agent result. */
+/** The model stopped streaming mid-turn: no event arrived for the idle limit while no tool was running. */
+export class ClaudeStreamStalledError extends Error {
+  constructor(message: string, readonly sessionId: string | undefined) {
+    super(message);
+    this.name = "ClaudeStreamStalledError";
+  }
+}
+
+/** Idle limit for a generating (not tool-executing) Claude turn; EVIDRA_CLAUDE_IDLE_MINUTES overrides. */
+export function claudeIdleLimitMs(): number {
+  const minutes = Number(process.env.EVIDRA_CLAUDE_IDLE_MINUTES);
+  return (Number.isFinite(minutes) && minutes > 0 ? minutes : 10) * 60_000;
+}
+
+const STALL_RESUME_PROMPT = "Your previous response stopped mid-stream because the connection stalled. Continue directly from where it stopped, without recap, and finish the original task, including its required output format.";
+
+/** Run one Claude Code headless turn; a stalled stream is stopped and the same session resumed. */
 export async function runClaudeHeadless(
+  prompt: string,
+  options: ExecAgentOptions,
+  onProgress?: (message: string) => void,
+  onProcess?: (control: ProcessControl) => void,
+  outputSchemaText?: string,
+): Promise<AgentResult> {
+  const maxResumes = 2;
+  let attemptPrompt = prompt;
+  let attemptOptions = options;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await runClaudeHeadlessOnce(attemptPrompt, attemptOptions, onProgress, onProcess, outputSchemaText);
+    } catch (error) {
+      if (!(error instanceof ClaudeStreamStalledError) || attempt >= maxResumes) throw error;
+      onProgress?.(`Claude stream stalled · ${error.sessionId ? "resuming the same session" : "restarting the turn"} (${attempt + 1}/${maxResumes}).`);
+      options.onActivity?.("claude", `stream stalled; ${error.sessionId ? "resuming session" : "restarting turn"}`);
+      if (error.sessionId) {
+        attemptPrompt = STALL_RESUME_PROMPT;
+        attemptOptions = { ...options, threadId: error.sessionId };
+      }
+    }
+  }
+}
+
+async function runClaudeHeadlessOnce(
   prompt: string,
   options: ExecAgentOptions,
   onProgress?: (message: string) => void,
@@ -137,6 +178,7 @@ export async function runClaudeHeadless(
   child.stdin.end(input);
 
   let abortReason: string | undefined;
+  let stalled = false;
   let paused = false;
   let settled = false;
   const stop = (reason: string): void => {
@@ -156,6 +198,18 @@ export async function runClaudeHeadless(
     setTimeout(() => { if (!settled) signal("SIGKILL"); }, 5_000).unref();
   };
   const timeout = setTimeout(() => { if (resultReceived) endAfterResult(); else stop("Claude request timed out."); }, options.timeoutMs ?? 30 * 60_000);
+  // A stalled stream can sit silent for over an hour before the CLI notices. Silence only counts
+  // while the model is generating: a running tool (a long evaluation) legitimately emits nothing.
+  const idleLimitMs = claudeIdleLimitMs();
+  let lastEventAt = Date.now();
+  const openTools = new Set<string>();
+  const watchdog = setInterval(() => {
+    if (settled || paused || resultReceived || openTools.size > 0) return;
+    if (Date.now() - lastEventAt < idleLimitMs) return;
+    stalled = true;
+    stop(`Claude stream stalled: no output for ${Math.round(idleLimitMs / 60_000)} minute(s) while generating.`);
+  }, Math.min(30_000, Math.max(1_000, Math.floor(idleLimitMs / 4))));
+  watchdog.unref();
   const signalHandler = (): void => stop("Claude request interrupted.");
   process.once("SIGTERM", signalHandler);
   process.once("SIGINT", signalHandler);
@@ -164,7 +218,7 @@ export async function runClaudeHeadless(
   // Unlike the Codex SDK, a headless CLI turn is a real process and can be suspended.
   onProcess?.({
     pause: () => { if (!settled && !paused && signal("SIGSTOP")) paused = true; },
-    resume: () => { if (!settled && paused && signal("SIGCONT")) paused = false; },
+    resume: () => { if (!settled && paused && signal("SIGCONT")) { paused = false; lastEventAt = Date.now(); } },
     terminate: () => stop("Claude request interrupted."),
     get paused() { return paused; },
   });
@@ -205,10 +259,12 @@ export async function runClaudeHeadless(
     const blocks = (event.message as { content?: unknown } | undefined)?.content;
     if (!Array.isArray(blocks)) return;
     for (const block of blocks as Array<Record<string, unknown>>) {
+      if (event.type === "user" && block.type === "tool_result" && typeof block.tool_use_id === "string") openTools.delete(block.tool_use_id);
       if (event.type === "assistant" && block.type === "text" && typeof block.text === "string" && block.text.trim()) {
         finalText = block.text;
         onProgress?.(`Evidra · ${progressLine(block.text)}`);
       } else if (event.type === "assistant" && block.type === "tool_use" && typeof block.name === "string") {
+        if (typeof block.id === "string") openTools.add(block.id);
         const toolInput = block.input as Record<string, unknown> | undefined;
         const activity = toolActivity(block.name, toolInput);
         onProgress?.(activity);
@@ -239,6 +295,7 @@ export async function runClaudeHeadless(
     let buffered = "";
     const exitCode = await new Promise<number | null>((resolve, reject) => {
       child.stdout.on("data", (chunk: Buffer) => {
+        lastEventAt = Date.now();
         buffered += chunk.toString("utf8");
         let newline: number;
         while ((newline = buffered.indexOf("\n")) >= 0) {
@@ -255,7 +312,7 @@ export async function runClaudeHeadless(
       child.on("exit", (code) => { if (resultReceived) { child.stdout.destroy(); child.stderr.destroy(); resolve(code); } });
     });
     settled = true;
-    if (abortReason) throw new Error(abortReason);
+    if (abortReason) throw stalled ? new ClaudeStreamStalledError(abortReason, sessionId) : new Error(abortReason);
     const usage = claudeUsage(result?.usage);
     const diagnostic = `${typeof result?.result === "string" ? result.result : ""} ${stderr}`;
     if (rejectedResetAt !== undefined || result?.api_error_status === 429 || /usage limit|rate limit|limit reached|overloaded/i.test(result?.is_error ? diagnostic : stderr)) {
@@ -280,6 +337,7 @@ export async function runClaudeHeadless(
   } finally {
     settled = true;
     clearTimeout(timeout);
+    clearInterval(watchdog);
     process.removeListener("SIGTERM", signalHandler);
     process.removeListener("SIGINT", signalHandler);
     options.interruptSignal?.removeEventListener("abort", signalHandler);

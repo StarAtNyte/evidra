@@ -14498,6 +14498,50 @@ test("claude turn completes on its result even if background jobs keep the CLI a
   }
 });
 
+test("a stalled Claude stream is stopped and the same session resumed, but a long tool is not a stall", async () => {
+  const { runClaudeHeadless } = await import("../dist/agents/claude-exec.js");
+  const dir = mkdtempSync(join(tmpdir(), "evidra-claude-stall-"));
+  const fake = join(dir, "claude");
+  const calls = join(dir, "calls.log");
+  const previous = { bin: process.env.EVIDRA_CLAUDE_BIN, idle: process.env.EVIDRA_CLAUDE_IDLE_MINUTES };
+  process.env.EVIDRA_CLAUDE_BIN = fake;
+  process.env.EVIDRA_CLAUDE_IDLE_MINUTES = "0.02";
+  const line = (value) => `echo '${JSON.stringify(value)}'`;
+  const result = (text) => line({ type: "result", subtype: "success", is_error: false, result: text, usage: { input_tokens: 1, output_tokens: 1 } });
+  try {
+    // First call stalls after init; a call with --resume finishes.
+    writeFileSync(fake, [
+      "#!/bin/sh", "cat >/dev/null", `echo "$*" >> ${calls}`,
+      'case "$*" in *--resume*) ' + line({ type: "system", subtype: "init", session_id: "s1" }) + "; " + result("resumed") + "; exit 0;; esac",
+      line({ type: "system", subtype: "init", session_id: "s1" }), "sleep 30", "",
+    ].join("\n"));
+    chmodSync(fake, 0o755);
+    const out = await runClaudeHeadless("work", { provider: "claude", model: "default", cwd: dir, timeoutMs: 120_000 });
+    assert.equal(out.output, "resumed");
+    const invoked = readFileSync(calls, "utf8").trim().split("\n");
+    assert.equal(invoked.length, 2);
+    assert.match(invoked[1], /--resume s1/);
+
+    // Silence while a tool runs is not a stall.
+    rmSync(calls, { force: true });
+    writeFileSync(fake, [
+      "#!/bin/sh", "cat >/dev/null", `echo "$*" >> ${calls}`,
+      line({ type: "system", subtype: "init", session_id: "s2" }),
+      line({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "evaluate" } }] } }),
+      "sleep 4",
+      line({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] } }),
+      result("tool done"), "",
+    ].join("\n"));
+    const toolOut = await runClaudeHeadless("work", { provider: "claude", model: "default", cwd: dir, timeoutMs: 120_000 });
+    assert.equal(toolOut.output, "tool done");
+    assert.equal(readFileSync(calls, "utf8").trim().split("\n").length, 1);
+  } finally {
+    if (previous.bin === undefined) delete process.env.EVIDRA_CLAUDE_BIN; else process.env.EVIDRA_CLAUDE_BIN = previous.bin;
+    if (previous.idle === undefined) delete process.env.EVIDRA_CLAUDE_IDLE_MINUTES; else process.env.EVIDRA_CLAUDE_IDLE_MINUTES = previous.idle;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("goal progress flags a plateau far from the target and drives an exploration pivot", () => {
   const at = (index) => new Date(Date.UTC(2026, 9, 13, 0, index)).toISOString();
   const flat = [151.8, 153.6, 152.1, 153.6, 154.9, 153.6, 152.0, 153.1, 154.2, 153.9].map((metric, index) => ({ createdAt: at(index), metric }));
