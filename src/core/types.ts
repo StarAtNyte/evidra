@@ -79,6 +79,8 @@ export const CompetitionConfigSchema = z.object({
      * autonomous run itself writes the final submission files. */
     finalizeCommand: z.array(z.string().min(1)).min(1).optional(),
     finalizeTimeoutMinutes: z.number().positive().finite().default(120).optional(),
+    /** How many leading candidates to re-score with the current evaluator before choosing the final one. */
+    finalizeRescoreTop: z.number().int().min(1).max(10).default(3).optional(),
   }).optional(),
   submissionPolicy: z.object({
     requireHumanApproval: z.boolean().default(true),

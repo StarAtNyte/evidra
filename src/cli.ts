@@ -53,7 +53,7 @@ import { availableResearchTools, executeResearchTool } from "./core/tools.js";
 import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "./core/external-tools.js";
 import { projectVerifiedSubtaskState } from "./core/subtask-state.js";
 import { classifyProcessFailure, executorFor, mergeEvaluatorResult, parseMetricOutput, prepareExperimentEnvironment, prepareWorkerHome, safeWorkerEnvironment, validateRunMetrics } from "./core/executors.js";
-import { runCampaignFinalize, selectFinalCandidate } from "./core/finalize.js";
+import { rankFinalCandidates, runCampaignFinalize, type FinalCandidate } from "./core/finalize.js";
 import { packEvidence } from "./core/evidence-pack.js";
 import { sha256File } from "./core/evidence.js";
 import { captureImplementationSnapshot, captureVerificationSourcePin, implementationChanged, implementationEditRetryPrompt, implementationRetryPrompt, resolveImplementationPaths, seedImplementationArtifacts, seedImplementationSource, seedVerificationImplementation, verifyImplementationSnapshot, type ImplementationSnapshot, type PinnedImplementationArtifact } from "./core/implementation-guard.js";
@@ -6936,7 +6936,22 @@ async function finalizeCampaign(adapter: ReturnType<typeof activeCompetition>): 
     const metricName = adapter.config.metric.name;
     const baselinePayload = store.eventsByType("baseline.completed").at(-1)?.payload as { metric?: unknown; stdout?: string } | undefined;
     const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, metricName).metrics[metricName] : undefined;
-    const candidate = selectFinalCandidate(store, metricName, adapter.config.metric.direction, baselineMetric);
+    // Re-score the leading candidates with the current evaluator before choosing: recorded scores can
+    // be stale (the evaluator or its validity gates may have changed during the campaign) or noisy.
+    const direction = adapter.config.metric.direction;
+    const ranked = rankFinalCandidates(store, metricName, direction, baselineMetric, adapter.config.submission?.finalizeRescoreTop ?? 3);
+    let candidate: FinalCandidate | undefined;
+    for (const entry of ranked) {
+      const cwd = join(entry.worktreePath, relative(root, adapter.workspacePath(root)));
+      const environment = safeWorkerEnvironment({ ...(adapter.config.execution?.environment ?? {}), ...experimentEnvironmentFor(store, entry.experimentId), HOME: prepareWorkerHome(entry.worktreePath) });
+      console.log(`\nRe-scoring final candidate ${entry.experimentId} (recorded ${metricName} ${entry.metric})...`);
+      const rescore = await runProcess(adapter.config.evaluator.command, cwd, adapter.config.evaluatorTimeoutMinutes * 60_000, streamProcessOutput, undefined, environment).catch(() => undefined);
+      const fresh = rescore && rescore.exitCode === 0 ? parseMetricOutput(rescore.stdout, metricName).metrics[metricName] : undefined;
+      store.appendEvent("campaign.finalize.rescored", { experimentId: entry.experimentId, recorded: entry.metric, fresh: Number.isFinite(fresh) ? fresh : null, exitCode: rescore?.exitCode ?? null });
+      if (fresh === undefined || !Number.isFinite(fresh)) continue;
+      if (baselineMetric !== undefined && !entry.accepted && !(direction === "maximize" ? fresh > baselineMetric : fresh < baselineMetric)) continue;
+      if (!candidate || (direction === "maximize" ? fresh > candidate.metric : fresh < candidate.metric)) candidate = { ...entry, metric: fresh };
+    }
     if (!candidate) {
       store.appendEvent("campaign.finalize.skipped", { reason: "no completed experiment beat the baseline", baselineMetric: baselineMetric ?? null });
       console.log("\nFinalize skipped: no completed experiment beat the baseline.");

@@ -16,6 +16,12 @@ export interface FinalCandidate {
  * baseline. The choice is the controller's, so a locked run never needs a
  * person to pick among its intermediate outputs. */
 export function selectFinalCandidate(store: ResearchStore, metricName: string, direction: "maximize" | "minimize", baselineMetric?: number): FinalCandidate | undefined {
+  return rankFinalCandidates(store, metricName, direction, baselineMetric, 1)[0];
+}
+
+/** Candidates for the final output, best first: validated ones ahead of unvalidated, then by recorded
+ * metric; unvalidated ones only if they beat the baseline. One entry per worktree (its best run). */
+export function rankFinalCandidates(store: ResearchStore, metricName: string, direction: "maximize" | "minimize", baselineMetric: number | undefined, limit: number): FinalCandidate[] {
   const accepted = new Set(store.eventsByType("experiment.validation.assessed")
     .filter((event) => Boolean((event.payload as { acceptance?: { accepted?: unknown } }).acceptance?.accepted))
     .map((event) => (event.payload as { experimentId?: unknown }).experimentId)
@@ -33,12 +39,17 @@ export function selectFinalCandidate(store: ResearchStore, metricName: string, d
     const isAccepted = accepted.has(experiment.id) || (typeof payload.parent === "string" && accepted.has(payload.parent));
     candidates.push({ experimentId: experiment.id, runId: run.id, metric, accepted: isAccepted, worktreePath: payload.worktreePath });
   }
-  const pick = (pool: FinalCandidate[]): FinalCandidate | undefined => pool.reduce<FinalCandidate | undefined>((best, item) => !best || better(item.metric, best.metric) ? item : best, undefined);
-  const validated = pick(candidates.filter((item) => item.accepted));
-  if (validated) return validated;
-  const fallback = pick(candidates);
-  if (fallback && (baselineMetric === undefined || better(fallback.metric, baselineMetric))) return fallback;
-  return undefined;
+  const eligible = candidates.filter((item) => item.accepted || baselineMetric === undefined || better(item.metric, baselineMetric));
+  eligible.sort((a, b) => Number(b.accepted) - Number(a.accepted) || (better(a.metric, b.metric) ? -1 : better(b.metric, a.metric) ? 1 : 0));
+  const seen = new Set<string>();
+  const ranked: FinalCandidate[] = [];
+  for (const item of eligible) {
+    if (seen.has(item.worktreePath)) continue;
+    seen.add(item.worktreePath);
+    ranked.push(item);
+    if (ranked.length >= limit) break;
+  }
+  return ranked;
 }
 
 export interface FinalizeRecord extends FinalCandidate {
