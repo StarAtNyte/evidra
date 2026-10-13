@@ -14539,3 +14539,61 @@ test("repeated planning-only pivots escalate to a mandatory experiment", () => {
   assert.match(repeated.directive, /pivot cycle 3 without a new experiment/);
   assert.match(repeated.directive, /Decide `run` this cycle/);
 });
+
+test("proxy-transfer calibration learns which proxy gains reach the real score", async () => {
+  const { calibrateProxyTransfer, expectedExternalScore, proxyTransferGuidance, appendTransferObservation, readTransferObservations } = await import("../dist/core/proxy-transfer.js");
+  const components = [
+    { proxy: "board_A", external: "A:val", floor: 50, weight: 1 },
+    { proxy: "board_B", external: "B:val", floor: 50, weight: 1 },
+  ];
+  // A gained 5 on the proxy but nothing for real; B's proxy gain transferred in full.
+  const observation = { at: "2026-10-13T00:00:00Z", proxy: { board_A: 55, board_B: 58 }, external: { "A:val": 49.8, "B:val": 58 } };
+  const calibration = calibrateProxyTransfer(components, [observation]);
+  const [a, b] = calibration.components;
+  assert.ok(a.beta < 0.35 && !a.trusted, `A should be untrusted, got ${a.beta}`);
+  assert.ok(b.beta > 0.7 && b.trusted, `B should transfer, got ${b.beta}`);
+  // With no observations every component sits at the neutral prior.
+  assert.equal(calibrateProxyTransfer(components, []).components[0].beta, 0.5);
+  // A candidate that only improves the untrusted component is worth less than one improving the trusted one.
+  const onlyA = expectedExternalScore(components, calibration, { board_A: 60, board_B: 50 });
+  const onlyB = expectedExternalScore(components, calibration, { board_A: 50, board_B: 60 });
+  assert.ok(onlyB > onlyA);
+  assert.equal(expectedExternalScore(components, calibration, { board_A: 60 }), undefined);
+  assert.match(proxyTransferGuidance(calibration, 101), /UNTRUSTED/);
+  assert.equal(proxyTransferGuidance(calibrateProxyTransfer(components, [])), "");
+  const dir = mkdtempSync(join(tmpdir(), "evidra-transfer-"));
+  try {
+    const path = join(dir, "nested", "transfer.jsonl");
+    appendTransferObservation(path, observation);
+    writeFileSync(path, `${readFileSync(path, "utf8")}not json\n`);
+    assert.equal(readTransferObservations(path).length, 1);
+    assert.deepEqual(readTransferObservations(join(dir, "missing.jsonl")), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("final ranking can use a transfer-adjusted score instead of the raw proxy", async () => {
+  const { rankFinalCandidates } = await import("../dist/core/finalize.js");
+  const { ResearchStore: Store } = await import("../dist/core/store.js");
+  const dir = mkdtempSync(join(tmpdir(), "evidra-final-score-"));
+  try {
+    const store = new Store(join(dir, "db.sqlite"));
+    const add = (id, metrics) => {
+      const worktreePath = join(dir, id);
+      mkdirSync(worktreePath, { recursive: true });
+      store.saveRun({ id: `${id}-run`, experimentId: id, status: "completed", payload: { exitCode: 0, metrics } });
+      return { id, worktreePath };
+    };
+    const a = add("exp-a", { total: 160, board_A: 60, board_B: 50 });
+    const b = add("exp-b", { total: 158, board_A: 50, board_B: 58 });
+    for (const entry of [a, b]) store.saveExperiment({ id: entry.id, payload: { runId: `${entry.id}-run`, worktreePath: entry.worktreePath } });
+    const byProxy = rankFinalCandidates(store, "total", "maximize", undefined, 2);
+    const byScore = rankFinalCandidates(store, "total", "maximize", undefined, 2, (metrics) => 0.1 * metrics.board_A + 1 * metrics.board_B);
+    store.close();
+    assert.equal(byProxy[0].experimentId, "exp-a");
+    assert.equal(byScore[0].experimentId, "exp-b");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

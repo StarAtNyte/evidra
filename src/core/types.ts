@@ -44,6 +44,17 @@ export const CompetitionConfigSchema = z.object({
     /** Smallest improvement of the best result that counts as progress (defaults to 5% of the baseline-to-target distance). */
     minimumProgress: z.number().positive().optional(),
   }),
+  /** Map proxy metric components to the real evaluator's scores so real feedback can calibrate the proxy. */
+  proxyTransfer: z.object({
+    /** JSONL of {at, label?, proxy: {metric: value}, external: {score: value}}, relative to the project root. */
+    observationsPath: z.string().min(1),
+    components: z.array(z.object({
+      proxy: z.string().min(1),
+      external: z.string().min(1),
+      floor: z.number().finite(),
+      weight: z.number().finite().positive(),
+    })).min(1),
+  }).optional(),
   /** Optional non-primary objectives; promotion can require they do not regress. */
   secondaryMetrics: z.array(z.object({
     name: z.string().min(1),

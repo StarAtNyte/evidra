@@ -38,6 +38,7 @@ import { renderTimeline } from "./core/timeline.js";
 import { activeContradictionEdges, latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
 import { detectStagnation } from "./core/stagnation.js";
 import { assessGoalProgress, stalledPivotCycles } from "./core/progress.js";
+import { appendTransferObservation, calibrateProxyTransfer, expectedExternalScore, proxyTransferGuidance, readTransferObservations, type ProxyTransferCalibration } from "./core/proxy-transfer.js";
 import { assessStopPolicy } from "./core/stop-policy.js";
 import { classifyVerifier } from "./core/formal-verification.js";
 import { detectRouteDrift } from "./core/drift-detection.js";
@@ -2594,6 +2595,36 @@ sources.command("adapt")
     console.log(formatResearchDecision(decision));
   });
 program.addCommand(sources);
+
+const transfer = new Command("transfer").description("Calibrate the local proxy against real evaluations");
+transfer.command("record")
+  .description("Record one real evaluation next to the proxy breakdown of the same candidate")
+  .requiredOption("--proxy <json>", "proxy metrics as JSON, or @path to a JSON file (e.g. an evaluator detail or metrics.json)")
+  .requiredOption("--external <json>", "real scores as JSON, or @path to a JSON file")
+  .option("--label <label>", "what was evaluated (experiment id, submission id)")
+  .action((options: { proxy: string; external: string; label?: string }) => {
+    const config = activeCompetition().config.proxyTransfer;
+    if (!config) throw new Error("competition manifest has no proxyTransfer section");
+    const parse = (value: string): Record<string, number> => {
+      const raw = JSON.parse(value.startsWith("@") ? readFileSync(resolve(value.slice(1)), "utf8") : value) as Record<string, unknown>;
+      const flat = (raw.metrics && typeof raw.metrics === "object" ? raw.metrics : raw) as Record<string, unknown>;
+      return Object.fromEntries(Object.entries(flat).filter(([, entry]) => typeof entry === "number" && Number.isFinite(entry))) as Record<string, number>;
+    };
+    const observation = { at: new Date().toISOString(), ...(options.label ? { label: options.label } : {}), proxy: parse(options.proxy), external: parse(options.external) };
+    const missing = config.components.filter((component) => !(component.proxy in observation.proxy) || !(component.external in observation.external)).map((component) => `${component.proxy}/${component.external}`);
+    if (missing.length) console.warn(`Components without a pair in this observation: ${missing.join(", ")}`);
+    const path = resolve(root, config.observationsPath);
+    appendTransferObservation(path, observation);
+    const calibration = calibrateProxyTransfer(config.components, readTransferObservations(path));
+    console.log(proxyTransferGuidance(calibration));
+  });
+transfer.command("show").description("Show the current proxy-transfer calibration").action(() => {
+  const config = activeCompetition().config.proxyTransfer;
+  if (!config) throw new Error("competition manifest has no proxyTransfer section");
+  const calibration = calibrateProxyTransfer(config.components, readTransferObservations(resolve(root, config.observationsPath)));
+  console.log(calibration.observations ? proxyTransferGuidance(calibration) : "No real evaluations recorded yet.");
+});
+program.addCommand(transfer);
 
 const evidence = new Command("evidence").description("Inspect and verify durable research evidence");
 evidence.command("pack")
@@ -5551,6 +5582,14 @@ research
         runs: progressRuns,
       });
       store.appendEvent("research.goal_progress", { cycle, progress: goalProgress });
+      const proxyTransfer = loadProxyTransfer(adapter.config);
+      const transferIncumbent = proxyTransfer
+        ? recordsForCampaign(store.runs(), campaign.startedAt)
+          .map((run) => proxyTransfer.score(((run.payload as { metrics?: Record<string, unknown> })?.metrics) ?? {}))
+          .filter((value): value is number => value !== undefined && Number.isFinite(value))
+          .reduce<number | undefined>((best, value) => best === undefined || (adapter.config.metric.direction === "maximize" ? value > best : value < best) ? value : best, undefined)
+        : undefined;
+      if (proxyTransfer) store.appendEvent("research.proxy_transfer", { cycle, calibration: proxyTransfer.calibration, incumbentExpected: transferIncumbent ?? null });
       if (goalProgress.pivotRequired) console.log(`Research · goal progress plateaued (best ${goalProgress.best}, target ${goalProgress.target ?? "none"}); ${goalProgress.mustRun ? "earlier pivots produced no experiment, so this cycle must run one" : "pivoting to a different method family"}.`);
       const adaptiveHarness = deriveAdaptiveHarnessPolicy({
         autonomy,
@@ -5767,7 +5806,7 @@ research
       const rubricGuidance = priorRubricGaps.length
         ? `\n\nPrior decision-rubric gaps to repair before spending compute:\n${[...new Set(priorRubricGaps)].join("\n")}`
         : "";
-      const progressGuidance = goalProgress.directive ? `\n\n${goalProgress.directive}` : "";
+      const progressGuidance = (goalProgress.directive ? `\n\n${goalProgress.directive}` : "") + (proxyTransfer ? `\n\n${proxyTransferGuidance(proxyTransfer.calibration, transferIncumbent)}` : "");
       const cycleObjective = allocatedObjective + guidanceText + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance + progressGuidance;
       const researchSources = latestSourcePayloads(store.sources(), 12, cycleObjective, store);
       const researchMemory = researchMemoryContext(store, 30, cycleObjective, {
@@ -6952,6 +6991,15 @@ function experimentEnvironmentFor(store: ResearchStore, experimentId: string): R
   return parsed?.success ? { ...(parsed.data.resources.environment ?? {}) } : {};
 }
 
+/** The manifest's proxy-transfer calibration from recorded real evaluations, if configured and observed. */
+function loadProxyTransfer(config: ReturnType<typeof activeCompetition>["config"]): { calibration: ProxyTransferCalibration; score: (metrics: Record<string, unknown>) => number | undefined } | undefined {
+  const transfer = config.proxyTransfer;
+  if (!transfer) return undefined;
+  const calibration = calibrateProxyTransfer(transfer.components, readTransferObservations(resolve(root, transfer.observationsPath)));
+  if (!calibration.observations) return undefined;
+  return { calibration, score: (metrics) => expectedExternalScore(transfer.components, calibration, metrics) };
+}
+
 /** Build final artifacts from the campaign's own best experiment, without a person in the loop. */
 async function finalizeCampaign(adapter: ReturnType<typeof activeCompetition>): Promise<void> {
   const command = adapter.config.submission?.finalizeCommand;
@@ -6964,21 +7012,30 @@ async function finalizeCampaign(adapter: ReturnType<typeof activeCompetition>): 
     // Re-score the leading candidates with the current evaluator before choosing: recorded scores can
     // be stale (the evaluator or its validity gates may have changed during the campaign) or noisy.
     const direction = adapter.config.metric.direction;
-    const ranked = rankFinalCandidates(store, metricName, direction, baselineMetric, adapter.config.submission?.finalizeRescoreTop ?? 3);
+    // With real-evaluation feedback, rank and choose by the transfer-adjusted expected real score
+    // rather than the raw proxy, so components whose proxy gains do not transfer cannot win.
+    const transfer = loadProxyTransfer(adapter.config);
+    const scoreOf = (stdout: string): number | undefined => {
+      const metrics = parseMetricOutput(stdout, metricName).metrics;
+      return transfer ? transfer.score(metrics) : metrics[metricName];
+    };
+    const baselineScore = transfer ? (baselinePayload?.stdout ? scoreOf(baselinePayload.stdout) : undefined) : baselineMetric;
+    if (transfer) store.appendEvent("campaign.finalize.transfer_calibration", { calibration: transfer.calibration, baselineExpected: baselineScore ?? null });
+    const ranked = rankFinalCandidates(store, metricName, direction, baselineScore, adapter.config.submission?.finalizeRescoreTop ?? 3, transfer?.score);
     let candidate: FinalCandidate | undefined;
     for (const entry of ranked) {
       const cwd = join(entry.worktreePath, relative(root, adapter.workspacePath(root)));
       const environment = safeWorkerEnvironment({ ...(adapter.config.execution?.environment ?? {}), ...experimentEnvironmentFor(store, entry.experimentId), HOME: prepareWorkerHome(entry.worktreePath) });
       console.log(`\nRe-scoring final candidate ${entry.experimentId} (recorded ${metricName} ${entry.metric})...`);
       const rescore = await runProcess(adapter.config.evaluator.command, cwd, adapter.config.evaluatorTimeoutMinutes * 60_000, streamProcessOutput, undefined, environment).catch(() => undefined);
-      const fresh = rescore && rescore.exitCode === 0 ? parseMetricOutput(rescore.stdout, metricName).metrics[metricName] : undefined;
+      const fresh = rescore && rescore.exitCode === 0 ? scoreOf(rescore.stdout) : undefined;
       store.appendEvent("campaign.finalize.rescored", { experimentId: entry.experimentId, recorded: entry.metric, fresh: Number.isFinite(fresh) ? fresh : null, exitCode: rescore?.exitCode ?? null });
       if (fresh === undefined || !Number.isFinite(fresh)) continue;
-      if (baselineMetric !== undefined && !entry.accepted && !(direction === "maximize" ? fresh > baselineMetric : fresh < baselineMetric)) continue;
+      if (baselineScore !== undefined && !entry.accepted && !(direction === "maximize" ? fresh > baselineScore : fresh < baselineScore)) continue;
       if (!candidate || (direction === "maximize" ? fresh > candidate.metric : fresh < candidate.metric)) candidate = { ...entry, metric: fresh };
     }
     if (!candidate) {
-      store.appendEvent("campaign.finalize.skipped", { reason: "no completed experiment beat the baseline", baselineMetric: baselineMetric ?? null });
+      store.appendEvent("campaign.finalize.skipped", { reason: "no completed experiment beat the baseline", baselineMetric: baselineScore ?? null });
       console.log("\nFinalize skipped: no completed experiment beat the baseline.");
       return;
     }

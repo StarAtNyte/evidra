@@ -21,7 +21,7 @@ export function selectFinalCandidate(store: ResearchStore, metricName: string, d
 
 /** Candidates for the final output, best first: validated ones ahead of unvalidated, then by recorded
  * metric; unvalidated ones only if they beat the baseline. One entry per worktree (its best run). */
-export function rankFinalCandidates(store: ResearchStore, metricName: string, direction: "maximize" | "minimize", baselineMetric: number | undefined, limit: number): FinalCandidate[] {
+export function rankFinalCandidates(store: ResearchStore, metricName: string, direction: "maximize" | "minimize", baselineMetric: number | undefined, limit: number, score?: (metrics: Record<string, unknown>) => number | undefined): FinalCandidate[] {
   const accepted = new Set(store.eventsByType("experiment.validation.assessed")
     .filter((event) => Boolean((event.payload as { acceptance?: { accepted?: unknown } }).acceptance?.accepted))
     .map((event) => (event.payload as { experimentId?: unknown }).experimentId)
@@ -34,7 +34,8 @@ export function rankFinalCandidates(store: ResearchStore, metricName: string, di
     if (typeof payload.runId !== "string" || typeof payload.worktreePath !== "string" || !existsSync(payload.worktreePath)) continue;
     const run = runs.get(payload.runId);
     const runPayload = run?.payload as { exitCode?: unknown; metrics?: Record<string, unknown> } | undefined;
-    const metric = Number(runPayload?.metrics?.[metricName]);
+    // An optional score (e.g. a transfer-adjusted expected real score) replaces the raw proxy for ranking.
+    const metric = score ? Number(score(runPayload?.metrics ?? {})) : Number(runPayload?.metrics?.[metricName]);
     if (!run || runPayload?.exitCode !== 0 || !Number.isFinite(metric)) continue;
     const isAccepted = accepted.has(experiment.id) || (typeof payload.parent === "string" && accepted.has(payload.parent));
     candidates.push({ experimentId: experiment.id, runId: run.id, metric, accepted: isAccepted, worktreePath: payload.worktreePath });
