@@ -14456,6 +14456,22 @@ test("provider transcripts capture prompt, raw events, and outcome; evidence pac
     const listing = execFileSync("tar", ["-tzf", join(dir, "evidence", "trajectory.tar.gz")], { encoding: "utf8" });
     assert.match(listing, /transcripts\//);
     assert.match(listing, /events\.export\.jsonl/);
+
+    // A past campaign is packed with the code it ran under, not today's HEAD.
+    const locked = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+    execFileSync("git", ["tag", "lock-1"], { cwd: dir });
+    writeFileSync(join(dir, "competition.json"), "{\"changed\": true}\n");
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "later"], { cwd: dir });
+    const pastStore = new Store(join(dir, ".sota", "database.sqlite"));
+    packEvidence({ store: pastStore, stateDirectory: join(dir, ".sota"), projectRoot: dir, evidraRoot: dir, evidraVersion: "test", competitionPath: join(dir, "competition.json"), output: join(dir, "evidence-past"), evidraRef: "lock-1", projectRef: "lock-1" });
+    pastStore.close();
+    execFileSync("tar", ["-xzf", join(dir, "evidence-past", "harness.tar.gz"), "-C", join(dir, "evidence-past")]);
+    const lock = JSON.parse(readFileSync(join(dir, "evidence-past", "harness", "lock.json"), "utf8"));
+    assert.equal(lock.evidraRef, "lock-1");
+    assert.equal(lock.evidraCommit, locked);
+    assert.equal(lock.projectCommit, locked);
+    assert.equal(readFileSync(join(dir, "evidence-past", "harness", "competition.json"), "utf8"), "{}\n");
+    assert.throws(() => packEvidence({ store: new Store(join(dir, ".sota", "database.sqlite")), stateDirectory: join(dir, ".sota"), projectRoot: dir, evidraRoot: dir, evidraVersion: "test", output: join(dir, "evidence-bad"), evidraRef: "no-such-ref" }), /cannot resolve git ref/);
   } finally {
     if (previous === undefined) delete process.env.EVIDRA_TRANSCRIPT_DIR; else process.env.EVIDRA_TRANSCRIPT_DIR = previous;
     rmSync(dir, { recursive: true, force: true });

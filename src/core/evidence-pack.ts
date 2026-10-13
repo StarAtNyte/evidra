@@ -60,6 +60,9 @@ export function packEvidence(input: {
   evidraVersion: string;
   competitionPath?: string;
   output: string;
+  /** Git refs to archive instead of HEAD, e.g. the lock tag a past campaign ran under. */
+  evidraRef?: string;
+  projectRef?: string;
 }): EvidencePackResult {
   const out = input.output;
   rmSync(out, { recursive: true, force: true });
@@ -94,23 +97,34 @@ export function packEvidence(input: {
   // Harness: the exact Evidra and project code that ran, plus a lock record.
   const harness = join(staging, "harness");
   mkdirSync(harness, { recursive: true });
-  const archive = (repo: string, name: string): void => {
-    const head = git(["rev-parse", "HEAD"], repo);
-    if (!head) return;
-    execFileSync("git", ["-C", repo, "archive", "--format=tar.gz", "-o", join(harness, `${name}.tar.gz`), "HEAD"]);
-    const diff = git(["diff", "HEAD"], repo);
+  const evidraRef = input.evidraRef ?? "HEAD";
+  const projectRef = input.projectRef ?? "HEAD";
+  const archive = (repo: string, name: string, ref: string): void => {
+    const commit = git(["rev-parse", `${ref}^{commit}`], repo);
+    if (!commit) {
+      if (ref !== "HEAD") throw new Error(`${name}: cannot resolve git ref ${ref}`);
+      return;
+    }
+    execFileSync("git", ["-C", repo, "archive", "--format=tar.gz", "-o", join(harness, `${name}.tar.gz`), commit]);
+    // Uncommitted changes describe the working tree, so they only belong with a HEAD archive.
+    const diff = ref === "HEAD" ? git(["diff", "HEAD"], repo) : "";
     if (diff) writeFileSync(join(harness, `${name}.uncommitted.diff`), diff);
   };
-  archive(input.evidraRoot, "evidra");
-  archive(input.projectRoot, "project");
-  const competition = input.competitionPath && existsSync(input.competitionPath) ? readFileSync(input.competitionPath) : undefined;
+  archive(input.evidraRoot, "evidra", evidraRef);
+  archive(input.projectRoot, "project", projectRef);
+  const competitionAtRef = projectRef !== "HEAD" && input.competitionPath
+    ? (() => { try { return execFileSync("git", ["-C", input.projectRoot, "show", `${projectRef}:${relative(input.projectRoot, input.competitionPath!)}`], { maxBuffer: 16 * 1024 * 1024 }); } catch { return undefined; } })()
+    : undefined;
+  const competition = competitionAtRef ?? (input.competitionPath && existsSync(input.competitionPath) ? readFileSync(input.competitionPath) : undefined);
   const campaign = input.store.campaign() ?? null;
   writeFileSync(join(harness, "lock.json"), `${JSON.stringify({
     evidraVersion: input.evidraVersion,
-    evidraCommit: git(["rev-parse", "HEAD"], input.evidraRoot) || null,
-    evidraDirty: Boolean(git(["status", "--porcelain"], input.evidraRoot)),
-    projectCommit: git(["rev-parse", "HEAD"], input.projectRoot) || null,
-    projectDirty: Boolean(git(["status", "--porcelain", "--untracked-files=no"], input.projectRoot)),
+    evidraRef,
+    evidraCommit: git(["rev-parse", `${evidraRef}^{commit}`], input.evidraRoot) || null,
+    evidraDirty: evidraRef === "HEAD" && Boolean(git(["status", "--porcelain"], input.evidraRoot)),
+    projectRef,
+    projectCommit: git(["rev-parse", `${projectRef}^{commit}`], input.projectRoot) || null,
+    projectDirty: projectRef === "HEAD" && Boolean(git(["status", "--porcelain", "--untracked-files=no"], input.projectRoot)),
     competitionSha256: competition ? createHash("sha256").update(competition).digest("hex") : null,
     campaignRuntime: campaign,
     packedAt: new Date().toISOString(),

@@ -2599,7 +2599,9 @@ const evidence = new Command("evidence").description("Inspect and verify durable
 evidence.command("pack")
   .description("Package trajectory, prompts, and harness for competition evidence upload")
   .option("-o, --output <dir>", "output directory", join(".sota", "evidence"))
-  .action((options: { output: string }) => {
+  .option("--evidra-ref <ref>", "Evidra git ref to archive as the harness (for a past campaign, its lock tag)")
+  .option("--project-ref <ref>", "project git ref to archive (for a past campaign, its lock tag)")
+  .action((options: { output: string; evidraRef?: string; projectRef?: string }) => {
     const store = new ResearchStore(statePath);
     try {
       const result = packEvidence({
@@ -2610,6 +2612,8 @@ evidence.command("pack")
         evidraVersion: evidraVersion(),
         competitionPath: join(root, "competition.json"),
         output: resolve(root, options.output),
+        evidraRef: options.evidraRef,
+        projectRef: options.projectRef,
       });
       console.log(`Evidence package: ${result.directory}\nTranscripts ${result.transcripts} · prompts ${result.prompts}`);
       for (const file of result.files) console.log(`  ${file.name.padEnd(28)} ${(file.bytes / 1e6).toFixed(1).padStart(8)} MB  ${file.sha256.slice(0, 16)}`);
