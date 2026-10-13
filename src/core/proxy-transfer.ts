@@ -76,11 +76,14 @@ export function calibrateProxyTransfer(components: ProxyTransferComponent[], obs
   return { schemaVersion: 1, observations: observations.length, components: rows };
 }
 
-/** Expected external total for a proxy breakdown under the calibration; undefined if a component is missing. */
-export function expectedExternalScore(components: ProxyTransferComponent[], calibration: ProxyTransferCalibration, metrics: Record<string, unknown>): number | undefined {
+/** Expected external total for a proxy breakdown under the calibration. A component the run did not
+ * score (a screen on a subset of boards) takes its value from `fallback`, normally the baseline, since
+ * an unchanged component scores what the baseline did; undefined if it is missing from both. */
+export function expectedExternalScore(components: ProxyTransferComponent[], calibration: ProxyTransferCalibration, metrics: Record<string, unknown>, fallback: Record<string, unknown> = {}): number | undefined {
   let total = 0;
   for (const component of components) {
-    const value = Number(metrics[component.proxy]);
+    const own = Number(metrics[component.proxy]);
+    const value = Number.isFinite(own) ? own : Number(fallback[component.proxy]);
     if (!Number.isFinite(value)) return undefined;
     const beta = calibration.components.find((row) => row.proxy === component.proxy)?.beta ?? PRIOR_BETA;
     total += component.weight * (component.floor + beta * (value - component.floor));

@@ -14603,6 +14603,8 @@ test("proxy-transfer calibration learns which proxy gains reach the real score",
   const onlyB = expectedExternalScore(components, calibration, { board_A: 50, board_B: 60 });
   assert.ok(onlyB > onlyA);
   assert.equal(expectedExternalScore(components, calibration, { board_A: 60 }), undefined);
+  // A screen that scored only board_A takes board_B from the baseline.
+  assert.equal(expectedExternalScore(components, calibration, { board_A: 60 }, { board_A: 50, board_B: 50 }), expectedExternalScore(components, calibration, { board_A: 60, board_B: 50 }));
   assert.match(proxyTransferGuidance(calibration, 101), /UNTRUSTED/);
   assert.equal(proxyTransferGuidance(calibrateProxyTransfer(components, [])), "");
   const dir = mkdtempSync(join(tmpdir(), "evidra-transfer-"));

@@ -6997,7 +6997,12 @@ function loadProxyTransfer(config: ReturnType<typeof activeCompetition>["config"
   if (!transfer) return undefined;
   const calibration = calibrateProxyTransfer(transfer.components, readTransferObservations(resolve(root, transfer.observationsPath)));
   if (!calibration.observations) return undefined;
-  return { calibration, score: (metrics) => expectedExternalScore(transfer.components, calibration, metrics) };
+  // Board screens score only some components; the rest are unchanged from the baseline.
+  const store = new ResearchStore(statePath);
+  const baselinePayload = store.eventsByType("baseline.completed").at(-1)?.payload as { stdout?: string } | undefined;
+  store.close();
+  const baselineMetrics = baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, config.metric.name).metrics : {};
+  return { calibration, score: (metrics) => expectedExternalScore(transfer.components, calibration, metrics, baselineMetrics) };
 }
 
 /** Build final artifacts from the campaign's own best experiment, without a person in the loop. */
