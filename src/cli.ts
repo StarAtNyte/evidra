@@ -37,7 +37,7 @@ import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { renderTimeline } from "./core/timeline.js";
 import { activeContradictionEdges, latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
 import { detectStagnation } from "./core/stagnation.js";
-import { assessGoalProgress } from "./core/progress.js";
+import { assessGoalProgress, stalledPivotCycles } from "./core/progress.js";
 import { assessStopPolicy } from "./core/stop-policy.js";
 import { classifyVerifier } from "./core/formal-verification.js";
 import { detectRouteDrift } from "./core/drift-detection.js";
@@ -5532,20 +5532,22 @@ research
       const priorStagnation = detectStagnation(recordsForCampaign(store.decisions(), campaign.startedAt).map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3));
       const progressMetricName = adapter.config.metric.name;
       const progressBaselinePayload = store.eventsByType("baseline.completed").at(-1)?.payload as { metric?: unknown; stdout?: string } | undefined;
+      const progressRuns = recordsForCampaign(store.runs(), campaign.startedAt).flatMap((run) => {
+        const payload = run.payload as { exitCode?: unknown; metrics?: Record<string, unknown> };
+        const metric = Number(payload?.metrics?.[progressMetricName]);
+        return payload?.exitCode === 0 && Number.isFinite(metric) ? [{ createdAt: run.createdAt, metric }] : [];
+      });
       const goalProgress = assessGoalProgress({
         direction: adapter.config.metric.direction,
         baseline: typeof progressBaselinePayload?.metric === "number" ? progressBaselinePayload.metric : progressBaselinePayload?.stdout ? parseMetricOutput(progressBaselinePayload.stdout, progressMetricName).metrics[progressMetricName] : undefined,
         target: adapter.config.metric.target,
         windowRuns: adapter.config.metric.plateauWindowRuns,
         minGain: adapter.config.metric.minimumProgress,
-        runs: recordsForCampaign(store.runs(), campaign.startedAt).flatMap((run) => {
-          const payload = run.payload as { exitCode?: unknown; metrics?: Record<string, unknown> };
-          const metric = Number(payload?.metrics?.[progressMetricName]);
-          return payload?.exitCode === 0 && Number.isFinite(metric) ? [{ createdAt: run.createdAt, metric }] : [];
-        }),
+        stalledPivotCycles: stalledPivotCycles(recordsForCampaign(store.eventsByType("research.goal_progress"), campaign.startedAt), progressRuns.length),
+        runs: progressRuns,
       });
       store.appendEvent("research.goal_progress", { cycle, progress: goalProgress });
-      if (goalProgress.pivotRequired) console.log(`Research · goal progress plateaued (best ${goalProgress.best}, target ${goalProgress.target ?? "none"}); pivoting to a different method family.`);
+      if (goalProgress.pivotRequired) console.log(`Research · goal progress plateaued (best ${goalProgress.best}, target ${goalProgress.target ?? "none"}); ${goalProgress.mustRun ? "earlier pivots produced no experiment, so this cycle must run one" : "pivoting to a different method family"}.`);
       const adaptiveHarness = deriveAdaptiveHarnessPolicy({
         autonomy,
         phase: phaseGoal?.phase,

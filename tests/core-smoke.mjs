@@ -83,7 +83,7 @@ import { playbookFromMethod, verifiedPlaybooksFromEvents } from "../dist/core/pl
 import { failedDirectionsFromExperiments } from "../dist/core/failure-memory.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../dist/core/experiment-patches.js";
 import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js";
-import { assessGoalProgress } from "../dist/core/progress.js";
+import { assessGoalProgress, stalledPivotCycles } from "../dist/core/progress.js";
 import { deriveAdaptiveHarnessPolicy as deriveAdaptivePolicyForPlateau } from "../dist/core/adaptive-harness.js";
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { materializeResearchDecision } from "../dist/core/research-graph.js";
@@ -14503,4 +14503,23 @@ test("goal progress flags a plateau far from the target and drives an exploratio
   assert.equal(policy.profile, "exploration");
   assert.equal(policy.preferDiverseSearch, true);
   assert.ok(policy.reasons.some((reason) => reason.includes("metric plateau")));
+});
+
+test("repeated planning-only pivots escalate to a mandatory experiment", () => {
+  const at = (index) => new Date(Date.UTC(2026, 9, 13, 1, index)).toISOString();
+  const runs = Array.from({ length: 10 }, (_, index) => ({ createdAt: at(index), metric: 153 + (index % 3) }));
+  const event = (index, pivotRequired, count) => ({ createdAt: at(20 + index), payload: { progress: { pivotRequired, runs: count } } });
+  assert.equal(stalledPivotCycles([], 10), 0);
+  assert.equal(stalledPivotCycles([event(0, true, 10), event(1, true, 10)], 10), 2);
+  // A new run since the last pivot resets the count; so does a cycle without a pivot.
+  assert.equal(stalledPivotCycles([event(0, true, 9), event(1, true, 10)], 10), 1);
+  assert.equal(stalledPivotCycles([event(0, true, 10), event(1, false, 10)], 10), 0);
+  const first = assessGoalProgress({ direction: "maximize", baseline: 151.7, target: 215, runs, stalledPivotCycles: 0 });
+  assert.equal(first.pivotRequired, true);
+  assert.equal(first.mustRun, false);
+  assert.doesNotMatch(first.directive, /not acceptable|Decide `run`/);
+  const repeated = assessGoalProgress({ direction: "maximize", baseline: 151.7, target: 215, runs, stalledPivotCycles: 2 });
+  assert.equal(repeated.mustRun, true);
+  assert.match(repeated.directive, /pivot cycle 3 without a new experiment/);
+  assert.match(repeated.directive, /Decide `run` this cycle/);
 });
