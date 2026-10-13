@@ -37,6 +37,12 @@ export const CompetitionConfigSchema = z.object({
   metric: z.object({
     name: z.string(),
     direction: z.enum(["minimize", "maximize"]),
+    /** Value the campaign is trying to reach; drives goal-progress plateau detection. */
+    target: z.number().finite().optional(),
+    /** Recent completed runs that must fail to move the best result before the method family counts as plateaued. */
+    plateauWindowRuns: z.number().int().min(3).max(50).optional(),
+    /** Smallest improvement of the best result that counts as progress (defaults to 5% of the baseline-to-target distance). */
+    minimumProgress: z.number().positive().optional(),
   }),
   /** Optional non-primary objectives; promotion can require they do not regress. */
   secondaryMetrics: z.array(z.object({

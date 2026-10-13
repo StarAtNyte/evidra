@@ -83,6 +83,8 @@ import { playbookFromMethod, verifiedPlaybooksFromEvents } from "../dist/core/pl
 import { failedDirectionsFromExperiments } from "../dist/core/failure-memory.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../dist/core/experiment-patches.js";
 import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js";
+import { assessGoalProgress } from "../dist/core/progress.js";
+import { deriveAdaptiveHarnessPolicy as deriveAdaptivePolicyForPlateau } from "../dist/core/adaptive-harness.js";
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { materializeResearchDecision } from "../dist/core/research-graph.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
@@ -14469,4 +14471,27 @@ test("claude turn completes on its result even if background jobs keep the CLI a
     if (previous === undefined) delete process.env.EVIDRA_CLAUDE_BIN; else process.env.EVIDRA_CLAUDE_BIN = previous;
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("goal progress flags a plateau far from the target and drives an exploration pivot", () => {
+  const at = (index) => new Date(Date.UTC(2026, 9, 13, 0, index)).toISOString();
+  const flat = [151.8, 153.6, 152.1, 153.6, 154.9, 153.6, 152.0, 153.1, 154.2, 153.9].map((metric, index) => ({ createdAt: at(index), metric }));
+  const stalled = assessGoalProgress({ direction: "maximize", baseline: 151.7, target: 210, runs: flat });
+  assert.equal(stalled.plateau, true);
+  assert.equal(stalled.pivotRequired, true);
+  assert.match(stalled.directive, /structurally different/);
+  // A run that jumps by several progress units inside the window is progress.
+  const moving = assessGoalProgress({ direction: "maximize", baseline: 151.7, target: 210, runs: [...flat.slice(0, 6), { createdAt: at(20), metric: 170 }] , windowRuns: 4 });
+  assert.equal(moving.plateau, false);
+  assert.equal(moving.directive, null);
+  // Too few runs to judge, and near-target plateaus, do not force a pivot.
+  assert.equal(assessGoalProgress({ direction: "maximize", baseline: 151.7, target: 210, runs: flat.slice(0, 3) }).plateau, false);
+  assert.equal(assessGoalProgress({ direction: "maximize", baseline: 100, target: 110, runs: flat.map((run) => ({ ...run, metric: 109 })) }).pivotRequired, false);
+  // Minimisation uses the opposite sign.
+  const loss = assessGoalProgress({ direction: "minimize", baseline: 1, target: 0.5, runs: flat.map((run, index) => ({ ...run, metric: 0.99 - index * 0.0001 })) });
+  assert.equal(loss.pivotRequired, true);
+  const policy = deriveAdaptivePolicyForPlateau({ autonomy: "yolo", quality: [], metricPlateau: true, budgetRemainingMinutes: 600 });
+  assert.equal(policy.profile, "exploration");
+  assert.equal(policy.preferDiverseSearch, true);
+  assert.ok(policy.reasons.some((reason) => reason.includes("metric plateau")));
 });

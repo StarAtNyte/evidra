@@ -22,6 +22,8 @@ export interface AdaptiveHarnessInput {
   environmentDrift?: boolean;
   /** The controller repeated the same active decision and must widen search. */
   searchStagnation?: boolean;
+  /** Completed runs stopped moving the best metric while still far from the target. */
+  metricPlateau?: boolean;
   /** The deterministic allocator's current focus, derived from durable evidence. */
   allocationFocus?: "breadth" | "tool-reliability" | "evidence-validation" | "recovery" | "goal-clarity" | "termination";
   allocationPriority?: "normal" | "high" | "critical";
@@ -201,6 +203,17 @@ export function deriveAdaptiveHarnessPolicy(input: AdaptiveHarnessInput): Adapti
     maxToolRounds = Math.max(maxToolRounds, 8);
     maxToolAttempts = Math.max(maxToolAttempts, 3);
     reasons.push("search stagnation: widen formulation families and use an alternate route before pausing");
+  }
+  if (input.metricPlateau) {
+    // New experiments keep landing within noise of the incumbent. More review
+    // or replication of that family cannot close the gap; a different
+    // formulation can. Spend tool rounds on research breadth instead.
+    profile = "exploration";
+    preferDiverseSearch = true;
+    recoveryRoute = "alternate_route";
+    maxToolRounds = Math.max(maxToolRounds, 10);
+    maxToolAttempts = Math.max(maxToolAttempts, 3);
+    reasons.push("metric plateau far from target: pivot to a structurally different method family and broaden research");
   }
   if (input.environmentDrift) {
     profile = "recovery";
