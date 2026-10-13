@@ -5567,10 +5567,14 @@ research
       const priorStagnation = detectStagnation(recordsForCampaign(store.decisions(), campaign.startedAt).map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3));
       const progressMetricName = adapter.config.metric.name;
       const progressBaselinePayload = store.eventsByType("baseline.completed").at(-1)?.payload as { metric?: unknown; stdout?: string } | undefined;
+      // Only full evaluations are comparable: a screen that scores a subset of the evaluation (it omits a
+      // declared secondary metric) has a lower total by construction and would read as a stalled run.
+      const requiredProgressMetrics = adapter.config.secondaryMetrics.map((metric) => metric.name);
       const progressRuns = recordsForCampaign(store.runs(), campaign.startedAt).flatMap((run) => {
         const payload = run.payload as { exitCode?: unknown; metrics?: Record<string, unknown> };
         const metric = Number(payload?.metrics?.[progressMetricName]);
-        return payload?.exitCode === 0 && Number.isFinite(metric) ? [{ createdAt: run.createdAt, metric }] : [];
+        const complete = requiredProgressMetrics.every((name) => Number.isFinite(Number(payload?.metrics?.[name])));
+        return payload?.exitCode === 0 && Number.isFinite(metric) && complete ? [{ createdAt: run.createdAt, metric }] : [];
       });
       const goalProgress = assessGoalProgress({
         direction: adapter.config.metric.direction,
