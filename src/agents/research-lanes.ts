@@ -1373,7 +1373,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     completed.releaseAgentLane(role, leaseId, "idle");
     completed.updateTask(laneTaskId, "completed", { role, status: "completed", evidenceIds: verifiedEvidenceIds });
     completed.recordAgentActivity({ role, taskId: laneTaskId, kind: "completed", message: "Lane completed with a validated report", metadata: { evidenceIds: verifiedEvidenceIds, confidence: report.confidence } });
-    for (const directiveId of receivedDirectiveIds) completed.recordAgentDirectiveOutcome(directiveId, role, "completed", report.summary);
+    for (const directiveId of receivedDirectiveIds) completed.settleAgentDirective(directiveId, role, "completed", report.summary);
     completed.close();
     return { ...report, verifiedEvidenceIds };
   } catch (error) {
@@ -1384,7 +1384,7 @@ async function runLane(role: ResearchLaneRole, objective: string, context: Recor
     failed.releaseAgentLane(role, leaseId, "failed", message);
     failed.updateTask(laneTaskId, "failed", { role, status: "failed", error: message });
     failed.recordAgentActivity({ role, taskId: laneTaskId, kind: "failed", message: `Lane failed: ${message}` });
-    for (const directiveId of receivedDirectiveIds) failed.recordAgentDirectiveOutcome(directiveId, role, "failed", message);
+    for (const directiveId of receivedDirectiveIds) failed.settleAgentDirective(directiveId, role, "failed", message);
     failed.close();
     return report;
   } finally {

@@ -1616,6 +1616,15 @@ export class ResearchStore {
     this.appendEvent("agent.directive.outcome", { directiveId, role: normalizedRole, status, message: normalizedMessage });
   }
 
+  /** Record a terminal outcome unless another path (stale-handoff recovery, an earlier attempt) already
+   * settled the directive. A recipient finishing late must not crash its caller over a closed handoff. */
+  settleAgentDirective(directiveId: number, role: string, status: Exclude<AgentDirectiveOutcomeStatus, "acknowledged">, message: string): boolean {
+    const existing = this.agentDirectiveOutcomes(256).find((outcome) => outcome.directiveId === directiveId);
+    if (existing && existing.status !== "acknowledged") return false;
+    this.recordAgentDirectiveOutcome(directiveId, role, status, message);
+    return true;
+  }
+
   agentDirectiveOutcomes(limit = 64): AgentDirectiveOutcome[] {
     const latest = new Map<number, AgentDirectiveOutcome>();
     for (const event of this.eventsByType("agent.directive.outcome", Math.max(1, Math.min(256, limit * 2)))) {

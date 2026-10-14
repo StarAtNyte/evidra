@@ -1194,6 +1194,9 @@ test("agent organization gives every lane a responsibility and reporting line", 
     assert.deepEqual(store.recoverStaleAgentDirectives(1, Date.now() + 2_000), [directive.id]);
     assert.equal(store.agentDirectiveOutcomes()[0]?.status, "failed");
     assert.throws(() => store.recordAgentDirectiveOutcome(directive.id, "validation scientist", "completed", "split rechecked; no leakage found"), /terminal failed/);
+    // A lane that finishes after stale-handoff recovery must not crash on the already-settled directive.
+    assert.equal(store.settleAgentDirective(directive.id, "validation scientist", "failed", "lane failed late"), false);
+    assert.equal(store.agentDirectiveOutcomes().find((outcome) => outcome.directiveId === directive.id)?.status, "failed");
     const completedDirective = store.enqueueAgentDirective("validation scientist", "record the successful split review", null, "research director");
     store.consumeAgentDirectives("validation scientist");
     store.recordAgentDirectiveOutcome(completedDirective.id, "validation scientist", "completed", "split rechecked; no leakage found");
