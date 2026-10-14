@@ -14652,3 +14652,37 @@ test("final ranking can use a transfer-adjusted score instead of the raw proxy",
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("campaign lessons are computed from recorded outcomes and reach the next campaign's guidance", async () => {
+  const { distilCampaignLessons } = await import("../dist/core/campaign-lessons.js");
+  const run = (experimentId, total, a, b, status = "completed") => ({ experimentId, status, createdAt: "2026-10-13T12:00:00Z", metrics: { total, a, ...(b === undefined ? {} : { b }) } });
+  const text = distilCampaignLessons({
+    label: "trial-x",
+    metric: { name: "total", direction: "maximize" },
+    components: ["a", "b"],
+    baseline: 150,
+    runs: [run("e1", 154, 52, 50), run("e1r", 157, 55, 50), run("e2", 152, 50, 50), run("e3", 160, 60), { experimentId: "e4", status: "failed", createdAt: "2026-10-13T12:00:00Z", metrics: {} }],
+    experiments: [{ id: "e1", hypothesisId: "h1" }, { id: "e1r", hypothesisId: "h1" }, { id: "e2", hypothesisId: "h2" }, { id: "e3", hypothesisId: "h3" }],
+    hypotheses: [{ id: "h1", title: "Field re-pairing", formulationFamily: "repair" }, { id: "h2", title: "Bures transport", formulationFamily: "transport" }],
+    goalProgress: [{ pivotRequired: false, runs: 2 }, { pivotRequired: true, runs: 3 }, { pivotRequired: true, runs: 3 }, { pivotRequired: true, runs: 3 }],
+    failures: ["Modal timeout", "Modal  timeout"],
+  });
+  assert.match(text, /3 full evaluations, 1 partial screens, 1 failed/);
+  assert.match(text, /Best total: 157 \(\+7 over baseline 150\), from "Field re-pairing" \[repair\]/);
+  assert.match(text, /median of 3/);
+  assert.match(text, /- repair: best 157, \+7 vs baseline over 2 run\(s\)/);
+  assert.match(text, /No experiment moved these by even 0\.5: b\./);
+  assert.match(text, /2 ended without a new run\. Too many cycles only planned/);
+  assert.equal(text.match(/Modal timeout/g)?.length, 1);
+
+  const { loadProjectGuidance } = await import("../dist/core/project-guidance.js");
+  const root = mkdtempSync(join(tmpdir(), "evidra-lessons-"));
+  try {
+    writeFileSync(join(root, "EVIDRA.md"), "brief");
+    mkdirSync(join(root, ".evidra", "lessons"), { recursive: true });
+    for (const name of ["t1.md", "t2.md", "t3.md"]) writeFileSync(join(root, ".evidra", "lessons", name), `lessons ${name}`);
+    const guidance = loadProjectGuidance(root);
+    assert.equal(guidance?.paths.filter((path) => path.startsWith(".evidra/lessons/")).length, 2);
+    assert.equal(guidance?.paths[0], "EVIDRA.md");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

@@ -31,6 +31,22 @@ function sharedSkillFiles(workspace: string, skillAllowlist?: readonly string[])
   }
 }
 
+/** Lessons distilled from earlier campaigns (`evidra lessons distil`), newest first, at most two. */
+function lessonFiles(workspace: string): string[] {
+  const directory = join(workspace, ".evidra", "lessons");
+  if (!existsSync(directory)) return [];
+  try {
+    return readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".md"))
+      .map((entry) => ({ name: entry.name, mtime: lstatSync(join(directory, entry.name)).mtimeMs }))
+      .sort((left, right) => right.mtime - left.mtime || right.name.localeCompare(left.name))
+      .slice(0, 2)
+      .map((entry) => `.evidra/lessons/${entry.name}`);
+  } catch {
+    return [];
+  }
+}
+
 /** Load explicit operator guidance without confusing it with observed evidence. */
 export function loadProjectGuidance(root: string, role?: string, skillAllowlist?: readonly string[]): ProjectGuidance | undefined {
   const workspace = resolve(root);
@@ -41,7 +57,7 @@ export function loadProjectGuidance(root: string, role?: string, skillAllowlist?
   const rolePath = roleSlug ? `.evidra/roles/${roleSlug}.md` : undefined;
   const roleFile = rolePath ? join(workspace, rolePath) : undefined;
   const roleReserve = roleFile && existsSync(roleFile) && lstatSync(roleFile).isFile() ? Math.min(ROLE_RESERVE_BYTES, readFileSync(roleFile, "utf8").length + 64) : 0;
-  const guidanceFiles = [...GUIDANCE_FILES, ...sharedSkillFiles(workspace, skillAllowlist), ...(rolePath ? [rolePath] : [])];
+  const guidanceFiles = [...GUIDANCE_FILES, ...lessonFiles(workspace), ...sharedSkillFiles(workspace, skillAllowlist), ...(rolePath ? [rolePath] : [])];
   for (const relativePath of guidanceFiles) {
     const path = join(workspace, relativePath);
     if (!existsSync(path) || !lstatSync(path).isFile()) continue;

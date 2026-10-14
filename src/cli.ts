@@ -91,6 +91,7 @@ import { evidraVersion } from "./version.js";
 import { autonomyPolicy, type AutonomyLevel } from "./core/permissions.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "./core/capability-router.js";
 import { allocateNextResearch } from "./core/allocation.js";
+import { distilCampaignLessons } from "./core/campaign-lessons.js";
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, experienceReplayWorld, selectCurriculum } from "./core/experience.js";
 import { executionPlaybookFromExperience } from "./core/execution-playbooks.js";
 import { evaluateReducedPromotion, retryRouteIsNew, type ExperimentRetryRoute } from "./core/scheduler.js";
@@ -2625,6 +2626,50 @@ transfer.command("show").description("Show the current proxy-transfer calibratio
   console.log(calibration.observations ? proxyTransferGuidance(calibration) : "No real evaluations recorded yet.");
 });
 program.addCommand(transfer);
+
+const lessons = new Command("lessons").description("Carry a finished campaign's outcomes into the next campaign");
+lessons.command("distil")
+  .description("Write .evidra/lessons/<label>.md from the campaign record; project guidance loads it next time")
+  .option("--label <label>", "name for this campaign's lessons (default: campaign start date)")
+  .option("--out <path>", "write here instead of .evidra/lessons/<label>.md")
+  .action((options: { label?: string; out?: string }) => {
+    const config = activeCompetition().config;
+    const store = new ResearchStore(statePath);
+    try {
+      const campaign = store.campaign() as { goal?: string; startedAt?: string } | undefined;
+      const label = (options.label ?? campaign?.startedAt?.slice(0, 16).replace(/[:T]/g, "-") ?? new Date().toISOString().slice(0, 10)).replace(/[^A-Za-z0-9._-]+/g, "-");
+      const metricName = config.metric.name;
+      const baselinePayload = store.eventsByType("baseline.completed").at(-1)?.payload as { metric?: unknown; stdout?: string } | undefined;
+      const baseline = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, metricName).metrics[metricName] : undefined;
+      const numeric = (value: unknown): Record<string, number> => Object.fromEntries(Object.entries(value && typeof value === "object" ? value as Record<string, unknown> : {}).filter(([, entry]) => typeof entry === "number" && Number.isFinite(entry))) as Record<string, number>;
+      const runs = store.runs().map((run) => {
+        const payload = (run.payload ?? {}) as { metrics?: unknown; error?: unknown };
+        return { experimentId: run.experimentId, status: run.status, createdAt: run.createdAt, metrics: numeric(payload.metrics), error: typeof payload.error === "string" ? payload.error : undefined };
+      });
+      const text = distilCampaignLessons({
+        label,
+        goal: campaign?.goal,
+        metric: { name: metricName, direction: config.metric.direction },
+        components: config.proxyTransfer?.components.map((component) => component.proxy) ?? config.secondaryMetrics.map((objective) => objective.name),
+        ...(typeof baseline === "number" && Number.isFinite(baseline) ? { baseline } : {}),
+        runs,
+        experiments: store.experiments().map((entry) => ({ id: entry.id, hypothesisId: (entry.payload as { hypothesisId?: string } | undefined)?.hypothesisId })),
+        hypotheses: store.hypotheses().map((entry) => {
+          const payload = (entry.payload ?? {}) as { title?: string; formulationFamily?: string };
+          return { id: entry.id, title: payload.title, formulationFamily: payload.formulationFamily };
+        }),
+        goalProgress: store.eventsByType("research.goal_progress", 512).reverse().map((event) => ((event.payload ?? {}) as { progress?: { pivotRequired?: boolean; runs?: number } }).progress ?? {}),
+        failures: runs.flatMap((run) => run.status === "failed" && run.error ? [run.error] : []),
+      });
+      const path = resolve(root, options.out ?? join(".evidra", "lessons", `${label}.md`));
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, text);
+      console.log(`${text}\nWrote ${relative(root, path)}`);
+    } finally {
+      store.close();
+    }
+  });
+program.addCommand(lessons);
 
 const evidence = new Command("evidence").description("Inspect and verify durable research evidence");
 evidence.command("pack")

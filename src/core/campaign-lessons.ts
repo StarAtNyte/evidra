@@ -1,0 +1,146 @@
+/**
+ * Cross-campaign lessons.
+ *
+ * A campaign ends with a durable record (runs, hypotheses, goal-progress assessments, failures) that
+ * the next campaign on the same problem never sees: it restarts from the operator's brief and pays
+ * again to learn which method families plateau, how noisy the evaluator is, and which component
+ * each family moved. This module distils that record into a short, evidence-backed lessons file
+ * (after the experience library in Harness^2) that project guidance loads on the next campaign. It
+ * is deterministic: every statement is computed from recorded outcomes, never generated, so it
+ * cannot carry a model's unsupported claims forward.
+ */
+
+export interface LessonRun {
+  experimentId: string;
+  status: string;
+  createdAt: string;
+  metrics: Record<string, number>;
+}
+
+export interface LessonExperiment {
+  id: string;
+  hypothesisId?: string;
+}
+
+export interface LessonHypothesis {
+  id: string;
+  title?: string;
+  formulationFamily?: string;
+}
+
+export interface CampaignLessonsInput {
+  label: string;
+  goal?: string;
+  metric: { name: string; direction: "maximize" | "minimize" };
+  /** Component metrics a full evaluation reports; runs missing any of them are screens. */
+  components?: string[];
+  baseline?: number;
+  runs: LessonRun[];
+  experiments: LessonExperiment[];
+  hypotheses: LessonHypothesis[];
+  /** research.goal_progress payloads, oldest first. */
+  goalProgress?: Array<{ pivotRequired?: boolean; runs?: number }>;
+  /** Failure messages of runs and lanes. */
+  failures?: string[];
+}
+
+const MAX_LINES_PER_SECTION = 8;
+
+function fmt(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
+}
+
+export function distilCampaignLessons(input: CampaignLessonsInput): string {
+  const sign = input.metric.direction === "maximize" ? 1 : -1;
+  const better = (left: number, right: number): boolean => sign * left > sign * right;
+  const signed = (value: number): string => `${value >= 0 ? "+" : ""}${fmt(value)}`;
+  const hypothesisOf = new Map(input.experiments.map((experiment) => [experiment.id, experiment.hypothesisId]));
+  const hypothesis = new Map(input.hypotheses.map((entry) => [entry.id, entry]));
+  const describe = (experimentId: string): { key: string; title: string; family: string } => {
+    const id = hypothesisOf.get(experimentId);
+    const entry = id ? hypothesis.get(id) : undefined;
+    return { key: id ?? experimentId, title: entry?.title ?? experimentId, family: entry?.formulationFamily ?? "unlabelled" };
+  };
+  const completed = input.runs.filter((run) => run.status === "completed" && Number.isFinite(run.metrics[input.metric.name]));
+  const components = input.components ?? [];
+  const complete = completed.filter((run) => components.every((name) => Number.isFinite(run.metrics[name])));
+  const lines: string[] = [`# Lessons from campaign ${input.label}`, ""];
+  lines.push("Computed from the campaign's recorded outcomes, not from agent summaries. Use them to choose what to try first; they are evidence about this evaluator, not rules.", "");
+  if (input.goal) lines.push(`Goal: ${input.goal.slice(0, 300)}`, "");
+  const failedRuns = input.runs.filter((run) => run.status === "failed").length;
+  lines.push(`Runs: ${complete.length} full evaluations, ${completed.length - complete.length} partial screens, ${failedRuns} failed.`);
+  if (!complete.length) {
+    lines.push("No full evaluation completed; nothing to compare.");
+    return lines.join("\n") + "\n";
+  }
+
+  const metricOf = (run: LessonRun): number => run.metrics[input.metric.name];
+  const best = complete.reduce((left, right) => better(metricOf(right), metricOf(left)) ? right : left);
+  const bestInfo = describe(best.experimentId);
+  const gain = input.baseline !== undefined ? ` (${signed(sign * (metricOf(best) - input.baseline))} over baseline ${fmt(input.baseline)})` : "";
+  lines.push(`Best ${input.metric.name}: ${fmt(metricOf(best))}${gain}, from "${bestInfo.title}" [${bestInfo.family}].`, "");
+
+  // Evaluator noise: the same hypothesis evaluated more than once (replications, seeds).
+  const byHypothesis = new Map<string, number[]>();
+  for (const run of complete) {
+    const key = describe(run.experimentId).key;
+    byHypothesis.set(key, [...(byHypothesis.get(key) ?? []), metricOf(run)]);
+  }
+  const spreads = [...byHypothesis.values()].filter((values) => values.length >= 2).map((values) => Math.max(...values) - Math.min(...values)).sort((a, b) => a - b);
+  if (spreads.length) {
+    const median = spreads[Math.floor(spreads.length / 2)];
+    lines.push("## Evaluator noise", `Repeated evaluations of the same hypothesis (${spreads.length} groups) differed by a median of ${fmt(median)} and at most ${fmt(spreads.at(-1) ?? 0)} ${input.metric.name}. Treat differences below about ${fmt(median)} as noise; replicate before promoting.`, "");
+  }
+
+  // Method families: which kinds of change moved the metric.
+  const families = new Map<string, { runs: number; best: number; title: string }>();
+  for (const run of complete) {
+    const info = describe(run.experimentId);
+    const entry = families.get(info.family);
+    if (!entry) families.set(info.family, { runs: 1, best: metricOf(run), title: info.title });
+    else {
+      entry.runs += 1;
+      if (better(metricOf(run), entry.best)) { entry.best = metricOf(run); entry.title = info.title; }
+    }
+  }
+  const familyRows = [...families.entries()].sort((left, right) => sign * (right[1].best - left[1].best));
+  lines.push("## Method families (best full evaluation each)");
+  for (const [family, entry] of familyRows.slice(0, MAX_LINES_PER_SECTION)) {
+    const delta = input.baseline !== undefined ? `, ${signed(sign * (entry.best - input.baseline))} vs baseline` : "";
+    lines.push(`- ${family}: best ${fmt(entry.best)}${delta} over ${entry.runs} run(s); strongest: "${entry.title}"`);
+  }
+  lines.push("");
+
+  // Component ceilings: the best value each component reached and where, so a later campaign can
+  // combine mechanisms that each won a different component.
+  if (components.length) {
+    lines.push("## Best value per component (combine mechanisms that won different components)");
+    const flat: string[] = [];
+    for (const name of components) {
+      const values = complete.map((run) => run.metrics[name]);
+      const range = Math.max(...values) - Math.min(...values);
+      if (range < 0.5) flat.push(name);
+      const top = complete.reduce((left, right) => better(right.metrics[name], left.metrics[name]) ? right : left);
+      lines.push(`- ${name}: best ${fmt(top.metrics[name])} from "${describe(top.experimentId).title}"; best overall run has ${fmt(best.metrics[name])}; range across runs ${fmt(range)}`);
+    }
+    if (flat.length) lines.push(`No experiment moved these by even 0.5: ${flat.join(", ")}. Either the proxy cannot see changes there or every attempt missed; find out which before spending more on them.`);
+    lines.push("");
+  }
+
+  const progress = input.goalProgress ?? [];
+  if (progress.length) {
+    const pivots = progress.filter((entry) => entry.pivotRequired === true).length;
+    let idle = 0;
+    for (let index = 1; index < progress.length; index += 1) if (progress[index].runs === progress[index - 1].runs) idle += 1;
+    const advice = idle > progress.length / 3 ? " Too many cycles only planned: screen a concrete change every cycle." : "";
+    lines.push("## Use of cycles", `${progress.length} assessed cycles; ${pivots} flagged a plateau that required a different method family; ${idle} ended without a new run.${advice}`, "");
+  }
+
+  const failures = [...new Set((input.failures ?? []).map((message) => message.replace(/\s+/g, " ").trim().slice(0, 200)).filter(Boolean))];
+  if (failures.length) {
+    lines.push("## Recurrent failures");
+    for (const message of failures.slice(0, MAX_LINES_PER_SECTION)) lines.push(`- ${message}`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
