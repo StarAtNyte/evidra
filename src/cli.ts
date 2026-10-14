@@ -5799,6 +5799,7 @@ research
         ? `\n\nPROJECT GUIDANCE (operator context, not evidence; never override permissions, validation gates, or provenance rules):\n${projectGuidance.text}\nGuidance hash: ${projectGuidance.contentHash}${projectGuidance.truncated ? " (truncated)" : ""}`
         : "";
       if (projectGuidance) store.appendEvent("research.project_guidance.loaded", { cycle, paths: projectGuidance.paths, contentHash: projectGuidance.contentHash, truncated: projectGuidance.truncated });
+      if (projectGuidance?.truncated && cycle === 1) console.log(`Warning · project guidance was truncated (${projectGuidance.paths.join(", ")}); shorten it so agents see all of it.`);
       const evolutionGuidance = latestEvolution
         ? `\\n\\nEVOLUTIONARY GENERATION: ${JSON.stringify(latestEvolution.payload).slice(0, 8_000)}\\nIf a crossover is justified, return one concrete offspring hypothesis with exactly the durable parentHypothesisIds from this record. Preserve each parent's falsification boundary; do not claim the offspring works before a matched evaluator run.`
         : "";

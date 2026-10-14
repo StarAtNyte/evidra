@@ -454,6 +454,12 @@ test("project runtime guidance is bounded, hashed, and separated from evidence",
     const roleGuidance = loadProjectGuidance(root, "validation scientist");
     assert.deepEqual(roleGuidance?.paths, ["EVIDRA.md", ".evidra/instructions.md", ".evidra/roles/validation-scientist.md"]);
     assert.match(roleGuidance?.text ?? "", /held-out split/);
+    // A long shared brief must not crowd out the role's own file.
+    writeFileSync(join(root, "EVIDRA.md"), "brief line\n".repeat(6_000));
+    const crowded = loadProjectGuidance(root, "validation scientist");
+    assert.equal(crowded?.truncated, true);
+    assert.ok(crowded?.paths.includes(".evidra/roles/validation-scientist.md"));
+    assert.match(crowded?.text ?? "", /held-out split/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

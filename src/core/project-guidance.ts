@@ -10,7 +10,11 @@ export interface ProjectGuidance {
 }
 
 const GUIDANCE_FILES = ["EVIDRA.md", ".evidra/instructions.md"] as const;
-const MAX_GUIDANCE_BYTES = 16_000;
+// A research brief for a hard problem (scorer notes, prior-run feedback, ranked directions) is
+// routinely 15-25 KB; a lower cap silently dropped its tail and every role file after it.
+const MAX_GUIDANCE_BYTES = 48_000;
+/** Space kept for the role's own file so a long shared brief cannot crowd it out. */
+const ROLE_RESERVE_BYTES = 8_000;
 
 function sharedSkillFiles(workspace: string, skillAllowlist?: readonly string[]): string[] {
   const directory = join(workspace, ".evidra", "skills");
@@ -34,13 +38,17 @@ export function loadProjectGuidance(root: string, role?: string, skillAllowlist?
   const paths: string[] = [];
   let truncated = false;
   const roleSlug = role?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  const guidanceFiles = [...GUIDANCE_FILES, ...sharedSkillFiles(workspace, skillAllowlist), ...(roleSlug ? [`.evidra/roles/${roleSlug}.md`] : [])];
+  const rolePath = roleSlug ? `.evidra/roles/${roleSlug}.md` : undefined;
+  const roleFile = rolePath ? join(workspace, rolePath) : undefined;
+  const roleReserve = roleFile && existsSync(roleFile) && lstatSync(roleFile).isFile() ? Math.min(ROLE_RESERVE_BYTES, readFileSync(roleFile, "utf8").length + 64) : 0;
+  const guidanceFiles = [...GUIDANCE_FILES, ...sharedSkillFiles(workspace, skillAllowlist), ...(rolePath ? [rolePath] : [])];
   for (const relativePath of guidanceFiles) {
     const path = join(workspace, relativePath);
     if (!existsSync(path) || !lstatSync(path).isFile()) continue;
     const content = readFileSync(path, "utf8");
-    const remaining = Math.max(0, MAX_GUIDANCE_BYTES - parts.join("\n\n").length);
-    if (remaining === 0) { truncated = true; break; }
+    const limit = relativePath === rolePath ? MAX_GUIDANCE_BYTES : MAX_GUIDANCE_BYTES - roleReserve;
+    const remaining = Math.max(0, limit - parts.join("\n\n").length);
+    if (remaining === 0) { truncated = true; continue; }
     const bounded = content.slice(0, remaining);
     if (bounded.length < content.length) truncated = true;
     parts.push(`### ${relativePath}\n${bounded}`);
