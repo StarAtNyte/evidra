@@ -60,7 +60,7 @@ import { classifyProcessFailure, executorFor, mergeEvaluatorResult, parseMetricO
 import { rankFinalCandidates, runCampaignFinalize, type FinalCandidate } from "./core/finalize.js";
 import { packEvidence } from "./core/evidence-pack.js";
 import { sha256File } from "./core/evidence.js";
-import { captureImplementationSnapshot, captureVerificationSourcePin, implementationChanged, implementationEditRetryPrompt, implementationRetryPrompt, resolveImplementationPaths, seedImplementationArtifacts, seedImplementationSource, seedVerificationImplementation, verifyImplementationSnapshot, type ImplementationSnapshot, type PinnedImplementationArtifact } from "./core/implementation-guard.js";
+import { preserveInterruptedImplementation, captureImplementationSnapshot, captureVerificationSourcePin, implementationChanged, implementationEditRetryPrompt, implementationRetryPrompt, resolveImplementationPaths, seedImplementationArtifacts, seedImplementationSource, seedVerificationImplementation, verifyImplementationSnapshot, type ImplementationSnapshot, type PinnedImplementationArtifact } from "./core/implementation-guard.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree, worktreeBasePath } from "./core/worktree.js";
 import { compareRuns } from "./core/statistics.js";
@@ -494,41 +494,51 @@ async function implementCampaignHypothesis(
     },
   } as const;
   let implementationFailure: string | undefined;
-  if (isToolCapableProvider(options.provider)) {
-    const result = await runWithLocalFallback(task, {
-      provider: options.provider,
-      model: options.model,
-      cwd: worktree,
-      reasoningEffort: options.thinking,
-      sandbox: "workspace-write",
-      limitPolicy: options.limitPolicy ?? "auto",
-    }, options.fallbackLocalModel, (message) => console.log(`Experiment ${experimentId} · ${message}`));
-    // A local fallback cannot edit the worktree, so it returns a patch. Codex
-    // normally edits in place and returns prose; applying only a parseable
-    // diff keeps both routes compatible and avoids trusting model narration.
-    const fallbackDiff = extractUnifiedDiff(String(result.output));
-    if (fallbackDiff) {
-      try { await applyUnifiedDiff(worktree, fallbackDiff); }
-      catch (error) { implementationFailure = error instanceof Error ? error.message : String(error); }
+  await preserveInterruptedImplementation(async () => {
+    if (isToolCapableProvider(options.provider)) {
+      const result = await runWithLocalFallback(task, {
+        provider: options.provider,
+        model: options.model,
+        cwd: worktree,
+        reasoningEffort: options.thinking,
+        sandbox: "workspace-write",
+        limitPolicy: options.limitPolicy ?? "auto",
+      }, options.fallbackLocalModel, (message) => console.log(`Experiment ${experimentId} · ${message}`));
+      // A local fallback cannot edit the worktree, so it returns a patch. Codex
+      // normally edits in place and returns prose; applying only a parseable
+      // diff keeps both routes compatible and avoids trusting model narration.
+      const fallbackDiff = extractUnifiedDiff(String(result.output));
+      if (fallbackDiff) {
+        try { await applyUnifiedDiff(worktree, fallbackDiff); }
+        catch (error) { implementationFailure = error instanceof Error ? error.message : String(error); }
+      }
+    } else {
+      const result = await runWithLocalFallback({
+        ...task,
+        objective: `${task.objective}\nYou cannot call tools directly. Return ONLY a unified diff whose first line begins with diff --git. The diff must be applicable from the worktree root. Do not return a plan or prose.`,
+      }, {
+        provider: options.provider,
+        model: options.model,
+        cwd: worktree,
+        reasoningEffort: options.thinking,
+        sandbox: "read-only",
+      }, undefined, (message) => console.log(`Experiment ${experimentId} · ${message}`));
+      const diff = extractUnifiedDiff(String(result.output));
+      if (!diff) implementationFailure = "Local experiment engineer did not return a valid unified diff.";
+      else {
+        try { await applyUnifiedDiff(worktree, diff); }
+        catch (error) { implementationFailure = error instanceof Error ? error.message : String(error); }
+      }
     }
-  } else {
-    const result = await runWithLocalFallback({
-      ...task,
-      objective: `${task.objective}\nYou cannot call tools directly. Return ONLY a unified diff whose first line begins with diff --git. The diff must be applicable from the worktree root. Do not return a plan or prose.`,
-    }, {
-      provider: options.provider,
-      model: options.model,
-      cwd: worktree,
-      reasoningEffort: options.thinking,
-      sandbox: "read-only",
-    }, undefined, (message) => console.log(`Experiment ${experimentId} · ${message}`));
-    const diff = extractUnifiedDiff(String(result.output));
-    if (!diff) implementationFailure = "Local experiment engineer did not return a valid unified diff.";
-    else {
-      try { await applyUnifiedDiff(worktree, diff); }
-      catch (error) { implementationFailure = error instanceof Error ? error.message : String(error); }
-    }
-  }
+  }, {
+    worktree,
+    paths: async () => [...(await changedSourcePaths()).filter(path => /\.(?:ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|cpp|cc|cxx|c|h|hpp|rb|php|swift|sh)$/i.test(path)), ...stagedArtifactPaths],
+    record: payload => {
+      const interruptedStore = new ResearchStore(statePath);
+      try { interruptedStore.appendEvent("experiment.implementation.interrupted", { experimentId, ...payload }); }
+      finally { interruptedStore.close(); }
+    },
+  });
   const currentPaths = await changedSourcePaths();
   const currentTargetHash = safeTarget && existsSync(safeTarget) ? sha256File(safeTarget) : undefined;
   if (!implementationChanged(targetHashBefore, currentTargetHash, currentPaths, Boolean(safeTarget))) {

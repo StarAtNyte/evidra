@@ -55,7 +55,7 @@ import { hasExperimentInputStagingCapacity, stageExperimentInputs } from "../dis
 import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatResearchStagePlan, mergePhaseGoalAudits, phaseCompletionCriteriaForAudit, phaseGoalCanAdvance, phaseGoalCycleAudit, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForCurrentSet, phaseGoalsForMode, researchStageForPhase, researchStageProgress, RESEARCH_STAGE_PLAN } from "../dist/core/phase-goals.js";
 import { assertSubtaskContract, auditSubtask, projectVerifiedSubtaskState, subtaskAuditFingerprint, subtaskStateFromAudit, validateSubtaskContract } from "../dist/core/subtask-state.js";
 import { alignResearchDecisionPhase, auditResearchDecision, downgradeUnauditedDecision } from "../dist/core/decision-auditor.js";
-import { captureImplementationSnapshot, captureVerificationSourcePin, implementationChanged, implementationEditRetryPrompt, implementationRetryPrompt, resolveImplementationPaths, seedImplementationArtifacts, seedImplementationSource, seedVerificationImplementation, verifyImplementationSnapshot } from "../dist/core/implementation-guard.js";
+import { preserveInterruptedImplementation, captureImplementationSnapshot, captureVerificationSourcePin, implementationChanged, implementationEditRetryPrompt, implementationRetryPrompt, resolveImplementationPaths, seedImplementationArtifacts, seedImplementationSource, seedVerificationImplementation, verifyImplementationSnapshot } from "../dist/core/implementation-guard.js";
 import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, responseSubmissionId, submissionConfigForWorktree, submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { externalScoreEvidenceContext, hashExternalArtifact } from "../dist/core/submission-feedback.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
@@ -14700,4 +14700,45 @@ test("campaign lessons are computed from recorded outcomes and reach the next ca
     assert.equal(guidance?.paths.filter((path) => path.startsWith(".evidra/lessons/")).length, 2);
     assert.equal(guidance?.paths[0], "EVIDRA.md");
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+
+test("provider failure preserves partial implementation hashes durably without completion", async () => {
+  const root=mkdtempSync(join(tmpdir(), "evidra-interrupted-implementation-"));
+  const failure=new Error("provider quota reached");
+  try {
+    const database=join(root,"state.sqlite");
+    await assert.rejects(preserveInterruptedImplementation(async()=>{
+      writeFileSync(join(root,"candidate.py"),"partial draft\n");
+      throw failure;
+    },{worktree:root,paths:async()=>["candidate.py"],record:payload=>{
+      const store=new ResearchStore(database);
+      try {store.appendEvent("experiment.implementation.interrupted",{experimentId:"interrupted",...payload});}
+      finally {store.close();}
+    }}),error=>error===failure);
+    const store=new ResearchStore(database);
+    try {
+      const event=store.eventsByType("experiment.implementation.interrupted")[0];
+      assert.equal(event.payload.guardsCompleted,false);
+      assert.deepEqual(verifyImplementationSnapshot(event.payload.snapshot),[]);
+      assert.equal(store.eventsByType("experiment.implementation.completed").length,0);
+      writeFileSync(join(root,"candidate.py"),"later changed draft\n");
+      assert.notDeepEqual(verifyImplementationSnapshot(event.payload.snapshot),[]);
+    }finally {store.close();}
+  }finally {rmSync(root,{recursive:true,force:true});}
+});
+
+test("interruption journaling reports absent source and redacts errors without accepting a draft", async () => {
+  const root=mkdtempSync(join(tmpdir(), "evidra-interrupted-empty-"));
+  let saved;const failure=new Error("token=do-not-record-this quota reached");
+  try {
+    await assert.rejects(preserveInterruptedImplementation(async()=>{throw failure;},
+      {worktree:root,paths:async()=>[],record:payload=>{saved=payload;}}),error=>error===failure);
+    assert.equal(saved.snapshot,undefined);assert.match(saved.snapshotError,/no existing source files/);
+    assert.equal(saved.guardsCompleted,false);assert.doesNotMatch(saved.error,/do-not-record-this/);
+    let records=0;
+    assert.equal(await preserveInterruptedImplementation(async()=>42,
+      {worktree:root,paths:async()=>[],record:()=>{records++;}}),42);
+    assert.equal(records,0);
+  }finally {rmSync(root,{recursive:true,force:true});}
 });
