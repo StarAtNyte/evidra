@@ -11,6 +11,7 @@
  */
 
 export interface LessonRun {
+  runId?: string;
   experimentId: string;
   status: string;
   createdAt: string;
@@ -20,6 +21,7 @@ export interface LessonRun {
 export interface LessonExperiment {
   id: string;
   hypothesisId?: string;
+  sourceReference?: string;
 }
 
 export interface LessonHypothesis {
@@ -69,6 +71,32 @@ export function distilCampaignLessons(input: CampaignLessonsInput): string {
   if (input.goal) lines.push(`Goal: ${input.goal.slice(0, 300)}`, "");
   const failedRuns = input.runs.filter((run) => run.status === "failed").length;
   lines.push(`Runs: ${complete.length} full evaluations, ${completed.length - complete.length} partial screens, ${failedRuns} failed.`);
+  // Preserve behavioral failures and losing variants, not only the adopted
+  // output. Harness2's contrastive experience library motivates this boundary:
+  // selection alone cannot identify which edit helped.
+  const experiments = new Map(input.experiments.map((entry) => [entry.id, entry]));
+  const recent = [...input.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (recent.length) {
+    lines.push('', '## Variant evidence (observations, not attribution)',
+      'Inspect these exact run/experiment records and their source snapshots before reusing a lesson. Adoption or a higher score alone does not show which edit helped. Multiple changed components without an isolated execution contrast are confounded; a failed run is not a measured scientific loss.');
+    for (const run of recent.slice(0, MAX_LINES_PER_SECTION)) {
+      const measured = run.status === 'completed' && Number.isFinite(run.metrics[input.metric.name]);
+      const value = measured ? `; ${input.metric.name} ${fmt(run.metrics[input.metric.name])}` : '; no accepted measurement';
+      const source = experiments.get(run.experimentId)?.sourceReference;
+      lines.push(`- ${run.runId ?? run.experimentId}: ${run.status}${value}; experiment ${run.experimentId}; "${describe(run.experimentId).title}"${source ? `; source ${source}` : ''}`);
+    }
+    lines.push('');
+  }
+  // Execution evidence is especially important when every evaluation failed.
+  // Emit it before the no-score return so the next campaign can repair the
+  // execution path without treating unmeasured methods as scientific losses.
+  const failures = [...new Set((input.failures ?? []).map((message) => message.replace(/\s+/g, " ").trim().slice(0, 200)).filter(Boolean))];
+  if (failures.length) {
+    lines.push("## Recurrent failures",
+      "These are execution observations. Inspect the referenced run and repair or validate the failing path before retrying; they do not establish that a scientific method is ineffective.");
+    for (const message of failures.slice(0, MAX_LINES_PER_SECTION)) lines.push(`- ${message}`);
+    lines.push("");
+  }
   if (!complete.length) {
     lines.push("No full evaluation completed; nothing to compare.");
     return lines.join("\n") + "\n";
@@ -114,7 +142,7 @@ export function distilCampaignLessons(input: CampaignLessonsInput): string {
   // Component ceilings: the best value each component reached and where, so a later campaign can
   // combine mechanisms that each won a different component.
   if (components.length) {
-    lines.push("## Best value per component (combine mechanisms that won different components)");
+    lines.push("## Best value per component (combination candidates require a fresh test)");
     const flat: string[] = [];
     for (const name of components) {
       const values = complete.map((run) => run.metrics[name]);
@@ -136,11 +164,5 @@ export function distilCampaignLessons(input: CampaignLessonsInput): string {
     lines.push("## Use of cycles", `${progress.length} assessed cycles; ${pivots} flagged a plateau that required a different method family; ${idle} ended without a new run.${advice}`, "");
   }
 
-  const failures = [...new Set((input.failures ?? []).map((message) => message.replace(/\s+/g, " ").trim().slice(0, 200)).filter(Boolean))];
-  if (failures.length) {
-    lines.push("## Recurrent failures");
-    for (const message of failures.slice(0, MAX_LINES_PER_SECTION)) lines.push(`- ${message}`);
-    lines.push("");
-  }
   return lines.join("\n");
 }

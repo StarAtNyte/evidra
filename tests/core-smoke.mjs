@@ -4601,6 +4601,21 @@ test("auxiliary implementation artifacts are checksum staged into isolated workt
     assert.throws(() => seedImplementationArtifacts(root, worktree, "challenge", [{ path: ".sota/research/fit.bin", sha256: digest, targetPath: "../escape.bin" }]), /escapes the adapter workspace/);
     const parsed = ResearchHypothesisSchema.parse({ title: "staged auxiliary input", mechanism: "Use fitted correction", proposedChange: "Apply model", falsificationTest: "Holdout improves", implementationArtifacts: [{ path: ".sota/research/fit.bin", sha256: digest, targetPath: ".evidra-inputs/fit.bin" }] });
     assert.equal(parsed.implementationArtifacts[0].sha256, digest);
+    const completeArtifacts = Array.from({ length: 10 }, (_, i) => ({ path: ".sota/research/fit.bin", sha256: digest, targetPath: `solution/module${i}.bin` }));
+    const complete = ResearchHypothesisSchema.parse({ ...parsed, implementationArtifacts: completeArtifacts });
+    assert.throws(() => seedImplementationArtifacts(root, worktree, "challenge", Array(65).fill(completeArtifacts[0])), /64 implementation artifacts/);
+    assert.equal(seedImplementationArtifacts(root, worktree, "challenge", complete.implementationArtifacts).length, 10);
+    const first = complete.implementationArtifacts[0];
+    const firstTarget = join(worktree, "challenge", first.targetPath);
+    writeFileSync(firstTarget, "tracked old helper");
+    assert.throws(() => seedImplementationArtifacts(root, worktree, "challenge", [first]), /different content/);
+    assert.equal(seedImplementationArtifacts(root, worktree, "challenge", [first], { replaceExisting: true }).length, 1);
+    assert.equal(sha256File(firstTarget), first.sha256);
+    assert.throws(() => seedImplementationArtifacts(root, root, ".", [], { replaceExisting: true }), /isolated worktree/);
+
+    for (const artifact of completeArtifacts) assert.equal(readFileSync(join(worktree, "challenge", artifact.targetPath), "utf8"), "fitted-parameters\n");
+    assert.throws(() => ResearchHypothesisSchema.parse({ ...parsed, implementationArtifacts: Array.from({ length: 65 }, (_, i) => ({ ...completeArtifacts[0], targetPath: `module${i}.bin` })) }), /64/);
+
     assert.throws(() => ResearchHypothesisSchema.parse({ title: "duplicate targets", mechanism: "m", proposedChange: "c", falsificationTest: "f", implementationArtifacts: [{ path: "a", sha256: digest, targetPath: "same.bin" }, { path: "b", sha256: digest, targetPath: "same.bin" }] }), /target paths must be unique/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

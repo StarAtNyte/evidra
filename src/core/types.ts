@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+/** Allow complete multi-module implementations while keeping provider payloads bounded. */
+export const MAX_IMPLEMENTATION_ARTIFACTS = 64;
+
 /** Bounded environment overrides for reproducible experiments; secrets use dedicated secret refs instead. */
 export const ExperimentEnvironmentSchema = z.record(z.string(), z.string().max(4096)).default({}).superRefine((environment, context) => {
   const entries = Object.entries(environment);
@@ -161,6 +164,11 @@ export type Hypothesis = z.infer<typeof HypothesisSchema>;
 export const ResearchHypothesisSchema = z.object({
   title: z.string().min(1),
   formulationFamily: z.string().min(1).max(80).default("unspecified"),
+  /** Self-declared design contrast, used for exploration scheduling, never proof. */
+  architectureChange: z.object({
+    baseline: z.object({ representation: z.string().trim().min(1).max(500), predictionMechanism: z.string().trim().min(1).max(500), learningObjective: z.string().trim().min(1).max(500), generalizationAssumption: z.string().trim().min(1).max(500) }),
+    proposed: z.object({ representation: z.string().trim().min(1).max(500), predictionMechanism: z.string().trim().min(1).max(500), learningObjective: z.string().trim().min(1).max(500), generalizationAssumption: z.string().trim().min(1).max(500) }),
+  }).optional(),
   outcomeType: z.enum(["metric", "artifact", "proof", "behavior", "system", "other"]).default("metric"),
   implementationMode: z.enum(["modify", "verify"]).default("modify"),
   /** Secret-free per-experiment parameter overrides passed to the isolated executor. */
@@ -191,7 +199,7 @@ export const ResearchHypothesisSchema = z.object({
     targetPath: z.string().trim().min(1).max(1_000).nullable().optional(),
   }).nullable().optional(),
   /** Additional immutable inputs needed to implement a hypothesis, staged only by exact hash. */
-  implementationArtifacts: z.array(ImplementationArtifactSchema).max(8).default([]).superRefine((artifacts, context) => {
+  implementationArtifacts: z.array(ImplementationArtifactSchema).max(MAX_IMPLEMENTATION_ARTIFACTS).default([]).superRefine((artifacts, context) => {
     const targets = new Set<string>();
     for (const [index, artifact] of artifacts.entries()) {
       const normalized = artifact.targetPath.replaceAll("\\", "/").replace(/\/+$/, "");

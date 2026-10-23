@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { sha256File } from "./evidence.js";
+import { MAX_IMPLEMENTATION_ARTIFACTS } from "./types.js";
 
 export type ImplementationSnapshot = { worktree: string; files: Record<string, string> };
 export type PinnedImplementationArtifact = { path: string; sha256: string; targetPath: string };
@@ -34,9 +35,11 @@ export function seedImplementationArtifacts(
   worktree: string,
   workspaceRelativePath: string,
   artifacts: PinnedImplementationArtifact[],
+  options: { replaceExisting?: boolean } = {},
 ): Array<{ sourcePath: string; sourceSha256: string; targetPath: string }> {
-  if (artifacts.length > 8) throw new Error("At most eight implementation artifacts may be staged per experiment.");
+  if (artifacts.length > MAX_IMPLEMENTATION_ARTIFACTS) throw new Error(`At most ${MAX_IMPLEMENTATION_ARTIFACTS} implementation artifacts may be staged per experiment.`);
   const project = realpathSync(projectRoot);
+  if (options.replaceExisting && project === realpathSync(worktree)) throw new Error("Replacing pinned artifacts requires an isolated worktree.");
   const staged: Array<{ sourcePath: string; sourceSha256: string; targetPath: string }> = [];
   const targets = new Set<string>();
   let totalBytes = 0;
@@ -84,7 +87,11 @@ export function seedImplementationArtifacts(
     }
     if (targetExists) {
       const existing = statSync(targetCandidate);
-      if (!existing.isFile() || sha256File(targetCandidate) !== sourceSha256) throw new Error(`Implementation artifact target already exists with different content: ${artifact.targetPath}`);
+      if (!existing.isFile()) throw new Error(`Implementation artifact target is not a regular file: ${artifact.targetPath}`);
+      if (sha256File(targetCandidate) !== sourceSha256) {
+        if (!options.replaceExisting) throw new Error(`Implementation artifact target already exists with different content: ${artifact.targetPath}`);
+        copyFileSync(sourcePath, targetCandidate);
+      }
     } else {
       copyFileSync(sourcePath, targetCandidate, 1);
     }

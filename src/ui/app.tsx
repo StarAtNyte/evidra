@@ -1109,7 +1109,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
     store.appendEvent("research.agent.reviewed", { objective, reviews: agentRoleReviews, interventions: agentInterventions, coachingDirectiveIds, source: "tui" });
     if (coachingDirectiveIds.length) store.appendEvent("research.agent.coaching.applied", { directiveIds: coachingDirectiveIds, roles: agentInterventions.filter((intervention) => intervention.action === "coach").map((intervention) => intervention.role), source: "autonomous-controller" });
     if (coachingOutcomes.length) store.appendEvent("research.agent.coaching.evaluated", { objective, evidenceAt: latestTrajectoryAt, outcomes: coachingOutcomes, source: "autonomous-controller" });
-    const unreconciledTraceRecovery = store.eventsByType("research.trace.recovered", 20).some((event) => !latestTrajectoryAt || event.createdAt > latestTrajectoryAt);
     const recentFailureCount = recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
     const recentQuality = recentTrajectories.slice(0, 20).map((entry) => qualityFeedback(entry.quality));
     const failureClasses = [
@@ -1132,7 +1131,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
           return toolFailure ? [toolFailure] : [];
         });
       }),
-      ...(unreconciledTraceRecovery ? ["controller_crash"] : []),
     ];
     const campaignRemaining = campaign ? Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)) : undefined;
     const route = routeCapability({ objective, mode, provider: config.provider, model: config.model, autonomy: config.autonomy, recentFailureCount, failureClasses, recentQuality, recentOutcomes: store.recentEvents(500).filter((event) => event.type === "research.capability_outcome").slice(-12).map((event) => {

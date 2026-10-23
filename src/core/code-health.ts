@@ -36,7 +36,7 @@ export interface ScopedCodeHealthAssessment {
   assessment: CodeHealthAssessment;
 }
 
-const TEST_PATH = /(^|\/)(test|tests|spec|specs)(\/|$)|(?:^|[._-])(test|spec)\.[^.]+$/i;
+const TEST_PATH = /(^|\/)(test|tests|spec|specs)(\/|$)|(?:^|[._-])(test|spec)\.[^.]+$|(?:^|\/)test_[^/]+\.py$/i;
 const CODE_PATH = /\.(?:ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|cpp|cc|cxx|c|h|hpp|rb|php|swift|sh)$/i;
 
 /** Build a small structural snapshot without parsing a language-specific AST. */

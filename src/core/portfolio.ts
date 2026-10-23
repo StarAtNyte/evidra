@@ -1,3 +1,5 @@
+import { architectureDifferences, type ArchitectureChange } from "./architecture-search.js";
+
 export interface PortfolioCandidate {
   id: string;
   title: string;
@@ -9,6 +11,7 @@ export interface PortfolioCandidate {
   informationValue?: number;
   risk?: number;
   family?: string;
+  architectureChange?: ArchitectureChange;
   quality?: number;
   /** Declared outcome family; non-metric candidates must not be ranked by a scalar metric forecast. */
   outcomeType?: "metric" | "artifact" | "proof" | "behavior" | "system" | "other";
@@ -23,6 +26,10 @@ export interface PortfolioPlanOptions {
   maxParallel: number;
   budgetMinutes: number;
   reserveMinutes?: number;
+  /** Honor an explicit director selection when it passes the same feasibility limits. */
+  preferredCandidateId?: string;
+  /** Reserve one feasible architectural alternative when comparable progress plateaus. */
+  exploreArchitecture?: boolean;
   costHistory?: CostObservation[];
   executionContext?: CostContext;
 }
@@ -35,6 +42,7 @@ export interface PortfolioPlan {
   halving: SuccessiveHalvingPlan;
   evolution: import("./evolution.js").EvolutionPlan;
   costEstimates: Record<string, CostEstimate>;
+  architectureExploration: { requested: boolean; candidateId?: string; declaredAxes: string[] };
 }
 
 /**
@@ -60,9 +68,13 @@ export function planPortfolio(candidates: PortfolioCandidate[], options: Portfol
     return Math.max(0.1, estimate.upperMinutes);
   };
 
-  const ranked = [...candidates]
-    .filter((candidate) => candidate.id && Number.isFinite(candidate.expectedValue) && Number.isFinite(candidate.costMinutes))
-    .sort((left, right) => score(right, options.costHistory, options.executionContext) - score(left, options.costHistory, options.executionContext));
+  const eligible = candidates.filter(candidate => candidate.id && Number.isFinite(candidate.expectedValue) && Number.isFinite(candidate.costMinutes));
+  const alternative = options.exploreArchitecture ? [...eligible]
+    .filter(candidate => architectureDifferences(candidate.architectureChange).length >= 2 && estimatedCost(candidate) <= available)
+    .sort((left, right) => score(right, options.costHistory, options.executionContext) - score(left, options.costHistory, options.executionContext))[0] : undefined;
+  const ranked = [...eligible].sort((left, right) => Number(right.id === alternative?.id) - Number(left.id === alternative?.id)
+    || Number(right.id === options.preferredCandidateId) - Number(left.id === options.preferredCandidateId)
+    || score(right, options.costHistory, options.executionContext) - score(left, options.costHistory, options.executionContext));
   for (const candidate of ranked) {
     if (selected.length >= maxCandidates) {
       rejected.push({ candidate, reason: "portfolio capacity reached" });
@@ -96,7 +108,8 @@ export function planPortfolio(candidates: PortfolioCandidate[], options: Portfol
   // more intermediate worker contracts.
   const halving = planSuccessiveHalving(selected.map((candidate) => ({ id: candidate.id, costMinutes: costEstimates[candidate.id]?.upperMinutes ?? Math.max(0.1, candidate.costMinutes), family: candidate.family })), available, { rounds: 2 });
   const evolution = planEvolutionaryIslands(selected, Math.min(parallelism, 4));
-  return { selected, rejected, reservedMinutes, parallelism, halving, evolution, costEstimates };
+  const architectureExploration = { requested: Boolean(options.exploreArchitecture), candidateId: alternative?.id, declaredAxes: architectureDifferences(alternative?.architectureChange) };
+  return { selected, rejected, reservedMinutes, parallelism, halving, evolution, costEstimates, architectureExploration };
 }
 
 function score(candidate: PortfolioCandidate, history?: CostObservation[], context?: CostContext): number {

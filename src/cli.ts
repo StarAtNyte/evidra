@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { discoveryCadence, verificationRuntimeGuidance, incompleteVerificationProposal } from "./core/discovery-cadence.js";
+import { architectureNovelty, ARCHITECTURE_SEARCH_GUIDANCE } from "./core/architecture-search.js";
 import { formatHarnessFeedback, parseHarnessFeedbackRole, projectHarnessFailureFeedback } from "./core/harness-feedback.js";
 import { workspaceBackupDestination } from "./core/backup-path.js";
 import { reconcileRemoteExperiment } from "./core/remote-reconciliation.js";
@@ -22,7 +24,7 @@ import { auditData, dataAuditFingerprint, dataAuditManifestFingerprint } from ".
 import { createValidationPolicy, ValidationPolicySchema, writeValidationPolicy } from "./core/validation-policy.js";
 import { distributionObservationsFromFeedback, estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, verificationOnlyHasEvidence, verificationSourcePinError, type ExecutionStage } from "./core/execution-stages.js";
-import { planVerificationExecution } from "./core/verification-execution.js";
+import { missingVerificationScripts, planVerificationExecution } from "./core/verification-execution.js";
 import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceFrontier, sourceSearchText, sourceIsFresh, SOURCE_SEARCH_RANKING_VERSION } from "./core/sources.js";
 import { competitionResearchClaimType, competitionResearchSources, competitionSourceRefreshMs } from "./core/competition-sources.js";
 import { extractCompetitionInsights } from "./core/competition-insights.js";
@@ -384,7 +386,7 @@ async function implementCampaignHypothesis(
     store.appendEvent("experiment.worktree.created", { experimentId, worktree, implementationMode: "verify" });
     let stagedArtifactPaths: string[] = [];
     try {
-      const staged = seedImplementationArtifacts(rootPath, worktree, options.workspaceRelativePath ?? ".", implementationArtifacts);
+      const staged = seedImplementationArtifacts(rootPath, worktree, options.workspaceRelativePath ?? ".", implementationArtifacts, { replaceExisting: true });
       stagedArtifactPaths = staged.map((artifact) => relative(worktree, artifact.targetPath));
       for (const artifact of staged) store.appendEvent("experiment.implementation.artifact_staged", { experimentId, sourcePath: relative(rootPath, artifact.sourcePath), sha256: artifact.sourceSha256, targetPath: relative(worktree, artifact.targetPath), implementationMode: "verify" });
     } catch (error) {
@@ -444,9 +446,8 @@ async function implementCampaignHypothesis(
   const implementationPaths = resolveImplementationPaths(worktree, options.workspaceRelativePath ?? ".", target);
   const integrity = captureProtectedFiles(implementationPaths.workspaceRoot, options.protectedCommands ?? [], [], target ? [target] : []);
   const targetPath = implementationPaths.targetPath;
-  const safeTarget = targetPath && existsSync(targetPath) ? targetPath : undefined;
+  let safeTarget = targetPath && existsSync(targetPath) ? targetPath : undefined;
   const targetRelativeToWorktree = implementationPaths.targetRelativeToWorktree;
-  const targetHashBefore = safeTarget ? sha256File(safeTarget) : undefined;
   const seed = manifestValue.change?.configPatch?.implementationSource;
   let seededImplementation: { sourcePath: string; sourceSha256: string; targetPath: string } | undefined;
   if (seed) {
@@ -458,7 +459,13 @@ async function implementCampaignHypothesis(
     seedStore.appendEvent("experiment.implementation.seeded", { experimentId, sourcePath: relative(rootPath, seededImplementation.sourcePath), sha256: seededImplementation.sourceSha256, targetPath: relative(worktree, seededImplementation.targetPath) });
     seedStore.close();
   }
-  const stagedArtifacts = seedImplementationArtifacts(rootPath, worktree, options.workspaceRelativePath ?? ".", implementationArtifacts);
+  // An explicit verified seed defines the candidate baseline, including its helpers.
+  // Allow that baseline to replace older tracked copies only in the isolated worktree.
+  const stagedArtifacts = seedImplementationArtifacts(rootPath, worktree, options.workspaceRelativePath ?? ".", implementationArtifacts, { replaceExisting: Boolean(seededImplementation) });
+  // Staging a different baseline is not an engineer's algorithmic intervention.
+  // Measure subsequent edits against the fully staged candidate, including new entrypoints.
+  safeTarget = targetPath && existsSync(targetPath) ? targetPath : undefined;
+  const targetHashBefore = safeTarget ? sha256File(safeTarget) : undefined;
   const stagedArtifactPaths = stagedArtifacts.map((artifact) => relative(worktree, artifact.targetPath));
   if (stagedArtifacts.length) {
     const artifactStore = new ResearchStore(statePath);
@@ -473,7 +480,7 @@ async function implementCampaignHypothesis(
   const engineerGuidance = loadProjectGuidance(rootPath, "experiment engineer");
   const task = {
     role: "experiment engineer",
-    objective: `Implement the selected hypothesis in this isolated worktree. Inspect the existing project, make the smallest reproducible change described by the hypothesis, run relevant smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree, submit anything, or invent a result.${seededImplementation ? " A checksum-verified seed has already been copied to the declared candidate entrypoint; preserve that implementation and make only the hypothesis-specific change." : ""}${stagedArtifacts.length ? " Checksum-pinned auxiliary inputs are staged at the listed paths. Treat them as immutable evidence/input: do not modify them. If the evaluated solution needs fitted parameters at runtime, embed them in source or make the package explicitly include the verified asset." : ""} If the selected provider cannot edit files directly, return ONLY an applicable unified diff whose first line begins with diff --git; otherwise perform the edit and summarize it.`,
+    objective: `Implement the selected hypothesis in this isolated worktree. Inspect the existing project, make the smallest reproducible change described by the hypothesis, run relevant smoke checks, and leave the worktree ready for evaluation. For implementations that train or persist learned artifacts, exercise the real manifest construction, serialization, reload, and inference path with a tiny fixture before expensive fitting; verify accepted round trips and rejection of changed input, configuration, source, or checkpoint content. For interrupted training, retain optimizer state, global update count, validation-selection history, and previously charged resource use. Estimate completion from measured representative step time plus startup and evaluation overhead against both phase and aggregate remaining budgets; report infeasibility without shortening the scientific training requirement or silently starting a fresh fit. Do not touch files outside this worktree, submit anything, or invent a result.${seededImplementation ? " A checksum-verified seed has already been copied to the declared candidate entrypoint; preserve that implementation and make only the hypothesis-specific change." : ""}${stagedArtifacts.length ? " Checksum-pinned auxiliary inputs are staged at the listed paths. Treat them as immutable evidence/input: do not modify them. If the evaluated solution needs fitted parameters at runtime, embed them in source or make the package explicitly include the verified asset." : ""} If the selected provider cannot edit files directly, return ONLY an applicable unified diff whose first line begins with diff --git; otherwise perform the edit and summarize it.`,
     context: {
       manifest,
       hypothesis,
@@ -2644,7 +2651,7 @@ lessons.command("distil")
       const numeric = (value: unknown): Record<string, number> => Object.fromEntries(Object.entries(value && typeof value === "object" ? value as Record<string, unknown> : {}).filter(([, entry]) => typeof entry === "number" && Number.isFinite(entry))) as Record<string, number>;
       const runs = store.runs().map((run) => {
         const payload = (run.payload ?? {}) as { metrics?: unknown; error?: unknown };
-        return { experimentId: run.experimentId, status: run.status, createdAt: run.createdAt, metrics: numeric(payload.metrics), error: typeof payload.error === "string" ? payload.error : undefined };
+        return { runId: run.id, experimentId: run.experimentId, status: run.status, createdAt: run.createdAt, metrics: numeric(payload.metrics), error: typeof payload.error === "string" ? payload.error : undefined };
       });
       const text = distilCampaignLessons({
         label,
@@ -2653,7 +2660,12 @@ lessons.command("distil")
         components: config.proxyTransfer?.components.map((component) => component.proxy) ?? config.secondaryMetrics.map((objective) => objective.name),
         ...(typeof baseline === "number" && Number.isFinite(baseline) ? { baseline } : {}),
         runs,
-        experiments: store.experiments().map((entry) => ({ id: entry.id, hypothesisId: (entry.payload as { hypothesisId?: string } | undefined)?.hypothesisId })),
+        experiments: store.experiments().map((entry) => {
+          const payload = entry.payload as { hypothesisId?: string; change?: { configPatch?: { implementationSource?: { path?: string; sha256?: string } } } } | undefined;
+          const source = payload?.change?.configPatch?.implementationSource;
+          return { id: entry.id, hypothesisId: payload?.hypothesisId,
+            ...(source?.path && source.sha256 ? { sourceReference: `${source.path} @ ${source.sha256} (full artifacts in experiment manifest)` } : {}) };
+        }),
         hypotheses: store.hypotheses().map((entry) => {
           const payload = (entry.payload ?? {}) as { title?: string; formulationFamily?: string };
           return { id: entry.id, title: payload.title, formulationFamily: payload.formulationFamily };
@@ -5506,7 +5518,6 @@ research
       store.appendEvent("research.agent.reviewed", { objective, reviews: agentRoleReviews, interventions: agentInterventions, coachingDirectiveIds, source: "cli" });
       if (coachingDirectiveIds.length) store.appendEvent("research.agent.coaching.applied", { directiveIds: coachingDirectiveIds, roles: agentInterventions.filter((intervention) => intervention.action === "coach").map((intervention) => intervention.role), source: "autonomous-controller" });
       if (coachingOutcomes.length) store.appendEvent("research.agent.coaching.evaluated", { objective, evidenceAt: latestTrajectoryAt, outcomes: coachingOutcomes, source: "autonomous-controller" });
-      const unreconciledTraceRecovery = campaignEvents.some((event) => event.type === "research.trace.recovered" && (!latestTrajectoryAt || event.createdAt > latestTrajectoryAt));
       const recentQuality = recentTrajectories.map((entry) => qualityFeedback(entry.quality));
       const recentRuns = recordsForCampaign(store.runs(), campaign.startedAt).slice(0, 20);
       const verificationPressure = recentRuns.some((entry) => {
@@ -5540,7 +5551,6 @@ research
         ...recentRuns.map((entry) => (entry.payload as { failureClass?: unknown }).failureClass).filter((failureClass): failureClass is string => typeof failureClass === "string" && failureClass.length > 0),
         ...nativeFailureClasses,
         ...(verificationPressure ? ["verification"] : []),
-        ...(unreconciledTraceRecovery ? ["controller_crash"] : []),
       ];
       const recoveryRoutes = campaignEvents
         .filter((event) => event.type === "experiment.recovery.route_changed")
@@ -5857,7 +5867,10 @@ research
         ? `\n\nPrior decision-rubric gaps to repair before spending compute:\n${[...new Set(priorRubricGaps)].join("\n")}`
         : "";
       const progressGuidance = (goalProgress.directive ? `\n\n${goalProgress.directive}` : "") + (proxyTransfer ? `\n\n${proxyTransferGuidance(proxyTransfer.calibration, transferIncumbent)}` : "");
-      const cycleObjective = allocatedObjective + guidanceText + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance + progressGuidance;
+      const cadence = discoveryCadence(recordsForCampaign(store.eventsByType("research.decision.audit"), campaign.startedAt), recordsForCampaign(store.runs(), campaign.startedAt));
+      if (cadence.guidance) store.appendEvent("research.discovery.cadence", { idleCycles: cadence.idleCycles, action: "bounded-experiment-guidance", gatesUnchanged: true });
+      const cycleObjective = allocatedObjective + guidanceText + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance + progressGuidance + cadence.guidance + verificationRuntimeGuidance(adapter.config.evaluator.command)
+        + (goalProgress.pivotRequired ? `\n\nARCHITECTURE EXPLORATION: ${ARCHITECTURE_SEARCH_GUIDANCE}` : "");
       const researchSources = latestSourcePayloads(store.sources(), 12, cycleObjective, store);
       const researchMemory = researchMemoryContext(store, 30, cycleObjective, {
         objective: campaign.goal,
@@ -6487,6 +6500,10 @@ research
         return [{ operator: payload.operator, actualMinutes: payload.durationSeconds / 60, status: payload.valid === true ? "completed" : "failed", context: { executor: typeof (payload as { executor?: unknown }).executor === "string" ? (payload as { executor: string }).executor : undefined, gpu: typeof (payload as { gpu?: unknown }).gpu === "string" ? (payload as { gpu: string }).gpu : undefined, provider: typeof (payload as { provider?: unknown }).provider === "string" ? (payload as { provider: string }).provider : undefined, model: typeof (payload as { model?: unknown }).model === "string" ? (payload as { model: string }).model : undefined } }];
       });
       const falsificationByHypothesisId = new Map(researchMemory.falsificationAgenda.map((item) => [item.hypothesisId, item]));
+      const incompleteVerificationReasons = decision.hypotheses.map(incompleteVerificationProposal);
+      for (const [index, reason] of incompleteVerificationReasons.entries()) {
+        if (reason) decisionStore.appendEvent("research.portfolio.candidate_deferred", { cycle, hypothesisId: materialized.hypothesisIds[index], title: decision.hypotheses[index]?.title, reason });
+      }
       const portfolioPlan = planPortfolio(decision.hypotheses.map((hypothesis, index) => ({
         id: materialized.hypothesisIds[index] ?? `hypothesis-${index}`,
         title: hypothesis.title,
@@ -6503,13 +6520,16 @@ research
         expectedOutcome: hypothesis.expectedOutcome,
         expectedValue: hypothesis.outcomeType === "metric" ? hypothesis.expectedMetricDelta.median : 0,
         costMinutes: Math.max(1, hypothesis.computeCostGpuHours * 60),
-        novelty: hypothesis.evidence.length === 0 ? 1 : 0.4,
+        novelty: architectureNovelty(hypothesis.architectureChange),
         informationValue: hypothesis.outcomeType !== "metric" ? 1 : Math.min(1, Math.max(0, (hypothesis.expectedMetricDelta.high - hypothesis.expectedMetricDelta.low) / (Math.abs(hypothesis.expectedMetricDelta.high) + Math.abs(hypothesis.expectedMetricDelta.low) + 0.01))),
         risk: hypothesis.implementationRisk === "high" ? 1 : hypothesis.implementationRisk === "medium" ? 0.5 : 0.1,
         family: hypothesis.formulationFamily,
+        architectureChange: hypothesis.architectureChange,
         quality: hypothesisQuality[index]?.score,
-      })), {
+      })).filter((_, index) => !incompleteVerificationReasons[index]), {
         maxCandidates: autonomy === "yolo" ? 3 : autonomy === "fast" ? 2 : 1,
+        preferredCandidateId: materialized.hypothesisIds[decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis)],
+        exploreArchitecture: goalProgress.pivotRequired,
         maxParallel: experimentParallelism,
         budgetMinutes: portfolioBudget,
         reserveMinutes: Math.min(5, portfolioBudget * 0.1),
@@ -6526,6 +6546,7 @@ research
         successiveHalving: portfolioPlan.halving,
         evolution: portfolioPlan.evolution,
         costEstimates: portfolioPlan.costEstimates,
+        architectureExploration: portfolioPlan.architectureExploration,
         policy: "bounded-best-of-k",
       });
       // A director may return several hypotheses without selecting one. In an
@@ -6577,7 +6598,7 @@ research
         console.log(`Autonomous experiment held by ${autonomy.toUpperCase()} permissions${proposalId ? `; proposal ${proposalId} is ready for explicit approval. Continuing research on other directions.` : ". Continuing evidence gathering."}`);
       }
       const selectedDecisionIndex = decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis);
-      const selectedDecisionCandidate = selectedDecisionIndex >= 0 ? portfolioPlan.selected.find((candidate) => candidate.id === materialized.hypothesisIds[selectedDecisionIndex]) ?? {
+      const selectedDecisionCandidate = selectedDecisionIndex >= 0 && !incompleteVerificationReasons[selectedDecisionIndex] ? portfolioPlan.selected.find((candidate) => candidate.id === materialized.hypothesisIds[selectedDecisionIndex]) ?? {
         id: materialized.hypothesisIds[selectedDecisionIndex],
         title: decision.hypotheses[selectedDecisionIndex].title,
         operator: decision.searchOperator,
@@ -7398,6 +7419,29 @@ experiment.command("reconcile")
     if (!result.released) throw new Error(`Experiment ${id} has no complete terminal allocation evidence; quarantine remains in place.`);
     console.log(`Experiment ${id}: remote termination reconciled; no measurements were imported.`);
   });
+experiment.command("implement")
+  .argument("<id>", "experiment identifier")
+  .description("Implement a proposed experiment in its isolated worktree without running its evaluator")
+  .requiredOption("--model <model>", "explicit implementation model")
+  .option("--provider <provider>", "codex, claude, or local", "codex")
+  .option("--thinking <level>", "implementation reasoning effort", "high")
+  .action(async (id: string, options: { model: string; provider: string; thinking: string }) => {
+    if (!["codex", "claude", "local"].includes(options.provider)) throw new Error("Implementation provider must be codex, claude, or local.");
+    const store = new ResearchStore(statePath);
+    const entry = store.experiments().find(candidate => candidate.id === id);
+    if (!entry) { store.close(); throw new Error(`Experiment not found: ${id}`); }
+    const manifest = ExperimentManifestSchema.parse(entry.payload);
+    const hypothesis = store.hypotheses().find(candidate => candidate.id === manifest.hypothesisId)?.payload;
+    store.close();
+    const adapter = activeCompetition();
+    await implementCampaignHypothesis(root, id, hypothesis, manifest, {
+      provider: options.provider as "codex" | "claude" | "local", model: options.model,
+      thinking: options.thinking, limitPolicy: "stop",
+      protectedCommands: [adapter.config.evaluator.command],
+      workspaceRelativePath: relative(root, adapter.workspacePath(root)),
+    });
+    console.log(`Experiment ${id} implementation staged; evaluator has not run.`);
+  });
 experiment.command("run")
   .argument("<id>", "experiment identifier")
   .option("--reduced-only", "stop after the reduced validation gate and persist its metric")
@@ -7451,6 +7495,19 @@ experiment.command("run")
     // A replication has no implementation of its own: it must re-evaluate its
     // parent's pinned code, never a clean HEAD checkout that silently drops the
     // candidate change and "replicates" the baseline instead.
+    // Direct CLI proposal/run must honor the same source pins as autonomous
+    // execution. A fresh HEAD worktree is not the declared verify-only subject.
+    const existingImplementationEvents = store.eventsByType("experiment.implementation.completed");
+    const alreadyImplemented = existingImplementationEvents.some((event) => {
+      const experimentId = (event.payload as { experimentId?: unknown }).experimentId;
+      return experimentId === id || (Boolean(manifest.parent) && experimentId === manifest.parent);
+    });
+    if (manifest.implementationMode === "verify" && !alreadyImplemented) {
+      await implementCampaignHypothesis(root, id, hypothesis?.payload, manifest, {
+        provider: "codex", model: "", thinking: "low",
+        workspaceRelativePath: relative(root, adapter.workspacePath(root)),
+      });
+    }
     const implementationEvents = store.eventsByType("experiment.implementation.completed").reverse();
     const implementationFor = (experimentId: string | undefined) => experimentId ? implementationEvents.find((event) => (event.payload as { experimentId?: unknown } | undefined)?.experimentId === experimentId) : undefined;
     const implementationEvent = implementationFor(id) ?? (manifest.parent ? implementationFor(manifest.parent) : undefined);
@@ -7498,6 +7555,9 @@ experiment.command("run")
     });
     const command = verificationPlan.primaryCommand ?? experimentCommandFor(adapter, hypothesis?.payload);
     const contract = validateExecutionContract(manifest, experimentCwd, command);
+    const missingVerifierScripts = missingVerificationScripts(experimentCwd, verificationPlan.commands);
+    contract.reasons.push(...missingVerifierScripts);
+    contract.valid = contract.valid && missingVerifierScripts.length === 0;
     const contractStore = new ResearchStore(statePath);
     contractStore.appendEvent(contract.valid ? "experiment.stage.feasibility.completed" : "experiment.stage.feasibility.failed", { experimentId: id, reasons: contract.reasons, command, cwd: experimentCwd });
     contractStore.close();
