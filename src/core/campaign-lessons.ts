@@ -16,6 +16,8 @@ export interface LessonRun {
   status: string;
   createdAt: string;
   metrics: Record<string, number>;
+  /** Recorded controller receipt, separate from accepted evaluator metrics. */
+  trainingReceipt?: unknown;
 }
 
 export interface LessonExperiment {
@@ -47,6 +49,27 @@ export interface CampaignLessonsInput {
 }
 
 const MAX_LINES_PER_SECTION = 8;
+
+/** Preserve explicit receipt facts without inferring efficacy from fit status. */
+export function trainingReceiptFacts(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const receipt = value as Record<string, unknown>;
+  const facts: string[] = [];
+  if (receipt.complete === true || receipt.complete === false) facts.push(`complete=${receipt.complete}`);
+  if (receipt.status === "fitted") facts.push("status=fitted");
+  for (const key of ["updates", "requested_updates", "gradient_updates", "calibration_updates", "forecast_updates", "selected_forecast_step", "epochs", "joint_epochs"]) {
+    const count = receipt[key];
+    if (typeof count === "number" && Number.isSafeInteger(count) && count >= 0) facts.push(`${key}=${count}`);
+  }
+  for (const key of ["initial_validation_loss", "selected_validation_loss"]) {
+    const measurement = receipt[key];
+    if (typeof measurement === "number" && Number.isFinite(measurement)) facts.push(`${key}=${measurement}`);
+  }
+  for (const key of ["finite_gradients", "gradients_finite", "validation_improved", "conditional_changed", "held_block_optimization", "rk4_complete", "persistent_contract", "inference_ready"]) {
+    if (receipt[key] === true || receipt[key] === false) facts.push(`${key}=${receipt[key]}`);
+  }
+  return facts;
+}
 
 function fmt(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
@@ -86,6 +109,16 @@ export function distilCampaignLessons(input: CampaignLessonsInput): string {
       lines.push(`- ${run.runId ?? run.experimentId}: ${run.status}${value}; experiment ${run.experimentId}; "${describe(run.experimentId).title}"${source ? `; source ${source}` : ''}`);
     }
     lines.push('');
+  }
+  const receiptRuns = recent.map(run => ({ run, facts: trainingReceiptFacts(run.trainingReceipt) })).filter(entry => entry.facts.length);
+  if (receiptRuns.length) {
+    lines.push("## Recorded training receipts",
+      "These explicit controller fields explain what ran and which checks failed. A generic failed run can contain completed training rejected by validation or numerical checks. Receipt flags are observations, not independent verification, accepted evaluator metrics, or proof of efficacy; inspect the source artifact before deciding to retry.");
+    for (const { run, facts } of receiptRuns.slice(0, MAX_LINES_PER_SECTION)) {
+      const source = experiments.get(run.experimentId)?.sourceReference;
+      lines.push(`- ${run.runId ?? run.experimentId}: ${facts.join("; ")}${source ? `; source ${source}` : ""}`);
+    }
+    lines.push("");
   }
   // Execution evidence is especially important when every evaluation failed.
   // Emit it before the no-score return so the next campaign can repair the

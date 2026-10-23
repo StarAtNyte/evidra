@@ -2650,8 +2650,8 @@ lessons.command("distil")
       const baseline = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, metricName).metrics[metricName] : undefined;
       const numeric = (value: unknown): Record<string, number> => Object.fromEntries(Object.entries(value && typeof value === "object" ? value as Record<string, unknown> : {}).filter(([, entry]) => typeof entry === "number" && Number.isFinite(entry))) as Record<string, number>;
       const runs = store.runs().map((run) => {
-        const payload = (run.payload ?? {}) as { metrics?: unknown; error?: unknown };
-        return { runId: run.id, experimentId: run.experimentId, status: run.status, createdAt: run.createdAt, metrics: numeric(payload.metrics), error: typeof payload.error === "string" ? payload.error : undefined };
+        const payload = (run.payload ?? {}) as { metrics?: unknown; error?: unknown; trainingReceipt?: unknown; fit?: unknown };
+        return { runId: run.id, experimentId: run.experimentId, status: run.status, createdAt: run.createdAt, metrics: numeric(payload.metrics), trainingReceipt: payload.trainingReceipt ?? payload.fit, error: typeof payload.error === "string" ? payload.error : undefined };
       });
       const text = distilCampaignLessons({
         label,

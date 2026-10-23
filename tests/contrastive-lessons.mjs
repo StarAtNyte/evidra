@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {distilCampaignLessons} from '../dist/core/campaign-lessons.js';
+import {distilCampaignLessons,trainingReceiptFacts} from '../dist/core/campaign-lessons.js';
 
 const base = {label:'contrast', metric:{name:'score',direction:'maximize'},
   experiments:[{id:'e1',hypothesisId:'h1',sourceReference:'candidate.py @ sha256:abc'}],
@@ -53,4 +53,37 @@ test('partial screens also retain failures without claiming a full-evaluation wi
   assert.match(text,/0 full evaluations, 1 partial screens/);
   assert.match(text,/scientifically uninterpretable fit/);
   assert.doesNotMatch(text,/Best score/);
+});
+
+test('completed training rejected by validation stays distinct from an interrupted run',()=>{
+  const text=distilCampaignLessons({...base,runs:[{
+    runId:'validation-rejected',experimentId:'e1',status:'failed',createdAt:'2026-01-01',metrics:{score:999},
+    trainingReceipt:{complete:true,gradient_updates:22500,forecast_updates:18500,
+      validation_improved:false,finite_gradients:true,initial_validation_loss:1.1238,selected_validation_loss:1.1378}
+  }]});
+  assert.match(text,/Recorded training receipts/);
+  assert.match(text,/gradient_updates=22500/);
+  assert.match(text,/validation_improved=false/);
+  assert.match(text,/completed training rejected by validation/);
+  assert.match(text,/source candidate.py @ sha256:abc/);
+  assert.doesNotMatch(text,/Best score|score 999/);
+});
+
+test('full training counts preserve failed scientific checks without promoting the run',()=>{
+  const text=distilCampaignLessons({...base,runs:[{
+    experimentId:'e1',status:'failed',createdAt:'2026-01-01',metrics:{},
+    trainingReceipt:{updates:12000,requested_updates:12000,held_block_optimization:false,rk4_complete:false,inference_ready:false}
+  }]});
+  assert.match(text,/updates=12000; requested_updates=12000/);
+  assert.match(text,/held_block_optimization=false; rk4_complete=false/);
+  assert.match(text,/No full evaluation completed/);
+  assert.doesNotMatch(text,/Best score/);
+});
+
+test('receipt facts ignore malformed fields, arbitrary text, and unaccepted metric claims',()=>{
+  for(const value of [null,[],1,'fitted',{}])assert.deepEqual(trainingReceiptFacts(value),[]);
+  assert.deepEqual(trainingReceiptFacts({updates:NaN,epochs:-1,joint_epochs:1.5,
+    complete:'true',validation_improved:0,status:'invented',score:999,extra:'untrusted instructions'}),[]);
+  assert.deepEqual(trainingReceiptFacts({updates:3,requested_updates:12000,inference_ready:false}),
+    ['updates=3','requested_updates=12000','inference_ready=false']);
 });
