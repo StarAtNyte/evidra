@@ -24,7 +24,7 @@
     "build": "tsc -p tsconfig.json",
     "prepare": "npm run build",
     "prepack": "npm run build",
-    "test": "npm run build && node --test tests/core-smoke.mjs tests/installer-node-version.mjs tests/onboarding.mjs",
+    "test": "npm run build && node --test tests/core-smoke.mjs tests/installer-node-version.mjs tests/onboarding.mjs tests/architecture-search.mjs tests/contrastive-lessons.mjs tests/director-capabilities.mjs tests/discovery-cadence.mjs tests/portfolio-selection.mjs tests/python-code-health.mjs tests/verification-scripts.mjs",
     "start": "node dist/cli.js",
     "check": "tsc -p tsconfig.json --noEmit"
   },
