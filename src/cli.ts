@@ -26,7 +26,7 @@ import { distributionObservationsFromFeedback, estimateDistributionBeliefs, type
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, verificationOnlyHasEvidence, verificationSourcePinError, type ExecutionStage } from "./core/execution-stages.js";
 import { missingVerificationScripts, planVerificationExecution } from "./core/verification-execution.js";
 import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceFrontier, sourceSearchText, sourceIsFresh, SOURCE_SEARCH_RANKING_VERSION } from "./core/sources.js";
-import { competitionResearchClaimType, competitionResearchSources, competitionSourceRefreshMs } from "./core/competition-sources.js";
+import { competitionChangeGuidance, competitionResearchClaimType, competitionResearchSources, competitionSourceChange, competitionSourceRefreshMs, type CompetitionChangeEvent } from "./core/competition-sources.js";
 import { extractCompetitionInsights } from "./core/competition-insights.js";
 import { dashboardHtml, dashboardSnapshot, paintingJobsSnapshot } from "./core/dashboard.js";
 import { workbenchHtml } from "./core/dashboard-web.js";
@@ -833,6 +833,8 @@ async function ingestCompetitionSources(adapter: ReturnType<typeof activeCompeti
         store.saveClaim({ id: claimId, payload: { id: claimId, statement, excerpt: claim.excerpt, sourceSpan: { start: claim.start, end: claim.end }, scope: source.url, confidence: 0.35, sourceType: competitionResearchClaimType(configured.kind), sourceId: source.id, status: "active" } });
         store.saveEdge({ id: `edge_${claimId}_${source.id}`, fromId: claimId, toId: source.id, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
       }
+      const change = competitionSourceChange(prior ? (prior.payload as { text?: string }).text : undefined, source.text);
+      if (change.changed) store.appendEvent("challenge.source.changed", { url, channelKind: configured.kind, added: change.added, removedCount: change.removedCount, previousSource: (prior?.payload as { id?: string } | undefined)?.id });
       store.appendEvent(prior ? "challenge.source.refreshed" : "challenge.source.ingested", { url, title: source.title, claims: claims.length, channelKind: configured.kind, insightCounts: { leaderboard: insights.leaderboard.length, discussions: insights.discussions.length, signals: insights.signals.length }, previousSource: prior ? (prior.payload as { id?: string }).id : undefined });
     } catch (error) {
       store.appendEvent("challenge.source.failed", { url, error: error instanceof Error ? error.message : String(error) });
@@ -5876,7 +5878,16 @@ research
       const rubricGuidance = priorRubricGaps.length
         ? `\n\nPrior decision-rubric gaps to repair before spending compute:\n${[...new Set(priorRubricGaps)].join("\n")}`
         : "";
-      const progressGuidance = (goalProgress.directive ? `\n\n${goalProgress.directive}` : "") + (proxyTransfer ? `\n\n${proxyTransferGuidance(proxyTransfer.calibration, transferIncumbent)}` : "");
+      const sourceChanges: CompetitionChangeEvent[] = recordsForCampaign(store.eventsByType("challenge.source.changed"), campaign.startedAt)
+        // A change steers the cycles of the next day, then stops repeating.
+        .filter((event) => Date.now() - Date.parse(event.createdAt) <= 24 * 60 * 60_000)
+        .slice(-6)
+        .map((event) => {
+          const payload = event.payload as { url?: string; channelKind?: string; added?: string[]; removedCount?: number };
+          return { url: payload.url ?? "", channelKind: payload.channelKind ?? "other", added: payload.added ?? [], removedCount: payload.removedCount ?? 0, at: event.createdAt };
+        });
+      const changeGuidance = sourceChanges.length ? `\n\n${competitionChangeGuidance(sourceChanges)}` : "";
+      const progressGuidance = changeGuidance + (goalProgress.directive ? `\n\n${goalProgress.directive}` : "") + (proxyTransfer ? `\n\n${proxyTransferGuidance(proxyTransfer.calibration, transferIncumbent)}` : "");
       const cadence = discoveryCadence(recordsForCampaign(store.eventsByType("research.decision.audit"), campaign.startedAt), recordsForCampaign(store.runs(), campaign.startedAt));
       if (cadence.guidance) store.appendEvent("research.discovery.cadence", { idleCycles: cadence.idleCycles, action: "bounded-experiment-guidance", gatesUnchanged: true });
       const cycleObjective = allocatedObjective + guidanceText + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance + progressGuidance + cadence.guidance + verificationRuntimeGuidance(adapter.config.evaluator.command)

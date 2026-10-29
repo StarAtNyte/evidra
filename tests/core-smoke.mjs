@@ -28,7 +28,7 @@ import { prepareSubmission, submissionValidationScores, validateSubmissionBundle
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, SOURCE_SEARCH_MIN_RELEVANCE_SCORE, SOURCE_SEARCH_RANKING_VERSION, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh, sourceSearchCacheIsCurrent, sourceSearchNeedsRefinement } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { CompetitionConfigSchema, ExperimentManifestSchema } from "../dist/core/types.js";
-import { competitionResearchClaimType, competitionResearchSources, competitionSourceRefreshMs } from "../dist/core/competition-sources.js";
+import { competitionChangeGuidance, competitionResearchClaimType, competitionResearchSources, competitionSourceChange, competitionSourceRefreshMs } from "../dist/core/competition-sources.js";
 import { extractCompetitionInsights } from "../dist/core/competition-insights.js";
 import { dashboardHtml, dashboardSnapshot } from "../dist/core/dashboard.js";
 import { workbenchHtml } from "../dist/core/dashboard-web.js";
@@ -14741,4 +14741,22 @@ test("interruption journaling reports absent source and redacts errors without a
       {worktree:root,paths:async()=>[],record:()=>{records++;}}),42);
     assert.equal(records,0);
   }finally {rmSync(root,{recursive:true,force:true});}
+});
+
+test("competition source changes are detected and force re-orientation only for rule changes", () => {
+  const before = "Validation leaderboard is open. Daily quota is eight submissions per task.";
+  const after = "P3 is open: the test leaderboard is open. Daily quota is eight submissions per task. Validation answers are available by opt-in.";
+  assert.deepEqual(competitionSourceChange(undefined, after), { changed: false, added: [], removedCount: 0 });
+  assert.equal(competitionSourceChange(before, before).changed, false);
+  const change = competitionSourceChange(before, after);
+  assert.equal(change.changed, true);
+  assert.equal(change.removedCount, 1);
+  assert.ok(change.added.some((sentence) => sentence.startsWith("P3 is open")));
+  const at = "2026-10-27T16:00:00Z";
+  const rules = competitionChangeGuidance([{ url: "https://example.org/timeline", channelKind: "rules", added: change.added, removedCount: 1, at }]);
+  assert.match(rules, /^COMPETITION CONTEXT CHANGED/);
+  assert.match(rules, /P3 is open/);
+  const board = competitionChangeGuidance([{ url: "https://example.org/lb", channelKind: "leaderboard", added: ["Team X 230."], removedCount: 0, at }]);
+  assert.doesNotMatch(board, /COMPETITION CONTEXT CHANGED/);
+  assert.equal(competitionChangeGuidance([]), "");
 });
