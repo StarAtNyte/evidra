@@ -6,3 +6,8 @@ do not leave completed changes only in the local working tree.
 
 Report the pushed commit and validation result. If validation or pushing fails,
 report the failure accurately and resolve it before claiming the changes shipped.
+
+## Commit attribution
+
+Do not add AI attribution to commits or pull requests: no `Co-Authored-By`
+trailers for Claude or other assistants, and no "Generated with" lines.
