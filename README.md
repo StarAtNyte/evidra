@@ -22,6 +22,19 @@ You bring the question, workspace, or challenge. Evidra coordinates the loop, ke
 | A general harness for metrics, artifacts, proofs, behavior, and system properties | A Kaggle-only automation script |
 | A reproducible experiment and evidence ledger | A promise that model output is ground truth |
 
+### How the search loop works
+
+The core loop takes its shape from [autoresearch](https://github.com/karpathy/autoresearch): try an idea, run the
+locked evaluator, keep it if it beats the best result so far, and otherwise discard it.
+
+- **Experiments compound.** Every completed run that beats the champion becomes the new champion, and the
+  next experiment's worktree starts from the champion's implementation.
+- **Attempts are cheap; claims are reviewed.** The director can run any concrete idea, from tuning to a new
+  algorithm or architecture, without first justifying it. The critic and semantic auditor review only claims
+  that the goal is met. Validation, replication, and submission gates apply to promotion, never to trying.
+- **The director sees the results log.** Each cycle it receives the champion and the recent attempts (idea,
+  method family, metric, kept or not), so it can refine what works and switch families when one stalls.
+
 ## At a glance
 
 | Need | Evidra gives you |

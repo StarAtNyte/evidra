@@ -66,7 +66,9 @@ export function assessCodeHealth(before: CodeHealthSnapshot, after: CodeHealthSn
   if (todoDelta > 0) reasons.push(`TODO/FIXME/HACK markers increased by ${todoDelta}`);
   const largeUntestedGrowth = sourceLineDelta >= 200 && testLineDelta <= 0 && sourceLineDelta >= Math.max(200, before.sourceLines * 0.5);
   if (largeUntestedGrowth) reasons.push(`source grew by ${sourceLineDelta} line(s) without test growth`);
-  const status: CodeHealthAssessment["status"] = removedTestFiles > 0 || (largeUntestedGrowth && sourceLineDelta >= 500) ? "fail" : reasons.length ? "warn" : "pass";
+  // Only deleting tests fails an attempt: a large new algorithm is exactly what research
+  // should try, so untested growth and TODO markers are warnings, not vetoes.
+  const status: CodeHealthAssessment["status"] = removedTestFiles > 0 ? "fail" : reasons.length ? "warn" : "pass";
   return { status, sourceLineDelta, testLineDelta, todoDelta, removedTestFiles, reasons };
 }
 
@@ -84,7 +86,7 @@ export function assessCodeHealthTrend(assessments: CodeHealthAssessment[]): Code
   const reasons: string[] = [];
   if (untestedGrowthStreak >= 3) reasons.push(untestedGrowthStreak + " consecutive edits grew source without growing tests");
   if (cumulativeTodoDelta > 0) reasons.push("recent edits accumulated " + cumulativeTodoDelta + " TODO/FIXME/HACK marker(s)");
-  const severe = recent.some((item) => item.status === "fail") || (untestedGrowthStreak >= 4 && cumulativeSourceLineDelta >= 500) || cumulativeTodoDelta >= 25;
+  const severe = recent.some((item) => item.status === "fail");
   const status: CodeHealthTrend["status"] = severe ? "fail" : reasons.length ? "warn" : "pass";
   return { samples: recent.length, cumulativeSourceLineDelta, cumulativeTestLineDelta, cumulativeTodoDelta, untestedGrowthStreak, status, reasons };
 }

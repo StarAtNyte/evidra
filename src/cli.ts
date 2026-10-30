@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { discoveryCadence, verificationRuntimeGuidance, incompleteVerificationProposal } from "./core/discovery-cadence.js";
-import { architectureNovelty, ARCHITECTURE_SEARCH_GUIDANCE } from "./core/architecture-search.js";
+import { architectureNovelty } from "./core/architecture-search.js";
 import { formatHarnessFeedback, parseHarnessFeedbackRole, projectHarnessFailureFeedback } from "./core/harness-feedback.js";
 import { workspaceBackupDestination } from "./core/backup-path.js";
 import { reconcileRemoteExperiment } from "./core/remote-reconciliation.js";
 import { Command } from "commander";
-import { appendFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync, realpathSync } from "node:fs";
+import { appendFileSync, copyFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync, realpathSync } from "node:fs";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
@@ -67,7 +67,7 @@ import { compareRuns } from "./core/statistics.js";
 import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, researchToolFailureClass, semanticAuditTraceEvidence, type TrajectoryEvent } from "./core/trajectories.js";
 import { recoverUncommittedTraceFiles } from "./core/trajectory-recovery.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.js";
-import { applyCriticGate, formatOpenCriticConstraintGuidance, latestOpenCriticConstraint, promoteExplicitExploratoryRun, promoteOperatorSteeredExploration } from "./core/critic-gate.js";
+import { applyCriticGate, formatOpenCriticConstraintGuidance, latestOpenCriticConstraint } from "./core/critic-gate.js";
 import { recordBaselineEvidence, recordBaselineReuse } from "./core/baseline.js";
 import { redactSecrets, redactStructured } from "./core/redaction.js";
 import { observedGpuHours } from "./core/compute-budget.js";
@@ -132,7 +132,7 @@ import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTas
 import { runSafetyBenchmark } from "./core/safety-bench.js";
 import { runOrchestrationBenchmark } from "./core/orchestration-bench.js";
 import { runGovernanceBenchmark } from "./core/governance-bench.js";
-import { selectRatchetReference } from "./core/ratchet.js";
+import { championExperimentIds, championImplementation, experimentLog, selectRatchetReference } from "./core/ratchet.js";
 import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.js";
 import { approvalInbox } from "./core/approvals.js";
 import { loadProjectGuidance } from "./core/project-guidance.js";
@@ -362,6 +362,35 @@ async function runCampaignExperiment(rootPath: string, experimentId: string, sta
   });
 }
 
+/** The champion and recent attempts, given to the director every cycle. */
+function campaignExperimentLog(store: ResearchStore, metricName: string): { champion: ReturnType<typeof experimentLog>["champion"]; experimentLog: ReturnType<typeof experimentLog>["recent"] } {
+  const log = experimentLog(store, metricName);
+  return { champion: log.champion, experimentLog: log.recent };
+}
+
+/** Start a fresh experiment worktree from the current champion's implementation. */
+async function seedFromChampion(worktree: string, experimentId: string): Promise<void> {
+  const status = await runProcess(["git", "status", "--porcelain=v1", "--untracked-files=no"], worktree, 60_000);
+  // A resumed worktree already holds this experiment's own edits; never overwrite them.
+  if (status.exitCode !== 0 || status.stdout.trim()) return;
+  const store = new ResearchStore(statePath);
+  try {
+    const champion = championImplementation(store);
+    if (!champion || champion.experimentId === experimentId || !existsSync(champion.worktree)) return;
+    const copied: string[] = [];
+    for (const path of champion.files) {
+      const source = join(champion.worktree, path);
+      if (!existsSync(source)) continue;
+      mkdirSync(dirname(join(worktree, path)), { recursive: true });
+      copyFileSync(source, join(worktree, path));
+      copied.push(path);
+    }
+    if (copied.length) store.appendEvent("experiment.implementation.inherited", { experimentId, championExperimentId: champion.experimentId, files: copied });
+  } finally {
+    store.close();
+  }
+}
+
 async function implementCampaignHypothesis(
   rootPath: string,
   experimentId: string,
@@ -427,6 +456,7 @@ async function implementCampaignHypothesis(
     if (!seed) console.log(`Experiment ${experimentId} · verification-only; preserving source and running declared evidence checks`);
     return;
   }
+  await seedFromChampion(worktree, experimentId);
   const captureCodeHealth = async (): Promise<ReturnType<typeof snapshotCodeHealth>> => {
     const inventory = await runProcess(["rg", "--files", "-g", "!.git/**", "-g", "!.sota/**", "-g", "!node_modules/**"], worktree, 60_000);
     const files: CodeHealthFile[] = [];
@@ -480,7 +510,7 @@ async function implementCampaignHypothesis(
   const engineerGuidance = loadProjectGuidance(rootPath, "experiment engineer");
   const task = {
     role: "experiment engineer",
-    objective: `Implement the selected hypothesis in this isolated worktree. Inspect the existing project, make the smallest reproducible change described by the hypothesis, run relevant smoke checks, and leave the worktree ready for evaluation. For implementations that train or persist learned artifacts, exercise the real manifest construction, serialization, reload, and inference path with a tiny fixture before expensive fitting; verify accepted round trips and rejection of changed input, configuration, source, or checkpoint content. For interrupted training, retain optimizer state, global update count, validation-selection history, and previously charged resource use. Estimate completion from measured representative step time plus startup and evaluation overhead against both phase and aggregate remaining budgets; report infeasibility without shortening the scientific training requirement or silently starting a fresh fit. Do not touch files outside this worktree, submit anything, or invent a result.${seededImplementation ? " A checksum-verified seed has already been copied to the declared candidate entrypoint; preserve that implementation and make only the hypothesis-specific change." : ""}${stagedArtifacts.length ? " Checksum-pinned auxiliary inputs are staged at the listed paths. Treat them as immutable evidence/input: do not modify them. If the evaluated solution needs fitted parameters at runtime, embed them in source or make the package explicitly include the verified asset." : ""} If the selected provider cannot edit files directly, return ONLY an applicable unified diff whose first line begins with diff --git; otherwise perform the edit and summarize it.`,
+    objective: `Implement the selected hypothesis in this isolated worktree. It already holds the current champion implementation (the best result so far); build on it. Implement the idea fully: if it calls for a new algorithm or architecture, write it, rewriting or replacing code as needed, and do not water it down to a token tweak. Keep the code as simple as the idea allows. Run quick smoke checks so the evaluator will not crash, then leave the worktree ready for evaluation. If the solution trains or persists learned artifacts, check save, reload, and inference on a tiny fixture before an expensive fit, and report infeasibility instead of silently shortening training. Do not touch files outside this worktree, change the evaluator, submit anything, or invent a result.${seededImplementation ? " A checksum-verified seed has already been copied to the declared candidate entrypoint; preserve that implementation and make only the hypothesis-specific change." : ""}${stagedArtifacts.length ? " Checksum-pinned auxiliary inputs are staged at the listed paths. Treat them as immutable evidence/input: do not modify them. If the evaluated solution needs fitted parameters at runtime, embed them in source or make the package explicitly include the verified asset." : ""} If the selected provider cannot edit files directly, return ONLY an applicable unified diff whose first line begins with diff --git; otherwise perform the edit and summarize it.`,
     context: {
       manifest,
       hypothesis,
@@ -5891,7 +5921,7 @@ research
       const cadence = discoveryCadence(recordsForCampaign(store.eventsByType("research.decision.audit"), campaign.startedAt), recordsForCampaign(store.runs(), campaign.startedAt));
       if (cadence.guidance) store.appendEvent("research.discovery.cadence", { idleCycles: cadence.idleCycles, action: "bounded-experiment-guidance", gatesUnchanged: true });
       const cycleObjective = allocatedObjective + guidanceText + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance + progressGuidance + cadence.guidance + verificationRuntimeGuidance(adapter.config.evaluator.command)
-        + (goalProgress.pivotRequired ? `\n\nARCHITECTURE EXPLORATION: ${ARCHITECTURE_SEARCH_GUIDANCE}` : "");
+        + (goalProgress.pivotRequired ? "\n\nPLATEAU: the champion has stopped improving. Propose structurally different families (a new representation, mechanism, or objective), not more tuning of the current one." : "");
       const researchSources = latestSourcePayloads(store.sources(), 12, cycleObjective, store);
       const researchMemory = researchMemoryContext(store, 30, cycleObjective, {
         objective: campaign.goal,
@@ -6198,8 +6228,9 @@ research
           console.log("Research · director is cross-pollinating lane findings...");
           const verifiedStateStore = new ResearchStore(statePath);
           const verifiedState = phaseGoal ? projectVerifiedSubtaskState(verifiedStateStore.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined);
+          const experimentHistory = campaignExperimentLog(verifiedStateStore, adapter.config.metric.name);
           verifiedStateStore.close();
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, authoritativeEvidence: researchMemory.authoritativeObservations, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, laneToolResults: laneToolObservationContext(laneReports), crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness, goalProgress, triggerContext: campaign.triggerContext ? { eventType: campaign.triggerContext.eventType, eventCreatedAt: campaign.triggerContext.eventCreatedAt, trust: "external_wakeup_signal" } : null }, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, taskId: cycleTaskId, goalId: phaseGoal?.id ?? null, parentTaskId: cycleTaskId, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, onToolBudgetExhausted: (details) => {
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, ...experimentHistory, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, authoritativeEvidence: researchMemory.authoritativeObservations, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, laneToolResults: laneToolObservationContext(laneReports), crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness, goalProgress, triggerContext: campaign.triggerContext ? { eventType: campaign.triggerContext.eventType, eventCreatedAt: campaign.triggerContext.eventCreatedAt, trust: "external_wakeup_signal" } : null }, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, taskId: cycleTaskId, goalId: phaseGoal?.id ?? null, parentTaskId: cycleTaskId, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, onToolBudgetExhausted: (details) => {
             const exhaustedStore = new ResearchStore(statePath);
             exhaustedStore.appendEvent("research.director.tool_budget.exhausted", { cycle, goalId: phaseGoal?.id ?? null, ...details });
             exhaustedStore.close();
@@ -6223,68 +6254,73 @@ research
             phaseStore.appendEvent("research.decision.phase_normalized", { cycle, requestedPhase, activePhase: phaseGoal.phase, reason: "controller owns phase transitions" });
             phaseStore.close();
           }
-          campaign = recordCampaignCheckpoint(campaign, mode, cycle, "research-critic");
-          criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
-            authoritativeEvidence: researchMemory.authoritativeObservations,
-            provider: options.provider as "codex" | "claude" | "local",
-            model: selectedModel,
-            modelPool: researchModelPool,
-            fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined,
-            limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop",
-            reasoningEffort: options.thinking,
-            timeoutMs: agentTimeoutMs,
-            cwd: root,
-            storePath: statePath,
-            campaignStartedAt: campaign.startedAt,
-            roleTokenBudgets: campaign.runtime.roleTokenBudgets,
-            maxParallel: 1,
-            taskId: cycleTaskId,
-            goalId: phaseGoal?.id ?? null,
-            parentTaskId: cycleTaskId,
-            autonomy,
-            executeTool: researchToolExecutor(adapter, autonomy),
-            onActivity: toolTrace.onActivity,
-            onAssistant: toolTrace.onAssistant,
-            onUsage: recordAgentUsage,
-          });
-          assertAgentTokenBudget();
-          semanticAudit = await runResearchSemanticAuditor(cycleObjective, decision, {
-            observation,
-            authoritativeEvidence: researchMemory.authoritativeObservations,
-            phaseGoal,
-            controllerToolObservations: semanticAuditTraceEvidence(toolTrace.events),
-            laneReports: laneToolObservationContext(laneReports),
-            critic: criticReview,
-          }, {
-            provider: options.provider as "codex" | "claude" | "local",
-            model: selectedModel,
-            modelPool: researchModelPool,
-                fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined,
-            limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop",
-            reasoningEffort: options.thinking,
-            timeoutMs: agentTimeoutMs,
-            cwd: root,
-            storePath: statePath,
-            campaignStartedAt: campaign.startedAt,
-            roleTokenBudgets: campaign.runtime.roleTokenBudgets,
-            maxParallel: 1,
-            taskId: cycleTaskId,
-            goalId: phaseGoal?.id ?? null,
-            parentTaskId: cycleTaskId,
-            autonomy,
-            executeTool: researchToolExecutor(adapter, autonomy),
-            onActivity: toolTrace.onActivity,
-            onAssistant: toolTrace.onAssistant,
-            onUsage: recordAgentUsage,
-          }, phaseCompletionCriteriaForAudit(phaseGoal, decision.goalStatus));
-          assertAgentTokenBudget();
-          if (semanticAudit.verdict !== "pass") {
-            decision = { ...decision, phase: phaseGoal?.phase ?? decision.phase, decision: "inspect", goalStatus: "active", nextAction: `${decision.nextAction} (semantic audit: ${[...semanticAudit.findings, ...semanticAudit.requiredChecks].join(", ")})` };
-            const auditStore = new ResearchStore(statePath);
-            auditStore.appendEvent("research.semantic_audit.gated", { cycle, verdict: semanticAudit.verdict, findings: semanticAudit.findings, requiredChecks: semanticAudit.requiredChecks });
-            auditStore.close();
+          // Attempts are cheap and the evaluator judges them; review gates claims. The critic and
+          // semantic auditor therefore run only when the director claims completion or stops.
+          const claimsCompletion = decision.goalStatus === "met" || decision.decision === "stop";
+          if (claimsCompletion) {
+            campaign = recordCampaignCheckpoint(campaign, mode, cycle, "research-critic");
+            criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
+              authoritativeEvidence: researchMemory.authoritativeObservations,
+              provider: options.provider as "codex" | "claude" | "local",
+              model: selectedModel,
+              modelPool: researchModelPool,
+              fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined,
+              limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop",
+              reasoningEffort: options.thinking,
+              timeoutMs: agentTimeoutMs,
+              cwd: root,
+              storePath: statePath,
+              campaignStartedAt: campaign.startedAt,
+              roleTokenBudgets: campaign.runtime.roleTokenBudgets,
+              maxParallel: 1,
+              taskId: cycleTaskId,
+              goalId: phaseGoal?.id ?? null,
+              parentTaskId: cycleTaskId,
+              autonomy,
+              executeTool: researchToolExecutor(adapter, autonomy),
+              onActivity: toolTrace.onActivity,
+              onAssistant: toolTrace.onAssistant,
+              onUsage: recordAgentUsage,
+            });
+            assertAgentTokenBudget();
+            semanticAudit = await runResearchSemanticAuditor(cycleObjective, decision, {
+              observation,
+              authoritativeEvidence: researchMemory.authoritativeObservations,
+              phaseGoal,
+              controllerToolObservations: semanticAuditTraceEvidence(toolTrace.events),
+              laneReports: laneToolObservationContext(laneReports),
+              critic: criticReview,
+            }, {
+              provider: options.provider as "codex" | "claude" | "local",
+              model: selectedModel,
+              modelPool: researchModelPool,
+                  fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined,
+              limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop",
+              reasoningEffort: options.thinking,
+              timeoutMs: agentTimeoutMs,
+              cwd: root,
+              storePath: statePath,
+              campaignStartedAt: campaign.startedAt,
+              roleTokenBudgets: campaign.runtime.roleTokenBudgets,
+              maxParallel: 1,
+              taskId: cycleTaskId,
+              goalId: phaseGoal?.id ?? null,
+              parentTaskId: cycleTaskId,
+              autonomy,
+              executeTool: researchToolExecutor(adapter, autonomy),
+              onActivity: toolTrace.onActivity,
+              onAssistant: toolTrace.onAssistant,
+              onUsage: recordAgentUsage,
+            }, phaseCompletionCriteriaForAudit(phaseGoal, decision.goalStatus));
+            assertAgentTokenBudget();
+            if (semanticAudit.verdict !== "pass") {
+              decision = { ...decision, phase: phaseGoal?.phase ?? decision.phase, decision: decision.decision === "stop" ? "inspect" : decision.decision, goalStatus: "active", nextAction: `${decision.nextAction} (semantic audit: ${[...semanticAudit.findings, ...semanticAudit.requiredChecks].join(", ")})` };
+              const auditStore = new ResearchStore(statePath);
+              auditStore.appendEvent("research.semantic_audit.gated", { cycle, verdict: semanticAudit.verdict, findings: semanticAudit.findings, requiredChecks: semanticAudit.requiredChecks });
+              auditStore.close();
+            }
           }
-          if (shouldPeerReview) {
+          if (shouldPeerReview && criticReview) {
             const collaborationStore = new ResearchStore(statePath);
             const useful = criticReview.verdict !== "proceed" || criticReview.requiredChecks.length > 0 || crossPollination.tensions.length > 0;
             collaborationStore.appendEvent("research.collaboration.outcome", {
@@ -6387,12 +6423,10 @@ research
         }
       }
       let decisionStore = new ResearchStore(statePath);
-      // In autonomous modes, a single concrete proposal plus a non-rejecting
-      // critic is enough to enter the controller's bounded execution path.
-      // Without this transition a director can repeatedly emit `propose`
-      // forever even though it has already supplied the exact hypothesis the
-      // controller needs. Safe mode deliberately remains approval-gated.
-      if (autonomyPolicy(autonomy).canRunIsolatedExperiments && criticReview?.verdict !== "reject" && decision.decision === "propose" && !decision.selectedHypothesis && decision.hypotheses.length === 1) {
+      // In autonomous modes a single concrete proposal is enough to run: the
+      // evaluator, not another review, decides whether it worked. Safe mode
+      // deliberately remains approval-gated.
+      if (autonomyPolicy(autonomy).canRunIsolatedExperiments && decision.decision === "propose" && !decision.selectedHypothesis && decision.hypotheses.length === 1) {
         const selected = decision.hypotheses[0];
         decision = {
           ...decision,
@@ -6400,58 +6434,14 @@ research
           selectedHypothesis: selected.title,
           nextAction: `Execute the single concrete hypothesis in an isolated worktree: ${selected.title}.`,
         };
-        decisionStore.appendEvent("research.autonomous.execution_promoted", { reason: "single concrete proposal with non-rejecting critic", hypothesis: selected.title, autonomy });
+        decisionStore.appendEvent("research.autonomous.execution_promoted", { reason: "single concrete proposal", hypothesis: selected.title, autonomy });
       }
-      const exploratoryPromotion = promoteExplicitExploratoryRun(decision, criticReview, autonomyPolicy(autonomy).canRunIsolatedExperiments);
-      if (exploratoryPromotion.promoted) {
-        decision = exploratoryPromotion.decision;
-        decisionStore.appendEvent("research.autonomous.execution_promoted", { reason: "critic explicitly permits bounded exploration and the director selected a falsifiable exploratory run", hypothesis: decision.selectedHypothesis, autonomy });
-      }
-      const experimentsForSteering = decisionStore.experiments();
-      const experimentsWithRuns = new Set(decisionStore.runs().map((run) => run.experimentId));
-      const scheduledHypothesisIds = new Set(experimentsForSteering.flatMap((entry) => {
-        const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { hypothesisId?: unknown; status?: unknown } : {};
-        // Permit an explicitly steered retry when implementation failed before
-        // any evaluator run existed; the operator may have changed the
-        // recovery route. Never re-run a hypothesis that already produced a
-        // run record, and never duplicate proposed/running work.
-        if (payload.status === "failed" && !experimentsWithRuns.has(entry.id)) return [];
-        return typeof payload.hypothesisId === "string" ? [payload.hypothesisId] : [];
-      }));
-      const steeredExploration = promoteOperatorSteeredExploration(
-        decision,
-        criticReview,
-        autonomyPolicy(autonomy).canRunIsolatedExperiments,
-        operatorSteeringMessages,
-        recordsForCampaign(decisionStore.hypotheses(), campaign.startedAt),
-        scheduledHypothesisIds,
-      );
-      if (steeredExploration.promoted) {
-        decision = steeredExploration.decision;
-        decisionStore.appendEvent("research.autonomous.execution_promoted", {
-          reason: "explicit operator steering authorized a falsifiable exploratory experiment despite unresolved validation-only gates",
-          hypothesis: decision.selectedHypothesis,
-          hypothesisId: steeredExploration.hypothesisId,
-          unresolvedCriticVerdict: criticReview?.verdict ?? "missing",
-          autonomy,
-          promotionAndSubmissionRemainBlocked: true,
-        });
-      }
-      const requestedExecutionBeforeCritic = decision.decision === "run" && Boolean(decision.selectedHypothesis);
-      const autonomousValidationRun = autonomyPolicy(autonomy).canRunIsolatedExperiments
-        && requestedExecutionBeforeCritic
-        && criticReview?.verdict === "revise";
+      // The critic only reviews completion claims, so it can veto a claim but never an attempt.
       const criticGate = applyCriticGate(decision, criticReview);
-      // A revise verdict often means “run the missing bounded check,” not
-      // “never execute.” In autonomous modes, permit that isolated validation
-      // run while preserving the critic objections in durable events. Reject
-      // remains a veto, and SAFE mode remains approval-gated.
-      const criticBlocks = criticGate.blocked && !autonomousValidationRun;
+      const criticBlocks = criticGate.blocked;
       if (criticBlocks) {
         decisionStore.appendEvent("research.critic.gate", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks });
         decision = criticGate.decision;
-      } else if (autonomousValidationRun) {
-        decisionStore.appendEvent("research.critic.validation_deferred", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks, action: "bounded isolated validation run" });
       }
       const decisionRubric = assessResearchDecisionRubric(decision, {
         baselineAvailable: Boolean(observation.baseline?.exitCode === 0),
@@ -6986,8 +6976,8 @@ research
         ...(crossPollination ? [{ id: `${trajectoryStamp}-cross-pollination`, kind: "process" as const, payload: { status: "completed", laneCount: crossPollination.laneCount, completedCount: crossPollination.completedCount, agreementPairs: crossPollination.agreementPairs, independentEvidenceCount: crossPollination.independentEvidenceCount, needsAdversarialReview: crossPollination.needsAdversarialReview } }] : []),
         ...laneReports.filter((lane) => lane.status === "failed").map((lane, index) => ({ id: `${trajectoryStamp}-lane-${index}`, kind: "process" as const, payload: { status: "failed", error: lane.error ?? `${lane.role} failed` } })),
         { id: `${trajectoryStamp}-evaluator`, kind: "evaluator", payload: {
-          evidenceConsistent: criticReview?.verdict === "proceed",
-          criticVerdict: criticReview?.verdict ?? "missing",
+          evidenceConsistent: !criticReview || criticReview.verdict === "proceed",
+          criticVerdict: criticReview?.verdict ?? "not_required",
           // A failed inspection route must not be silently converted into an
           // execution decision. Record this explicitly for harness scoring.
           executionAlignment: toolTrace.events.some((event) => event.kind === "tool_result")
@@ -7939,10 +7929,9 @@ experiment.command("run")
           cwd: baselinePayload?.cwd,
         };
         const comparison = compareRuns(baselineRun, RunResultSchema.parse(recorded), metricName, primaryMetricDirection === "minimize");
-        const acceptedExperimentIds = new Set(resultStore.eventsByType("experiment.validation.assessed")
-          .filter((event) => Boolean((event.payload as { acceptance?: { accepted?: unknown } }).acceptance?.accepted))
-          .map((event) => (event.payload as { experimentId?: unknown }).experimentId)
-          .filter((experimentId): experimentId is string => typeof experimentId === "string" && experimentId !== id));
+        // The search ratchet climbs on every completed run that beat the champion, as autoresearch
+        // keeps each improving commit. Validation acceptance gates claims and submissions, not search.
+        const acceptedExperimentIds = new Set(championExperimentIds(resultStore).filter((experimentId) => experimentId !== id));
         const historicalRuns = resultStore.experiments().flatMap((candidate) => {
           if (!acceptedExperimentIds.has(candidate.id)) return [];
           const candidateManifest = ExperimentManifestSchema.safeParse(candidate.payload);
@@ -7961,6 +7950,10 @@ experiment.command("run")
         const ratchetBaselineRun = historicalRuns.find((entry) => entry.id === ratchet.sourceId)?.run ?? baselineRun;
         const ratchetComparison = ratchet.sourceId === baselineRun.runId ? comparison : compareRuns(ratchetBaselineRun, RunResultSchema.parse(recorded), metricName, primaryMetricDirection === "minimize");
         resultStore.appendEvent("experiment.ratchet.checked", { experimentId: id, originalBaseline: baselineMetric, reference: ratchet, referenceRunId: ratchet.sourceId, referenceMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, comparison: ratchetComparison });
+        if (ratchetComparison.direction === "improved") {
+          resultStore.appendEvent("experiment.champion.updated", { experimentId: id, runId: result.runId, metric: recorded.metrics[metricName], previousRunId: ratchet.sourceId, previousMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, hypothesisId: manifest.hypothesisId });
+          console.log(`New champion: ${metricName} ${ratchetBaselineRun.metrics[metricName] ?? baselineMetric} → ${recorded.metrics[metricName]}; later experiments start from this implementation.`);
+        }
         const operator = manifest.searchOperator ?? "ucb_portfolio";
         resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison, searchOperator: operator });
         const gates = resultStore.experimentGates(id);

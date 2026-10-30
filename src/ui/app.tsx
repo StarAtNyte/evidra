@@ -1401,83 +1401,86 @@ export function App({ root }: { root: string }): React.JSX.Element {
         refreshVerifiedState: readVerifiedState,
       }, setProgress);
       if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
-      criticReview = await runResearchCritic(objective, decision, laneReports, {
-        authoritativeEvidence: researchMemory.authoritativeObservations,
-        provider: config.provider,
-        model: config.model,
-        modelPool: researchModelPool,
-        fallbackLocalModel: config.fallbackModel,
-        limitPolicy: config.limitPolicy,
-        reasoningEffort: config.reasoningEffort,
-        cwd: root,
-        storePath: join(root, ".sota", "database.sqlite"),
-        campaignStartedAt: campaign?.startedAt,
-        roleTokenBudgets: campaign?.runtime?.roleTokenBudgets,
-        maxParallel: 1,
-        taskId: parentTaskId ?? null,
-        autonomy: config.autonomy,
-        goalId: phaseGoal?.id ?? null,
-        parentTaskId: parentTaskId ?? null,
-        executeTool: (call, role) => executeResearchTool(call, {
-          root,
+      // Review gates completion claims, never attempts (see the CLI campaign loop).
+      if (decision.goalStatus === "met" || decision.decision === "stop") {
+        criticReview = await runResearchCritic(objective, decision, laneReports, {
+          authoritativeEvidence: researchMemory.authoritativeObservations,
+          provider: config.provider,
+          model: config.model,
+          modelPool: researchModelPool,
+          fallbackLocalModel: config.fallbackModel,
+          limitPolicy: config.limitPolicy,
+          reasoningEffort: config.reasoningEffort,
+          cwd: root,
           storePath: join(root, ".sota", "database.sqlite"),
+          campaignStartedAt: campaign?.startedAt,
+          roleTokenBudgets: campaign?.runtime?.roleTokenBudgets,
+          maxParallel: 1,
+          taskId: parentTaskId ?? null,
           autonomy: config.autonomy,
-          role,
-          competition: adapter.config,
-          onProgress: setProgress,
+          goalId: phaseGoal?.id ?? null,
+          parentTaskId: parentTaskId ?? null,
+          executeTool: (call, role) => executeResearchTool(call, {
+            root,
+            storePath: join(root, ".sota", "database.sqlite"),
+            autonomy: config.autonomy,
+            role,
+            competition: adapter.config,
+            onProgress: setProgress,
+            onProcess: registerProcess,
+          }),
           onProcess: registerProcess,
-        }),
-        onProcess: registerProcess,
-        isCancelled: () => interruptedProcess.current,
-        onProgress: setProgress,
-        onActivity: toolTrace.onActivity,
-        onAssistant: toolTrace.onAssistant,
-        onUsage: recordAgentUsage,
-      });
-      semanticAudit = await runResearchSemanticAuditor(objective, decision, {
-        observation,
-        authoritativeEvidence: researchMemory.authoritativeObservations,
-        phaseGoal,
-        controllerToolObservations: semanticAuditTraceEvidence(toolTrace.events),
-        laneReports: laneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
-        critic: criticReview,
-      }, {
-        provider: config.provider,
-        model: config.model,
-        modelPool: researchModelPool,
-        fallbackLocalModel: config.fallbackModel,
-        limitPolicy: config.limitPolicy,
-        reasoningEffort: config.reasoningEffort,
-        cwd: root,
-        storePath: join(root, ".sota", "database.sqlite"),
-        campaignStartedAt: campaign?.startedAt,
-        roleTokenBudgets: campaign?.runtime?.roleTokenBudgets,
-        maxParallel: 1,
-        taskId: parentTaskId ?? null,
-        autonomy: config.autonomy,
-        goalId: phaseGoal?.id ?? null,
-        parentTaskId: parentTaskId ?? null,
-        executeTool: (call, role) => executeResearchTool(call, {
-          root,
+          isCancelled: () => interruptedProcess.current,
+          onProgress: setProgress,
+          onActivity: toolTrace.onActivity,
+          onAssistant: toolTrace.onAssistant,
+          onUsage: recordAgentUsage,
+        });
+        semanticAudit = await runResearchSemanticAuditor(objective, decision, {
+          observation,
+          authoritativeEvidence: researchMemory.authoritativeObservations,
+          phaseGoal,
+          controllerToolObservations: semanticAuditTraceEvidence(toolTrace.events),
+          laneReports: laneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
+          critic: criticReview,
+        }, {
+          provider: config.provider,
+          model: config.model,
+          modelPool: researchModelPool,
+          fallbackLocalModel: config.fallbackModel,
+          limitPolicy: config.limitPolicy,
+          reasoningEffort: config.reasoningEffort,
+          cwd: root,
           storePath: join(root, ".sota", "database.sqlite"),
+          campaignStartedAt: campaign?.startedAt,
+          roleTokenBudgets: campaign?.runtime?.roleTokenBudgets,
+          maxParallel: 1,
+          taskId: parentTaskId ?? null,
           autonomy: config.autonomy,
-          role,
-          competition: adapter.config,
-          onProgress: setProgress,
+          goalId: phaseGoal?.id ?? null,
+          parentTaskId: parentTaskId ?? null,
+          executeTool: (call, role) => executeResearchTool(call, {
+            root,
+            storePath: join(root, ".sota", "database.sqlite"),
+            autonomy: config.autonomy,
+            role,
+            competition: adapter.config,
+            onProgress: setProgress,
+            onProcess: registerProcess,
+          }),
           onProcess: registerProcess,
-        }),
-        onProcess: registerProcess,
-        isCancelled: () => interruptedProcess.current,
-        onProgress: setProgress,
-        onActivity: toolTrace.onActivity,
-        onAssistant: toolTrace.onAssistant,
-        onUsage: recordAgentUsage,
-      }, phaseCompletionCriteriaForAudit(phaseGoal, decision.goalStatus));
-      if (semanticAudit.verdict !== "pass") {
-        decision = { ...decision, phase: phaseGoal?.phase ?? decision.phase, decision: "inspect", goalStatus: "active", nextAction: `${decision.nextAction} (semantic audit: ${[...semanticAudit.findings, ...semanticAudit.requiredChecks].join(", ")})` };
-        const auditStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        auditStore.appendEvent("research.semantic_audit.gated", { verdict: semanticAudit.verdict, findings: semanticAudit.findings, requiredChecks: semanticAudit.requiredChecks });
-        auditStore.close();
+          isCancelled: () => interruptedProcess.current,
+          onProgress: setProgress,
+          onActivity: toolTrace.onActivity,
+          onAssistant: toolTrace.onAssistant,
+          onUsage: recordAgentUsage,
+        }, phaseCompletionCriteriaForAudit(phaseGoal, decision.goalStatus));
+        if (semanticAudit.verdict !== "pass") {
+          decision = { ...decision, phase: phaseGoal?.phase ?? decision.phase, decision: decision.decision === "stop" ? "inspect" : decision.decision, goalStatus: "active", nextAction: `${decision.nextAction} (semantic audit: ${[...semanticAudit.findings, ...semanticAudit.requiredChecks].join(", ")})` };
+          const auditStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+          auditStore.appendEvent("research.semantic_audit.gated", { verdict: semanticAudit.verdict, findings: semanticAudit.findings, requiredChecks: semanticAudit.requiredChecks });
+          auditStore.close();
+        }
       }
       clearActiveProcess();
       activeSteer.current = null;
@@ -1861,7 +1864,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       activeSteer.current = null;
       const engineerResult = await runWithLocalFallback({
         role: "experiment engineer",
-        objective: "Implement the selected hypothesis in this isolated worktree. Inspect the existing estimator, make the smallest reproducible change, run relevant tests or smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree and do not submit anything. If the selected provider cannot edit files directly, return ONLY an applicable unified diff whose first line begins with diff --git; otherwise perform the edit and summarize it.",
+        objective: "Implement the selected hypothesis in this isolated worktree. Inspect the existing estimator, implement the idea fully (new algorithms or architectures included, rewriting code as needed, as simply as the idea allows), run quick smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree and do not submit anything. If the selected provider cannot edit files directly, return ONLY an applicable unified diff whose first line begins with diff --git; otherwise perform the edit and summarize it.",
         context: { manifest, hypothesis: hypothesis?.payload ?? null, worktree: experimentCwd },
       }, { provider: config.provider, model: config.model, cwd: worktree, reasoningEffort: config.reasoningEffort, sandbox: "workspace-write", limitPolicy: config.limitPolicy, onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); } }, config.fallbackModel, setProgress, registerProcess);
       const fallbackDiff = extractUnifiedDiff(String(engineerResult.output));

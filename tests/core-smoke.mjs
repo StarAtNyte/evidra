@@ -91,7 +91,7 @@ import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
 import { activeCampaignTaskIds, bindCampaignRuntime, campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, campaignRuntimeMatchesExceptAutonomy, extendCampaignBudget, nextCampaignCycle, parseRoleTokenBudgets, pauseCampaign, pauseCampaignForBudget, readCampaignCheckpoint, readDurableCampaignRuntime, recoverCompletedBudgetPause, recoverFalseBudgetExhaustion, researchTurnTimeoutMs, resolveCampaignMode, resumeCampaign, serializeRoleTokenBudgets, withCampaignCheckpoint } from "../dist/core/campaign.js";
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { campaignEvidenceConflictCounts, mergeCampaignToolFailures, recordsForCampaign, recordsForGoalSet } from "../dist/core/campaign-scope.js";
-import { applyCriticGate, formatOpenCriticConstraintGuidance, latestOpenCriticConstraint, promoteExplicitExploratoryRun, promoteOperatorSteeredExploration } from "../dist/core/critic-gate.js";
+import { applyCriticGate, formatOpenCriticConstraintGuidance, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence, recordBaselineReuse } from "../dist/core/baseline.js";
 import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
 import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, compactResearchQuery, createLaneToolExecutor, explicitWorkspaceReadPaths, laneHandoffBoard, lanePrompt, laneToolCalls, laneToolObservationContext, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneSessionScope, researchLaneTeamSize, researchLiteratureQueries, researchToolObservationAnchor, roleMemoryFromTrajectories, runResearchLanes, selectResearchLaneRoles, workspaceReadCallsFromSearchResult } from "../dist/agents/research-lanes.js";
@@ -111,7 +111,7 @@ import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTas
 import { evaluateGpuBudget, observedGpuHours } from "../dist/core/compute-budget.js";
 import { collaborationUtility } from "../dist/core/adaptive-harness.js";
 import { assessCodeHealth, assessCodeHealthTrend, snapshotCodeHealth } from "../dist/core/code-health.js";
-import { selectRatchetReference } from "../dist/core/ratchet.js";
+import { championExperimentIds, championImplementation, experimentLog, selectRatchetReference } from "../dist/core/ratchet.js";
 
 test("failed autonomous screening persists a retryable failed experiment instead of stranding it running", () => {
   const failed = failedAutonomousExperimentPayload({ id: "exp-1", status: "running", manifest: { immutable: true } }, {
@@ -2042,66 +2042,19 @@ test("retrospective replay selects difficult and diverse experiences determinist
   assert.deepEqual(selectRetrospectiveCoreset(records, 2).map((record) => record.trajectoryId), selectRetrospectiveCoreset(records, 2).map((record) => record.trajectoryId));
 });
 
-test("critic revision permits falsifiable exploration but blocks unsupported stopping and rejection", () => {
-  const decision = { phase: "evaluation", goalStatus: "met", decision: "run", bottleneck: "b", rationale: "r", hypotheses: [], selectedHypothesis: null, nextAction: "run it", toolCalls: [] };
-  const gated = applyCriticGate(decision, { verdict: "revise" });
-  assert.equal(gated.blocked, true);
-  assert.equal(gated.decision.goalStatus, "active");
-  assert.equal(gated.decision.decision, "inspect");
-  assert.match(gated.decision.nextAction, /critic verdict is revise/i);
+test("critic gates completion claims, never attempts", () => {
+  const decision = { phase: "evaluation", goalStatus: "met", decision: "stop", bottleneck: "b", rationale: "r", hypotheses: [], selectedHypothesis: null, nextAction: "finish", toolCalls: [] };
   assert.equal(applyCriticGate(decision, { verdict: "proceed" }).blocked, false);
-  const concreteRun = { ...decision, goalStatus: "active", selectedHypothesis: "candidate" };
-  assert.equal(applyCriticGate(concreteRun, { verdict: "revise" }).blocked, true, "a selected name without a falsification contract cannot run");
-  const falsifiableRun = { ...concreteRun, hypotheses: [{ title: "candidate", falsificationTest: "Run paired fixed inputs and reject if the metric does not improve." }] };
-  const revisedRun = applyCriticGate(falsifiableRun, { verdict: "revise" });
-  assert.equal(revisedRun.blocked, false);
-  assert.equal(revisedRun.decision.decision, "run");
-  assert.match(revisedRun.decision.nextAction, /exploratory run only.*do not claim validation/i);
-  assert.equal(applyCriticGate(falsifiableRun, { verdict: "reject" }).blocked, true, "explicit rejection remains a hard veto");
-  const mislabeledExploration = { ...falsifiableRun, decision: "inspect", rationale: "Run this selected hypothesis only as a bounded exploratory test.", nextAction: "Run the official evaluator on the public mini split.", selectedHypothesis: "candidate" };
-  const promoted = promoteExplicitExploratoryRun(mislabeledExploration, { verdict: "revise", summary: "A bounded exploratory run is defensible; promotion remains blocked." }, true);
-  assert.equal(promoted.promoted, true);
-  assert.equal(promoted.decision.decision, "run");
-  assert.match(promoted.decision.nextAction, /unresolved critic objections still block validation, promotion, and submission/i);
-  assert.equal(promoteExplicitExploratoryRun(mislabeledExploration, { verdict: "revise", summary: "Resolve prerequisites before execution." }, true).promoted, false);
-  assert.equal(promoteExplicitExploratoryRun(mislabeledExploration, { verdict: "revise", summary: "A bounded exploratory run is defensible." }, false).promoted, false);
-  assert.equal(promoteExplicitExploratoryRun(mislabeledExploration, { verdict: "reject", summary: "No exploratory run is allowed." }, true).promoted, false);
-  const auditDecision = {
-    ...mislabeledExploration,
-    decision: "inspect",
-    selectedHypothesis: "Reconcile score provenance",
-    hypotheses: [{ title: "Reconcile score provenance", formulationFamily: "validation", outcomeType: "proof", mechanism: "Compare records.", proposedChange: "Read run artifacts.", falsificationTest: "The records are unavailable." }],
-  };
-  const storedEstimatorHypothesis = {
-    id: "hyp-existing-estimator",
-    payload: {
-      id: "hyp-existing-estimator",
-      status: "proposed",
-      title: "Exploratory covariance propagation estimator",
-      formulationFamily: "inference",
-      outcomeType: "metric",
-      mechanism: "Propagating moments may improve the estimate.",
-      proposedChange: "Implement covariance propagation in an isolated worktree and run the locked mini evaluator.",
-      falsificationTest: "Reject if any row fails or the complete score does not improve.",
-      expectedMetricDelta: { low: -1e-9, median: -1e-10, high: 0 },
-      implementationRisk: "medium",
-      leakageRisk: "low",
-      decisionId: 12,
-    },
-  };
-  const operatorInstruction = "Run one isolated exploratory experiment even though unresolved data checks are blockers to validation and submission only.";
-  const steered = promoteOperatorSteeredExploration(auditDecision, { verdict: "revise" }, true, [operatorInstruction], [storedEstimatorHypothesis]);
-  assert.equal(steered.promoted, true);
-  assert.equal(steered.hypothesisId, "hyp-existing-estimator");
-  assert.equal(steered.decision.decision, "run");
-  assert.equal(steered.decision.selectedHypothesis, "Exploratory covariance propagation estimator");
-  assert.ok(steered.decision.hypotheses.some((hypothesis) => hypothesis.title === steered.decision.selectedHypothesis));
-  assert.match(steered.decision.nextAction, /unresolved checks as blockers to validation, promotion, and submission/i);
-  assert.equal(promoteOperatorSteeredExploration(auditDecision, { verdict: "revise" }, false, [operatorInstruction], [storedEstimatorHypothesis]).promoted, false, "safe permissions still block execution");
-  assert.equal(promoteOperatorSteeredExploration(auditDecision, { verdict: "reject" }, true, [operatorInstruction], [storedEstimatorHypothesis]).promoted, false, "critic rejection remains a hard veto");
-  assert.equal(promoteOperatorSteeredExploration(auditDecision, { verdict: "revise" }, true, [operatorInstruction], [storedEstimatorHypothesis], new Set(["hyp-existing-estimator"])).promoted, false, "already scheduled hypotheses are not duplicated");
-  const auditOnly = { ...storedEstimatorHypothesis, id: "hyp-audit", payload: { ...storedEstimatorHypothesis.payload, id: "hyp-audit", formulationFamily: "validation" } };
-  assert.equal(promoteOperatorSteeredExploration(auditDecision, { verdict: "revise" }, true, [operatorInstruction], [auditOnly]).promoted, false, "validation-only proposals are never executed as experiments");
+  assert.equal(applyCriticGate(decision, undefined).blocked, false);
+  for (const verdict of ["revise", "reject"]) {
+    const gated = applyCriticGate(decision, { verdict });
+    assert.equal(gated.blocked, true);
+    assert.equal(gated.decision.goalStatus, "active", "an objection keeps the goal open");
+    assert.equal(gated.decision.decision, "inspect", "a vetoed stop does not end the campaign");
+    assert.match(gated.decision.nextAction, /keep experimenting/i);
+  }
+  const runWhileClaiming = { ...decision, decision: "run", selectedHypothesis: "candidate" };
+  assert.equal(applyCriticGate(runWhileClaiming, { verdict: "reject" }).decision.decision, "run", "the attempt itself still runs");
 });
 
 test("critic constraints survive short event windows until a later proceed result", () => {
@@ -2111,10 +2064,7 @@ test("critic constraints survive short event windows until a later proceed resul
   ]);
   assert.deepEqual(open, { verdict: "revise", summary: "check leakage", objections: ["split is unverified"], requiredChecks: ["run grouped audit"] });
   const guidance = formatOpenCriticConstraintGuidance(open);
-  assert.match(guidance, /bounded internal phase goal may be marked met only when its own deterministic domain gate and durable subtask audit pass/i);
-  assert.match(guidance, /not a claim that the ultimate objective or candidate is complete or validated/i);
-  assert.match(guidance, /do not claim ultimate-goal completion, final-candidate validation, promotion, or submission/i);
-  assert.match(guidance, /explicit reject verdict still blocks execution/i);
+  assert.match(guidance, /block claims of completion, validation, promotion, or submission, never experiments/i);
   assert.equal(latestOpenCriticConstraint([
     { type: "research.critic.completed", payload: { review: { verdict: "revise", summary: "old", objections: [], requiredChecks: ["old check"] } } },
     { type: "research.critic.completed", payload: { review: { verdict: "proceed", summary: "resolved", objections: [], requiredChecks: [] } } },
@@ -2969,8 +2919,8 @@ test("code health detects severe test deletion and untested structural growth", 
   const trend = assessCodeHealthTrend([growth, growth, growth]);
   assert.equal(trend.status, "warn");
   assert.equal(trend.untestedGrowthStreak, 3);
-  const severeTrend = assessCodeHealthTrend([growth, growth, growth, growth]);
-  assert.equal(severeTrend.status, "fail");
+  assert.equal(assessCodeHealthTrend([growth, growth, growth, growth]).status, "warn", "growth alone never vetoes an attempt");
+  assert.equal(assessCodeHealthTrend([growth, removed]).status, "fail");
   const isolatedTrend = assessScopedCodeHealthTrend([
     { scope: "worktree-a", assessment: growth },
     { scope: "worktree-b", assessment: growth },
@@ -2983,8 +2933,34 @@ test("code health detects severe test deletion and untested structural growth", 
     { scope: "worktree-d", assessment: growth },
     { scope: "worktree-d", assessment: growth },
   ], "worktree-d", growth);
-  assert.equal(sameLineageTrend.status, "fail");
+  assert.equal(sameLineageTrend.status, "warn");
   assert.equal(sameLineageTrend.untestedGrowthStreak, 4);
+});
+
+test("champions compound: the latest improving run seeds the next experiment and heads the results log", () => {
+  const events = {
+    "experiment.champion.updated": [{ payload: { experimentId: "exp-1" } }, { payload: { experimentId: "exp-3" } }],
+    "experiment.implementation.completed": [
+      { payload: { experimentId: "exp-1", worktree: "/w/exp-1", files: { "kit/estimator.py": "sha256:a" } } },
+      { payload: { experimentId: "exp-3", worktree: "/w/exp-3", files: { "kit/estimator.py": "sha256:c", "kit/helper.py": "sha256:d" } } },
+    ],
+  };
+  const store = {
+    eventsByType: (type) => events[type] ?? [],
+    experiments: () => [
+      { id: "exp-1", payload: { hypothesisId: "h1", status: "completed", runId: "r1" } },
+      { id: "exp-2", payload: { hypothesisId: "h2", status: "completed", runId: "r2" } },
+      { id: "exp-3", payload: { hypothesisId: "h3", status: "completed", runId: "r3" } },
+    ],
+    runs: () => [{ id: "r1", payload: { metrics: { loss: 0.5 } } }, { id: "r2", payload: { metrics: { loss: 0.6 } } }, { id: "r3", payload: { metrics: { loss: 0.4 } } }],
+    hypotheses: () => [{ id: "h1", payload: { title: "tune", formulationFamily: "model" } }, { id: "h2", payload: { title: "worse", formulationFamily: "model" } }, { id: "h3", payload: { title: "new architecture", formulationFamily: "representation" } }],
+  };
+  assert.deepEqual(championExperimentIds(store), ["exp-1", "exp-3"]);
+  assert.deepEqual(championImplementation(store), { experimentId: "exp-3", worktree: "/w/exp-3", files: ["kit/estimator.py", "kit/helper.py"] });
+  const log = experimentLog(store, "loss");
+  assert.deepEqual(log.champion, { experimentId: "exp-3", idea: "new architecture", metric: 0.4 });
+  assert.deepEqual(log.recent.map((entry) => [entry.experimentId, entry.kept]), [["exp-1", true], ["exp-2", false], ["exp-3", true]]);
+  assert.equal(championImplementation({ eventsByType: () => [] }), undefined);
 });
 
 test("accepted experiment evidence forms a monotonic best-so-far ratchet", () => {

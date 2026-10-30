@@ -13,12 +13,12 @@ test('Python discovery names count as tests outside a tests directory',()=>{
  assert.equal(snapshot.testFiles,2);assert.equal(snapshot.sourceFiles,3);
 });
 
-test('Python test deletion still fails and untested source growth remains blocked',()=>{
+test('Python test deletion fails while untested source growth only warns',()=>{
  const before=snapshotCodeHealth([{path:'tools/test_state.py',content:'def test_state():\n    pass\n'}]);
  const deleted=assessCodeHealth(before,snapshotCodeHealth([{path:'solution/model.py',content:'x\n'.repeat(600)}]));
  assert.equal(deleted.status,'fail');assert.equal(deleted.removedTestFiles,1);
  const untested=assessCodeHealth(snapshotCodeHealth([]),snapshotCodeHealth([{path:'solution/model.py',content:'x\n'.repeat(600)}]));
- assert.equal(untested.status,'fail');
+ assert.equal(untested.status,'warn','a large new algorithm is an attempt worth evaluating');
 });
 
 test('Recognized Python test growth resolves only the structural no-test-growth signal',()=>{
