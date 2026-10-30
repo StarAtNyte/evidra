@@ -401,9 +401,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const [messages, setMessages] = useState<Message[]>([
     { role: "system", text: "Evidra Research Director — type /help for commands." },
   ]);
-  // Transcript history is intentionally kept in the session. This offset only
-  // controls the rendered window; zero follows new output at the bottom.
-  const [transcriptOffset, setTranscriptOffset] = useState(0);
+  // Bumped when the transcript is replaced (/clear, /new, /resume) so <Static> reprints it.
+  const [transcriptEpoch, setTranscriptEpoch] = useState(0);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [busyFrame, setBusyFrame] = useState(0);
@@ -689,14 +688,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
   }, []);
 
   useInput((value, key) => {
-    if (!picker && key.pageUp) {
-      setTranscriptOffset((current) => Math.min(Math.max(0, messages.length - 1), current + 8));
-      return;
-    }
-    if (!picker && key.pageDown) {
-      setTranscriptOffset((current) => Math.max(0, current - 8));
-      return;
-    }
     if (key.ctrl && value === "c") {
       if (input) {
         setInput("");
@@ -1724,8 +1715,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
       return;
     }
     if (request === "/clear") {
+      process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
       setMessages([]);
-      setTranscriptOffset(0);
+      setTranscriptEpoch((epoch) => epoch + 1);
       return;
     }
     if (request === "/new") {
@@ -1737,7 +1729,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       sessionId.current = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       activeCodexThread.current = undefined;
       setConfig((current) => ({ ...current, campaign: undefined, codexThreadId: undefined }));
-      setSetupStep(null); setSetupDraft({}); setMessages([{ role: "system", text: "New Evidra session. Previous work remains available with /resume." }]); setTranscriptOffset(0);
+      setSetupStep(null); setSetupDraft({}); setMessages([{ role: "system", text: "New Evidra session. Previous work remains available with /resume." }]); setTranscriptEpoch((epoch) => epoch + 1);
       const fresh = new ResearchStore(join(root, ".sota", "database.sqlite"));
       fresh.startSession(sessionId.current, { pid: process.pid, config: configRef.current, messages: [] });
       fresh.close();
@@ -1773,7 +1765,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       // campaign so restart is an explicit, provider-gated action below.
       resumedConfig.autonomy = config.autonomy;
       resumedConfig.codexThreadId = typeof storedConfig.codexThreadId === "string" ? storedConfig.codexThreadId : undefined;
-      setMessages([...resumedMessages, { role: "system", text: `Resumed ${saved.id} · permissions remain ${config.autonomy.toUpperCase()} for this terminal.` }]); setTranscriptOffset(0);
+      setMessages([...resumedMessages, { role: "system", text: `Resumed ${saved.id} · permissions remain ${config.autonomy.toUpperCase()} for this terminal.` }]); setTranscriptEpoch((epoch) => epoch + 1);
       setConfig(resumedConfig);
       const campaign = resumedConfig.campaign;
       providerCheckId.current += 1;
@@ -3935,10 +3927,35 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
   }, [busy]);
 
+  const renderMessage = (message: Message, key: string): React.ReactElement => {
+    if (message.role === "assistant" && /^Interrupted\b/i.test(message.text)) {
+      const detail = message.text.replace(/^Interrupted\s*[·:-]?\s*/i, "");
+      return <Box key={key} marginBottom={1} paddingX={1}>
+        <Text color={UI.red} bold>✕ INTERRUPTED</Text><Text color={UI.red}>  {detail || "Active work was stopped."}</Text>
+      </Box>;
+    }
+    if (message.kind === "tool") {
+      const [headline, ...details] = message.text.split("\n");
+      return <Box key={key} flexDirection="column" marginBottom={1} paddingLeft={2}>
+        <Text color={UI.muted} bold>• {headline}</Text>
+        {details.length > 0 && <Box paddingLeft={2}><RichText text={details.map((line) => `└ ${line}`).join("\n")} /></Box>}
+      </Box>;
+    }
+    const errorLike = message.role === "assistant" && /unreachable|not configured|not logged|failed|error|unavailable|refus|interrupted/i.test(message.text);
+    const accent = message.role === "user" ? UI.lime : message.role === "system" ? UI.muted : errorLike ? UI.red : UI.paper;
+    const label = messageLabel(message);
+    const body = label && message.role === "assistant" ? message.text.split("\n").slice(1).join("\n") : message.text;
+    return <Box key={key} flexDirection="column" marginBottom={1} paddingX={1}>
+      <Text color={accent} bold>{message.role === "user" ? "›" : message.role === "assistant" ? "•" : "·"}{label ? ` ${label}` : ""}</Text>
+      <RichText text={body} />
+    </Box>;
+  };
+
   return <Box flexDirection="column" padding={1}>
-    <Static items={[LOGO]}>
-      {(logo) => <Box key="evidra-logo" paddingX={2} flexDirection="column">
-        <Text color={UI.muted} bold>{(process.stdout.columns ?? 80) >= 52 ? logo : "EVIDRA"}</Text>
+    {/* Finished output is printed once into the terminal's own scrollback, so it scrolls natively. */}
+    <Static key={transcriptEpoch} items={[{ key: "logo", message: undefined as Message | undefined }, ...messages.map((message, index) => ({ key: `message-${index}`, message }))]}>
+      {(item) => item.message ? renderMessage(item.message, item.key) : <Box key="evidra-logo" paddingX={2} flexDirection="column">
+        <Text color={UI.muted} bold>{(process.stdout.columns ?? 80) >= 52 ? LOGO : "EVIDRA"}</Text>
       </Box>}
     </Static>
     <Box borderStyle="single" borderColor={UI.rule} paddingX={1} marginTop={1} justifyContent="space-between">
@@ -3946,38 +3963,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
     </Box>
     <Box paddingX={2} marginTop={1}>
       <Text color={UI.paper} bold>EVIDRA</Text><Text color={UI.muted}>  RESEARCH DIRECTOR</Text><Text color={UI.rule}>  │  </Text><Text color={UI.purple} bold>{config.mode.toUpperCase()}</Text><Text color={UI.rule}>  │  </Text><Text color={UI.amber} bold>THINKING: {config.reasoningEffort.toUpperCase()}</Text><Text color={UI.rule}>  │  </Text><Text color={UI.lime} bold>{config.autonomy.toUpperCase()}</Text>
-    </Box>
-    <Box flexDirection="column" marginTop={1} paddingX={1}>
-      {transcriptOffset > 0 && <Text color={UI.muted}>↑ PageUp · older messages · {transcriptOffset} from latest</Text>}
-      {(() => {
-        const end = Math.max(0, messages.length - transcriptOffset);
-        const start = Math.max(0, end - 16);
-        const visible = messages.slice(start, end).map((message, index) => {
-        if (message.role === "assistant" && /^Interrupted\b/i.test(message.text)) {
-          const detail = message.text.replace(/^Interrupted\s*[·:-]?\s*/i, "");
-          return <Box key={`${index}-${message.text}`} marginBottom={1} paddingX={1}>
-            <Text color={UI.red} bold>✕ INTERRUPTED</Text><Text color={UI.red}>  {detail || "Active work was stopped."}</Text>
-          </Box>;
-        }
-        if (message.kind === "tool") {
-          const [headline, ...details] = message.text.split("\n");
-          return <Box key={`${index}-${message.text}`} flexDirection="column" marginBottom={1} paddingLeft={2}>
-            <Text color={UI.muted} bold>• {headline}</Text>
-            {details.length > 0 && <Box paddingLeft={2}><RichText text={details.map((line) => `└ ${line}`).join("\n")} /></Box>}
-          </Box>;
-        }
-        const errorLike = message.role === "assistant" && /unreachable|not configured|not logged|failed|error|unavailable|refus|interrupted/i.test(message.text);
-        const accent = message.role === "user" ? UI.lime : message.role === "system" ? UI.muted : errorLike ? UI.red : UI.paper;
-        const label = messageLabel(message);
-        const body = label && message.role === "assistant" ? message.text.split("\n").slice(1).join("\n") : message.text;
-        return <Box key={`${index}-${message.text}`} flexDirection="column" marginBottom={1} paddingX={1}>
-          <Text color={accent} bold>{message.role === "user" ? "›" : message.role === "assistant" ? "•" : "·"}{label ? ` ${label}` : ""}</Text>
-          <RichText text={body} />
-        </Box>;
-        });
-        return <>{visible}{messages.length > 16 && transcriptOffset === 0 && <Text color={UI.muted}>PgUp · older messages · {messages.length} in transcript</Text>}</>;
-      })()}
-      {transcriptOffset > 0 && <Text color={UI.muted}>↓ PageDown · return to latest</Text>}
     </Box>
     {queuedRequests.length > 0 && <Box flexDirection="column" paddingX={1} marginTop={1}>
       <Text color={UI.amber} bold>• QUEUED · {queuedRequests.length} waiting</Text>
