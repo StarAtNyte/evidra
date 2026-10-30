@@ -5950,7 +5950,11 @@ research
       // emitted more than 100 research/tool events. The event store is bounded
       // at a much larger durable horizon, so do not accidentally rerun a
       // 20-minute baseline just because it moved outside a short UI window.
-      const priorBaseline = mode === "challenge" ? store.eventsByType("baseline.completed").at(-1) : undefined;
+      // Only an explicit --skip-baseline may reuse a control from an earlier campaign: a new campaign can
+      // change the evaluator's boards or the starting solution, and its control must measure that.
+      const priorBaseline = mode === "challenge"
+        ? (options.skipBaseline ? store.eventsByType("baseline.completed") : recordsForCampaign(store.eventsByType("baseline.completed"), campaign.startedAt)).at(-1)
+        : undefined;
       let baseline: { command: string[]; cwd: string; exitCode: number; durationMs: number; stdout: string; stderr: string } | undefined;
       // A campaign baseline is a control, not a per-cycle experiment. Isolated
       // candidate worktrees do not mutate the competition workspace, so rerunning
