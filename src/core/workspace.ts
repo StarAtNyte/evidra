@@ -1,27 +1,48 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+
+function isProjectMarker(directory: string): boolean {
+  return existsSync(join(directory, "details.md")) || existsSync(join(directory, ".sota")) || existsSync(join(directory, "competition.json"));
+}
+
+function isWithin(parent: string, candidate: string): boolean {
+  const rel = relative(parent, candidate);
+  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
+}
 
 /**
- * Find the Evidra project root when the CLI is launched from a nested
- * competition or starter-kit directory. A caller may still operate on an
- * uninitialised directory; in that case the starting directory is retained.
+ * An ancestor project owns a nested directory only when that directory is part
+ * of the project: its state, its competitions tree, or a declared competition
+ * workspace. An unrelated folder that merely sits below a project (for example
+ * a new project under a `$HOME` that holds another campaign) is not adopted.
+ */
+function ancestorOwns(ancestor: string, start: string): boolean {
+  if (isWithin(join(ancestor, ".sota"), start) || isWithin(join(ancestor, "competitions"), start)) return true;
+  let competitions: string[] = [];
+  try { competitions = readdirSync(join(ancestor, "competitions")); } catch { return false; }
+  for (const id of competitions) {
+    try {
+      const manifest = JSON.parse(readFileSync(join(ancestor, "competitions", id, "competition.json"), "utf8")) as { workspacePath?: unknown };
+      if (typeof manifest.workspacePath === "string" && manifest.workspacePath.trim() && isWithin(resolve(ancestor, manifest.workspacePath), start)) return true;
+    } catch { /* not a competition manifest */ }
+  }
+  return false;
+}
+
+/**
+ * Find the Evidra project root. The launch directory is the root when it is
+ * marked as a project or not owned by an ancestor project; nested invocations
+ * inside a project's own workspace inherit that project's state.
  */
 export function findWorkspaceRoot(start = process.cwd()): string {
   const explicitlySelected = process.env.EVIDRA_WORKSPACE_ROOT?.trim();
   if (explicitlySelected) return resolve(explicitlySelected);
   const startingDirectory = resolve(start);
-  let cursor = startingDirectory;
+  if (isProjectMarker(startingDirectory)) return startingDirectory;
+  let cursor = dirname(startingDirectory);
   while (true) {
+    if (isProjectMarker(cursor) && ancestorOwns(cursor, startingDirectory)) return cursor;
     const packagePath = join(cursor, "package.json");
-    // A project-local marker is authoritative only at the directory where the
-    // user launched Evidra. Never adopt an unrelated `.sota` directory from a
-    // parent such as `$HOME`; that silently redirects state and experiments.
-    if (cursor === startingDirectory && (existsSync(join(cursor, "details.md")) || existsSync(join(cursor, ".sota")) || existsSync(join(cursor, "competition.json")))) return cursor;
-    // Nested invocations inside an initialized Evidra project still inherit
-    // that project's state directory. The launch-directory check above keeps
-    // a standalone challenge manifest from being redirected to an unrelated
-    // parent state directory.
-    if (existsSync(join(cursor, "details.md")) || (cursor !== startingDirectory && existsSync(join(cursor, ".sota")))) return cursor;
     if (existsSync(packagePath)) {
       try {
         const packageJson = JSON.parse(readFileSync(packagePath, "utf8")) as { name?: unknown };

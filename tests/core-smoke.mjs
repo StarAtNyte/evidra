@@ -3645,6 +3645,16 @@ test("workspace root discovery keeps nested CLI invocations on the project state
     const nested = join(root, "competitions", "demo", "starterkit");
     mkdirSync(nested, { recursive: true });
     assert.equal(findWorkspaceRoot(nested), root);
+    // An unrelated project below an initialized ancestor (e.g. a new project under a $HOME
+    // that holds another campaign) must get its own root, not the ancestor's state.
+    const unrelated = join(root, "Projects", "tts");
+    mkdirSync(unrelated, { recursive: true });
+    assert.equal(findWorkspaceRoot(unrelated), unrelated);
+    // A declared competition workspace outside competitions/ still belongs to the project.
+    mkdirSync(join(root, "competitions", "arc"), { recursive: true });
+    writeFileSync(join(root, "competitions", "arc", "competition.json"), JSON.stringify({ workspacePath: "arc-kit" }));
+    mkdirSync(join(root, "arc-kit", "src"), { recursive: true });
+    assert.equal(findWorkspaceRoot(join(root, "arc-kit", "src")), root);
     const uninitialized = mkdtempSync(join(tmpdir(), "evidra-uninitialized-"));
     try { assert.equal(findWorkspaceRoot(uninitialized), uninitialized); } finally { rmSync(uninitialized, { recursive: true, force: true }); }
   } finally { rmSync(root, { recursive: true, force: true }); }
