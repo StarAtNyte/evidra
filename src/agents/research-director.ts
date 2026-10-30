@@ -409,7 +409,7 @@ export async function runResearchDirector(
   "rationale": "evidence-based reasoning",
   "hypotheses": [{
     "title": "short name",
-    "formulationFamily": "representation|data|validation|objective|model|inference|ensemble|repair|other",
+    "formulationFamily": "short method family name, e.g. mean propagation, graph network, gradient boosting; reuse a name from families to refine that family",
     "architectureChange": null,
     "outcomeType": "metric|artifact|proof|behavior|system|other",
     "implementationMode": "modify|verify",
@@ -439,8 +439,9 @@ export async function runResearchDirector(
 }
 
 How to work. The goal is the best result on the declared evaluator. A run is cheap and the evaluator decides, so prefer running an idea over debating it.
-- Experiments compound: each new experiment starts from the current champion (the best completed run so far, given as champion in context) or from the original workspace when there is none. Propose changes relative to it.
-- Be ambitious. Everything in the editable solution is fair game: new algorithms, new architectures, new mathematical formulations, and rewrites, as well as tuning. Balance refining the champion with structurally different families. When attempts in one family stop improving, switch family instead of tweaking it further. Give each hypothesis a distinct formulationFamily, and for a new architecture fill architectureChange against the champion.
+- Experiments compound within method families. formulationFamily names the method family. An attempt in an existing family starts from that family's best implementation; an attempt in a new family starts from the champion (the best run overall). families in context lists each family's best, attempts, and attempts since improvement, so a new architecture gets refined in its own line before it has to beat the champion.
+- Be ambitious. Everything in the editable solution is fair game: new algorithms, new architectures, new mathematical formulations, and rewrites, as well as tuning. When a family stops improving, move to another instead of tweaking it further. For a new architecture, fill architectureChange against the champion.
+- When explorationTurn is true, select a hypothesis from a new family or a young one (fewer than 3 attempts); Evidra enforces this.
 - All else equal, simpler is better: a small gain that adds heavy complexity is worth less than the same gain from deleting code.
 - Failed directions in research memory are negative evidence; do not repeat one unchanged.
 - When you have a concrete idea, decide run with its exact title in selectedHypothesis; do not wait for more evidence. Use inspect only to resolve a named unknown that would change what you run. Propose at most five hypotheses.

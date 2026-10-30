@@ -32,6 +32,11 @@ locked evaluator, keep it if it beats the best result so far, and otherwise disc
 - **Attempts are cheap; claims are reviewed.** The director can run any concrete idea, from tuning to a new
   algorithm or architecture, without first justifying it. The critic and semantic auditor review only claims
   that the goal is met. Validation, replication, and submission gates apply to promotion, never to trying.
+- **New ideas get their own line.** Every hypothesis names its method family, and each family keeps its own
+  best. An attempt starts from the best of its family (a new family starts from the champion), so a new
+  architecture is refined over several attempts instead of being discarded for losing its first run to a
+  tuned champion. One attempt in three goes to a new or young family (fewer than 3 attempts), enforced by
+  the controller.
 - **A hidden holdout catches overfitting.** Set `evaluator.holdoutCommand` in `competition.json` to an
   evaluator over data the agents cannot read. A run becomes champion only if it improves the primary metric
   and does not regress on the holdout; holdout scores are never shown to the agents.

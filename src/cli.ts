@@ -83,7 +83,7 @@ import { boundedPeerBoard, laneToolObservationContext, runResearchLanes } from "
 import { runResearchCritic, runResearchSemanticAuditor, type ResearchSemanticAudit } from "./agents/research-lanes.js";
 import { createPaintingJob, runPaintingJob } from "./agents/painting.js";
 import { claudeLoginStatus, DEFAULT_CLAUDE_MODEL, effectiveClaudeModel, resolveClaudeBinary } from "./agents/claude-exec.js";
-import { checkProvider, codexLoginStatus, isToolCapableProvider, codexResearchModelPool, CodexExecAgent, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listCodexModels, listLocalModels, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
+import { checkProvider, isAgentProvider, codexLoginStatus, isToolCapableProvider, codexResearchModelPool, CodexExecAgent, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listCodexModels, listLocalModels, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -132,7 +132,7 @@ import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTas
 import { runSafetyBenchmark } from "./core/safety-bench.js";
 import { runOrchestrationBenchmark } from "./core/orchestration-bench.js";
 import { runGovernanceBenchmark } from "./core/governance-bench.js";
-import { championExperimentIds, championImplementation, experimentLog, holdoutAllows, holdoutReference, isAgentVisibleEvent, selectRatchetReference } from "./core/ratchet.js";
+import { championExperimentIds, explorationHypothesis, holdoutAllows, holdoutReference, implementationOf, isAgentVisibleEvent, normalizeFamily, parentExperimentId, searchState, selectRatchetReference } from "./core/ratchet.js";
 import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.js";
 import { approvalInbox } from "./core/approvals.js";
 import { loadProjectGuidance } from "./core/project-guidance.js";
@@ -376,30 +376,34 @@ async function holdoutMetricFor(cwd: string, command: string[], environment: Nod
   return typeof metric === "number" && Number.isFinite(metric) ? metric : undefined;
 }
 
-/** The champion and recent attempts, given to the director every cycle. */
-function campaignExperimentLog(store: ResearchStore, metricName: string): { champion: ReturnType<typeof experimentLog>["champion"]; experimentLog: ReturnType<typeof experimentLog>["recent"] } {
-  const log = experimentLog(store, metricName, activeCampaignStart(store));
-  return { champion: log.champion, experimentLog: log.recent };
+/** The champion, the per-family archive, recent attempts, and whether this cycle must explore. */
+function campaignSearchState(store: ResearchStore, metric: { name: string; direction: "maximize" | "minimize" }): ReturnType<typeof searchState> {
+  return searchState(store, metric.name, metric.direction, activeCampaignStart(store));
 }
 
-/** Start a fresh experiment worktree from the current champion's implementation. */
-async function seedFromChampion(worktree: string, experimentId: string): Promise<void> {
+/**
+ * Start a fresh experiment worktree from its parent: the best attempt in the
+ * hypothesis's own method family, or the champion for a new family.
+ */
+async function seedFromParent(worktree: string, experimentId: string, family: string): Promise<void> {
   const status = await runProcess(["git", "status", "--porcelain=v1", "--untracked-files=no"], worktree, 60_000);
   // A resumed worktree already holds this experiment's own edits; never overwrite them.
   if (status.exitCode !== 0 || status.stdout.trim()) return;
   const store = new ResearchStore(statePath);
   try {
-    const champion = championImplementation(store, activeCampaignStart(store));
-    if (!champion || champion.experimentId === experimentId || !existsSync(champion.worktree)) return;
+    const metric = activeCompetition().config.metric;
+    const parentId = parentExperimentId(store, metric.name, metric.direction, family, activeCampaignStart(store));
+    const parent = parentId && parentId !== experimentId ? implementationOf(store, parentId) : undefined;
+    if (!parent || !existsSync(parent.worktree)) return;
     const copied: string[] = [];
-    for (const path of champion.files) {
-      const source = join(champion.worktree, path);
+    for (const path of parent.files) {
+      const source = join(parent.worktree, path);
       if (!existsSync(source)) continue;
       mkdirSync(dirname(join(worktree, path)), { recursive: true });
       copyFileSync(source, join(worktree, path));
       copied.push(path);
     }
-    if (copied.length) store.appendEvent("experiment.implementation.inherited", { experimentId, championExperimentId: champion.experimentId, files: copied });
+    if (copied.length) store.appendEvent("experiment.implementation.inherited", { experimentId, parentExperimentId: parent.experimentId, family: normalizeFamily(family), files: copied });
   } finally {
     store.close();
   }
@@ -470,7 +474,7 @@ async function implementCampaignHypothesis(
     if (!seed) console.log(`Experiment ${experimentId} · verification-only; preserving source and running declared evidence checks`);
     return;
   }
-  await seedFromChampion(worktree, experimentId);
+  await seedFromParent(worktree, experimentId, normalizeFamily((hypothesis as { formulationFamily?: unknown } | undefined)?.formulationFamily));
   const captureCodeHealth = async (): Promise<ReturnType<typeof snapshotCodeHealth>> => {
     const inventory = await runProcess(["rg", "--files", "-g", "!.git/**", "-g", "!.sota/**", "-g", "!node_modules/**"], worktree, 60_000);
     const files: CodeHealthFile[] = [];
@@ -6244,7 +6248,7 @@ research
           console.log("Research · director is cross-pollinating lane findings...");
           const verifiedStateStore = new ResearchStore(statePath);
           const verifiedState = phaseGoal ? projectVerifiedSubtaskState(verifiedStateStore.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined);
-          const experimentHistory = campaignExperimentLog(verifiedStateStore, adapter.config.metric.name);
+          const experimentHistory = campaignSearchState(verifiedStateStore, adapter.config.metric);
           verifiedStateStore.close();
           decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, ...experimentHistory, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, authoritativeEvidence: researchMemory.authoritativeObservations, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, laneToolResults: laneToolObservationContext(laneReports), crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness, goalProgress, triggerContext: campaign.triggerContext ? { eventType: campaign.triggerContext.eventType, eventCreatedAt: campaign.triggerContext.eventCreatedAt, trust: "external_wakeup_signal" } : null }, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, taskId: cycleTaskId, goalId: phaseGoal?.id ?? null, parentTaskId: cycleTaskId, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, onToolBudgetExhausted: (details) => {
             const exhaustedStore = new ResearchStore(statePath);
@@ -6510,6 +6514,15 @@ research
       });
       decisionStore.appendEvent("research.decision.audit", { ...decisionAudit, phase: phaseGoal?.phase ?? null, decision: decision.decision });
       decision = downgradeUnauditedDecision(decision, decisionAudit, phaseGoal?.phase);
+      // One attempt in three goes to a new or young method family, enforced here rather than left to the prompt.
+      const explorationState = campaignSearchState(decisionStore, adapter.config.metric);
+      const selectedFamily = normalizeFamily(decision.hypotheses.find((hypothesis) => hypothesis.title === decision.selectedHypothesis)?.formulationFamily);
+      const selectedIsMature = explorationState.families.some((summary) => summary.family === selectedFamily && !summary.young);
+      const explorer = explorationState.explorationTurn && decision.decision === "run" && selectedIsMature ? explorationHypothesis(decision.hypotheses, explorationState.families) : undefined;
+      if (explorer) {
+        decisionStore.appendEvent("research.exploration.enforced", { cycle, replaced: decision.selectedHypothesis, selected: explorer.title, family: normalizeFamily(explorer.formulationFamily) });
+        decision = { ...decision, selectedHypothesis: explorer.title, nextAction: `Exploration turn: run '${explorer.title}' from a new or young method family.` };
+      }
       const materialized = materializeResearchDecision(decisionStore, decision);
       const hypothesisQuality = decision.hypotheses.map((hypothesis) => assessHypothesisQuality({
         title: hypothesis.title,
@@ -7180,7 +7193,12 @@ research.command("policy")
 research.command("propose")
   .argument("[objective]", "research objective", "Inspect the current workspace and propose three falsifiable, evidence-driven hypotheses.")
   .option("--reuse-recorded-baseline", "reuse the latest successful canonical baseline observation")
-  .action(async (objective: string, options: { reuseRecordedBaseline?: boolean }) => {
+  .option("--provider <provider>", "agent provider: codex, claude, or local", "codex")
+  .option("--model <model>", "provider model", DEFAULT_CODEX_MODEL)
+  .option("--thinking <effort>", "reasoning effort", "medium")
+  .action(async (objective: string, options: { reuseRecordedBaseline?: boolean; provider: string; model: string; thinking: string }) => {
+    const provider = options.provider;
+    if (!isAgentProvider(provider)) throw new Error("Choose provider codex, claude, or local.");
     const reuseRecordedBaseline = options.reuseRecordedBaseline ?? false;
     const store = new ResearchStore(statePath);
     const project = store.project();
@@ -7254,7 +7272,7 @@ research.command("propose")
       researchMemory,
       authoritativeEvidence: researchMemory.authoritativeObservations,
       harnessChangeHistory,
-    }, { provider: "codex", model: DEFAULT_CODEX_MODEL, reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
+    }, { provider, model: options.model, reasoningEffort: options.thinking, fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
     const decisionStore = new ResearchStore(statePath);
     decision = enforceGoalTermination(decision, { currentPhase: phaseGoal?.phase });
     const claimAudit = auditCurrentClaims(decisionStore);
