@@ -3,8 +3,9 @@ import React, { useEffect, useRef, useState } from "react";
 import { requiresProviderSetup } from "./onboarding.js";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import MultilineInput from "./multiline-input.js";
+import { spawn } from "node:child_process";
 import { dirname, join, relative, resolve } from "node:path";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { ResearchStore, queueEffectivePriority } from "../core/store.js";
 import { approvalInbox } from "../core/approvals.js";
 import { loadProjectGuidance } from "../core/project-guidance.js";
@@ -12,24 +13,21 @@ import { externalEventPayload, parseExternalEventPayload, validateExternalEventT
 import { createPortableBundle, portableAgentContracts, validatePortableBundle } from "../core/portable-bundle.js";
 import { campaignOrganization, formatCampaignOrganization } from "../core/campaign-organization.js";
 import { roleBudgetLedger } from "../core/usage.js";
-import { formatGoalAlignment, goalAlignment, pauseForGoalAlignment } from "../core/goal-alignment.js";
+import { formatGoalAlignment, goalAlignment } from "../core/goal-alignment.js";
 import { attentionFingerprint, operatorAttention } from "../core/attention.js";
-import { agentCoachingDirective, agentRoleInterventions, applyAgentCoaching, evaluateAgentCoachingProgress, evaluateAgentRoles } from "../core/agent-evals.js";
+import { agentCoachingDirective, agentRoleInterventions, evaluateAgentRoles } from "../core/agent-evals.js";
 import { processFailureResult, runProcess, splitCommandLine, type ProcessControl } from "../core/process.js";
 import { autonomyPolicy, guardCommand } from "../core/permissions.js";
-import { QueueWorker } from "../core/queue-worker.js";
 import { classifyProcessFailure, executorFor, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "../core/executors.js";
 import { ensureWorktree } from "../core/worktree.js";
 import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "../core/validation.js";
-import { auditResearchDecision, downgradeUnauditedDecision } from "../core/decision-auditor.js";
 import { sha256File } from "../core/evidence.js";
 import { seedVerificationImplementation, verifyImplementationSnapshot, type ImplementationSnapshot } from "../core/implementation-guard.js";
 import { captureEnvironment } from "../core/environment.js";
 import { compareRuns } from "../core/statistics.js";
 import { recoveryDelay, recoveryPlan, recoveryRouteDirective } from "../core/recovery.js";
 import { observedGpuHours } from "../core/compute-budget.js";
-import { distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../core/distribution-beliefs.js";
-import { bindCampaignRuntime, campaignElapsedMinutes, extendCampaignBudget, parseRoleTokenBudgets, pauseCampaign, readCampaignCheckpoint, resolveCampaignMode, resumeCampaign, serializeRoleTokenBudgets, withCampaignCheckpoint, type CampaignRuntimeConfig } from "../core/campaign.js";
+import { bindCampaignRuntime, campaignElapsedMinutes, extendCampaignBudget, parseRoleTokenBudgets, pauseCampaign, readCampaignCheckpoint, resolveCampaignMode, serializeRoleTokenBudgets, type CampaignRuntimeConfig } from "../core/campaign.js";
 import { prepareSubmission, submissionValidationScores, validateSubmissionBundle } from "../core/submissions.js";
 import { formatResearchStarterBriefs, selectResearchStarter } from "../core/research-starters.js";
 import { classifyResearchSetupInput } from "../core/research-setup.js";
@@ -40,23 +38,16 @@ import { renderReport, writeReport, type ReportKind } from "../core/reports.js";
 import { auditData, dataAuditFingerprint } from "../core/data-audit.js";
 import { availableResearchTools, executeResearchTool } from "../core/tools.js";
 import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "../core/external-tools.js";
-import { projectVerifiedSubtaskState } from "../core/subtask-state.js";
 import { createValidationPolicy, writeValidationPolicy } from "../core/validation-policy.js";
 import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceSearchText, sourceIsFresh } from "../core/sources.js";
 import { competitionResearchClaimType, competitionResearchSources, competitionSourceRefreshMs } from "../core/competition-sources.js";
 import { extractCompetitionInsights } from "../core/competition-insights.js";
-import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatResearchStagePlan, mergePhaseGoalAudits, PHASE_GOAL_EVENT_TYPES, phaseCompletionCriteriaForAudit, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForMode, researchStageProgress } from "../core/phase-goals.js";
+import { activePhaseGoal, formatResearchStagePlan, phaseGoalSetId, phaseGoalsForMode, researchStageProgress } from "../core/phase-goals.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../core/experiment-manifest.js";
-import { materializeResearchDecision } from "../core/research-graph.js";
 import { loadCompetitionAdapter } from "../competitions/adapters.js";
-import { codexIsLoggedInAsync, codexLoginStatus, codexResearchModelPool, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, logoutCodex, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, resolveStartupProvider, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
-import { formatResearchDecision, runResearchDirector } from "../agents/research-director.js";
-import { boundedPeerBoard, runResearchCritic, runResearchLanes, runResearchSemanticAuditor, type ResearchLaneReport, type ResearchReview, type ResearchSemanticAudit } from "../agents/research-lanes.js";
+import { codexIsLoggedInAsync, codexLoginStatus, DEFAULT_CODEX_MODEL, isProviderUsageLimit, listCodexModels, listLocalModels, loginCodex, logoutCodex, providerRetryAfterMs, queueCodexMessage, resolveCodexBinary, runWithLocalFallback, type AgentProvider, type AvailableModel } from "../agents/codex-exec.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema, type ExperimentExecutorKind } from "../core/types.js";
-import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, researchToolFailureClass, semanticAuditTraceEvidence, type TrajectoryEvent } from "../core/trajectories.js";
-import { recoverUncommittedTraceFiles } from "../core/trajectory-recovery.js";
-import { capabilityOutcome, qualityFeedback, routeCapability } from "../core/capability-router.js";
-import { allocateNextResearch } from "../core/allocation.js";
+import { evaluateTrajectory, type TrajectoryEvent } from "../core/trajectories.js";
 import { buildExperienceRecord, capabilityProfile, experienceJsonl, selectCurriculum } from "../core/experience.js";
 import { executionPlaybookFromExperience } from "../core/execution-playbooks.js";
 import { rankExperimentCandidates } from "../core/scheduler.js";
@@ -70,28 +61,18 @@ import { evaluateValidationAcceptance } from "../core/validation-engine.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, verificationSourcePinError, type ExecutionStage } from "../core/execution-stages.js";
 import { runReducedValidation } from "../core/stage-executor.js";
 import { renderTimeline } from "../core/timeline.js";
-import { activeContradictionEdges, activeDuplicateClaimCount, latestSourceEntries, researchMemoryContext } from "../core/research-context.js";
-import { detectStagnation } from "../core/stagnation.js";
-import { assessStopPolicy } from "../core/stop-policy.js";
-import { applyCriticGate } from "../core/critic-gate.js";
-import { isAgentVisibleEvent } from "../core/ratchet.js";
+import { activeContradictionEdges } from "../core/research-context.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../core/experiment-patches.js";
 import { recordBaselineEvidence } from "../core/baseline.js";
 import { redactSecrets } from "../core/redaction.js";
-import { enforceClaimTermination, enforceGoalTermination } from "../core/termination.js";
 import { auditClaims, selfDescribingClaimEvidenceIds } from "../core/claim-audit.js";
-import { agentBudgetLedger, campaignAgentTokens, summarizeAgentUsage, summarizeAgentUsageBy, summarizeAgentUsageByScope, summarizeUsage, type AgentUsageAttribution } from "../core/usage.js";
+import { agentBudgetLedger, campaignAgentTokens, summarizeAgentUsage, summarizeAgentUsageBy, summarizeAgentUsageByScope, summarizeUsage } from "../core/usage.js";
 import { parseLiteratureBenchmarkInput, scoreLiteratureBenchmark } from "../core/literature-bench.js";
 import { parseAutoResearchBenchEvaluation } from "../core/autoresearch-bench.js";
-import { assessResearchDecisionRubric } from "../core/research-rubric.js";
 import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock, unlockValidationPolicy } from "../core/validation-lock.js";
-import { deriveAdaptiveHarnessPolicy } from "../core/adaptive-harness.js";
-import { synthesizeLaneReports } from "../core/cross-pollination.js";
 import { analyzePredictionRows, parsePredictionRows } from "../core/error-analysis.js";
 import { createTransferableMethod } from "../core/method-transfer.js";
-import { createAblationPlan, evaluateAblationEvidence } from "../core/ablation.js";
 import { buildMlflowRunExports } from "../core/mlflow.js";
-import { summarizeForecastAssessments } from "../core/forecast-calibration.js";
 import { createPaintingJob, runPaintingJob } from "../agents/painting.js";
 
 type Message = { role: "user" | "assistant" | "system"; text: string; kind?: "message" | "tool" };
@@ -454,8 +435,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
   const submitRef = useRef<(value: string, fromQueue?: boolean) => Promise<void>>(async () => undefined);
   const pendingRequests = useRef<QueuedRequest[]>([]);
   const [queuedRequests, setQueuedRequests] = useState<QueuedRequest[]>([]);
-  const loopTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const loopBusy = useRef(false);
   const activeProcess = useRef<ProcessControl | null>(null);
   const activeProcesses = useRef(new Set<ProcessControl>());
   const providerCheckId = useRef(0);
@@ -465,9 +444,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
   // the controller supplies its own bounded, durable research context.
   const activeCodexThread = useRef<string | undefined>();
   const interruptedProcess = useRef(false);
-  const controllerLeaseId = useRef(`controller_${sessionId.current}`);
-  const controllerLeaseHeld = useRef(false);
-  const controllerHeartbeat = useRef<ReturnType<typeof setInterval> | null>(null);
   const registerProcess = (control: ProcessControl): void => {
     activeProcesses.current.add(control);
     activeProcess.current = control;
@@ -501,41 +477,51 @@ export function App({ root }: { root: string }): React.JSX.Element {
     if (!value || Date.now() - progressLastPaint.current >= 120) paint();
     else progressTimer.current = setTimeout(paint, 120);
   };
-  const releaseControllerLease = (): void => {
-    if (controllerHeartbeat.current) { clearInterval(controllerHeartbeat.current); controllerHeartbeat.current = null; }
-    if (!controllerLeaseHeld.current) return;
-    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    store.releaseControllerLease(controllerLeaseId.current);
-    store.close();
-    controllerLeaseHeld.current = false;
+  // Autonomous campaigns run in the CLI controller, detached from this
+  // terminal, exactly as the web dashboard launches them. The TUI observes
+  // them through the durable store and controls them with durable requests.
+  const cliEnvironment = (): NodeJS.ProcessEnv => ({ ...process.env, EVIDRA_WORKSPACE_ROOT: root, EVIDRA_STATE_DIR: join(root, ".sota") });
+  const campaignRouteArgs = (): string[] => {
+    const current = configRef.current;
+    return ["--provider", current.provider, "--model", current.model, "--thinking", current.reasoningEffort, "--autonomy", current.autonomy, "--limit-policy", current.limitPolicy, "--fallback-model", current.fallbackModel, "--executor", current.experimentExecutor, "--lanes", String(current.autonomy === "safe" ? 1 : current.autonomy === "fast" ? 2 : 4)];
   };
-  const acquireControllerLease = (mode: WorkbenchMode, currentStep: string): boolean => {
-    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    const result = store.acquireControllerLease(controllerLeaseId.current, process.pid, mode, currentStep);
-    store.close();
-    if (!result.acquired) {
-        append("assistant", `Another Evidra controller is active (pid ${result.lease?.pid ?? "unknown"}, step ${result.lease?.currentStep ?? "unknown"}). Use /${result.lease?.mode ?? mode} status or stop that controller before starting another.`);
-      return false;
-    }
-    controllerLeaseHeld.current = true;
-    const recoveredStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    const recoveredExperiments = recoveredStore.recoverStaleExperiments();
-    const recoveredTraces = recoverUncommittedTraceFiles(root, recoveredStore);
-    recoveredStore.close();
-    if (recoveredExperiments.length) append("assistant", `Recovered ${recoveredExperiments.length} experiment(s) left running by a previous controller; local work is available for retry; uncertain remote work requires reconciliation.`);
-    if (recoveredTraces) append("assistant", `Recovered ${recoveredTraces} partial Codex trace(s) from a previous controller.`);
-    if (!controllerHeartbeat.current) controllerHeartbeat.current = setInterval(() => {
-      const heartbeatStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      heartbeatStore.heartbeatControllerLease(controllerLeaseId.current, configRef.current.mode, progressRef.current || "running");
-      heartbeatStore.close();
-    }, 10_000);
+  const spawnCampaignController = (mode: "research" | "challenge", args: string[]): boolean => {
+    const script = process.argv[1];
+    if (!script) { append("assistant", "Unable to locate the Evidra CLI entrypoint."); return false; }
+    const child = spawn(process.execPath, [script, "research", "--mode", mode, ...args, ...campaignRouteArgs()], { cwd: root, detached: true, stdio: "ignore", env: cliEnvironment() });
+    child.once("error", (error) => append("assistant", `The campaign controller failed to start: ${error.message}`));
+    child.unref();
+    append("assistant", `Campaign controller running in the background (pid ${child.pid ?? "unknown"}). Follow it with /${mode} status or /timeline; use /${mode} pause, /${mode} stop, or /steer to control it.`);
     return true;
   };
-  const updateControllerStep = (step: string): void => {
-    if (!controllerLeaseHeld.current) return;
+  const startCampaignController = (mode: "research" | "challenge", campaign: { goal: string; budgetMinutes: number; stopCondition: string }): boolean =>
+    spawnCampaignController(mode, ["--goal", campaign.goal, "--budget", `${campaign.budgetMinutes}m`, "--stop", campaign.stopCondition]);
+  const resumeCampaignController = (mode: "research" | "challenge", startedAt?: string): boolean =>
+    spawnCampaignController(mode, startedAt ? ["--resume-run", startedAt] : ["--resume"]);
+  // Ask a live controller to pause/resume/stop at its next safe boundary.
+  // Returns false when no controller holds the lease.
+  const requestLiveControllerAction = (action: "pause" | "resume" | "stop", mode: "research" | "challenge"): boolean => {
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    store.heartbeatControllerLease(controllerLeaseId.current, configRef.current.mode, step);
+    const lease = store.liveControllerLease();
+    if (lease) {
+      store.requestControllerAction(action);
+      store.setSchedulerState({ status: action === "resume" ? "running" : "draining", mode, currentStep: `requested-${action}` });
+      append("assistant", `${mode === "challenge" ? "Challenge" : "Research"} ${action} requested; controller pid ${lease.pid} will apply it at the next safe boundary.`);
+    }
     store.close();
+    return Boolean(lease);
+  };
+  // A single research decision without a campaign: the CLI `research propose`.
+  const runCliProposal = async (objective: string, extraArgs: string[] = []): Promise<string> => {
+    const script = process.argv[1];
+    if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
+    const result = await runProcess([process.execPath, script, "research", "propose", objective, "--provider", config.provider, "--model", config.model, "--thinking", config.reasoningEffort, ...extraArgs], root, 4 * 60 * 60_000, (_stream, chunk) => {
+      const line = chunk.replace(/\s+/g, " ").trim();
+      if (line) setProgress(`Research · ${line.slice(-120)}`);
+    }, registerProcess, cliEnvironment());
+    clearActiveProcess();
+    if (result.exitCode !== 0) throw new Error(`research propose failed (exit ${result.exitCode}).\n${(result.stderr || result.stdout).trim().slice(-4000)}`);
+    return result.stdout.trim();
   };
   const firstToken = input.split(/\s+/)[0];
   const suggestions: readonly (readonly [string, string])[] = input.startsWith("/ ") ? [] : input.startsWith("/model ")
@@ -656,12 +642,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
     store.startSession(sessionId.current, { pid: process.pid, config, messages });
     store.close();
     return () => {
-      if (controllerHeartbeat.current) clearInterval(controllerHeartbeat.current);
-      if (controllerLeaseHeld.current) {
-        const closingLease = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        closingLease.releaseControllerLease(controllerLeaseId.current);
-        closingLease.close();
-      }
       const closing = new ResearchStore(join(root, ".sota", "database.sqlite"));
       closing.saveSession(sessionId.current, { pid: process.pid, config: configRef.current, messages: messagesRef.current });
       closing.closeSession(sessionId.current, "interrupted");
@@ -704,7 +684,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
 
   useEffect(() => setSuggestionIndex(0), [input]);
   useEffect(() => () => {
-    if (loopTimer.current) clearInterval(loopTimer.current);
     if (progressTimer.current) clearTimeout(progressTimer.current);
     terminateActiveProcesses();
   }, []);
@@ -939,674 +918,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
     store.close();
   };
 
-  const persistCampaignCheckpoint = (campaign: ResearchCampaign, step: "research-lanes" | "experiment-execution" | "cycle-complete", cycle: number): void => {
-    const updated = withCampaignCheckpoint(campaign, step, cycle);
-    Object.assign(campaign, updated);
-    persistCampaign(campaign);
-    updateControllerStep(step);
-    setConfig((current) => ({ ...current, campaign: current.campaign ? { ...current.campaign, ...campaign } : { ...campaign } }));
-  };
-
-  const performResearchObservation = async (): Promise<Record<string, unknown>> => {
-    const mode = configRef.current.mode;
-    setProgress("Research 1/3 · inspecting repository and challenge state...");
-    const status = await runProcess(["git", "status", "--short"], root);
-    const files = await runProcess(["rg", "--files", "-g", "!.sota/**", "-g", "!node_modules/**"], root, 60_000);
-    const observation: Record<string, unknown> = {
-      gitStatus: status.stdout.trim().split("\n").filter(Boolean).slice(0, 40),
-      repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120),
-    };
-    if (mode === "challenge") {
-      const adapter = activeAdapter();
-      requireActiveContract();
-      await ingestCompetitionSources(adapter);
-      const state = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      const priorBaseline = state.recentEvents(1000).reverse().find((event) => event.type === "baseline.completed");
-      state.close();
-      let baseline: { command: string[]; cwd: string; exitCode: number; durationMs: number; stdout: string; stderr: string };
-      if (priorBaseline) {
-        const payload = priorBaseline.payload as { command?: string[]; cwd?: string; exitCode?: number; durationMs?: number; stdout?: string; stderr?: string };
-        baseline = { command: payload.command ?? adapter.baselineCommand(), cwd: payload.cwd ?? adapter.workspacePath(root), exitCode: payload.exitCode ?? 0, durationMs: payload.durationMs ?? 0, stdout: payload.stdout ?? "", stderr: payload.stderr ?? "" };
-        setProgress("Research 2/3 · reusing the latest verified baseline...");
-      } else {
-        setProgress("Research 2/3 · running the canonical baseline evaluator...");
-        baseline = await runProcess(
-          adapter.baselineCommand(),
-          adapter.workspacePath(root),
-          adapter.config.evaluatorTimeoutMinutes * 60_000,
-          (stream, chunk) => {
-            const line = chunk.replace(/\s+/g, " ").trim();
-            if (line) setProgress(`Research 2/3 · ${stream}: ${line.slice(-120)}`);
-          },
-          registerProcess,
-        );
-        clearActiveProcess();
-        const baselineStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        const parsed = parseMetricOutput(baseline.stdout, adapter.config.metric.name);
-        const metric = parsed.metrics[adapter.config.metric.name] ?? null;
-        recordBaselineEvidence(baselineStore, root, baseline, metric, parsed.metrics, parsed.metricsByFold);
-        baselineStore.close();
-      }
-      if (priorBaseline && typeof (priorBaseline.payload as { metric?: unknown }).metric !== "number") {
-        const metric = parseMetricOutput(baseline.stdout, adapter.config.metric.name).metrics[adapter.config.metric.name] ?? null;
-        const upgradedBaseline = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        upgradedBaseline.appendEvent("baseline.completed", { ...(priorBaseline.payload as Record<string, unknown>), metric, upgradedFromLegacyEvent: true });
-        upgradedBaseline.close();
-      }
-      observation.baseline = { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: redactSecrets(baseline.stdout.slice(-4000)), stderr: redactSecrets(baseline.stderr.slice(-4000)) };
-    }
-    const evidenceStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    evidenceStore.appendEvent("research.observation", observation);
-    evidenceStore.saveClaim({
-      id: `claim_observation_${Date.now()}`,
-      payload: {
-        statement: `Repository inspection and ${mode === "challenge" ? "canonical baseline execution" : "workspace inspection"} completed before the research decision.`,
-        scope: "current-workspace",
-        confidence: 1,
-        sourceType: "observation",
-        sourceId: `observation_${Date.now()}`,
-        status: "active",
-        observation,
-      },
-    });
-    evidenceStore.close();
-    return observation;
-  };
-
-  const runResearchCycle = async (objective: string, campaign?: ResearchCampaign, parentTaskId?: string): Promise<{ text: string; goalStatus: "active" | "blocked" | "met"; decision: "inspect" | "propose" | "run" | "replicate" | "stop" }> => {
-    // A resumed campaign owns its model route. Keep permissions and limit
-    // policy terminal-scoped, however: a previous session must never restore
-    // YOLO authority into a fresh terminal.
-    const savedRuntime = campaign?.runtime;
-    const requestedConfig = savedRuntime
-      ? {
-          ...configRef.current,
-          mode: savedRuntime.mode,
-          provider: savedRuntime.provider,
-          model: savedRuntime.model,
-          reasoningEffort: savedRuntime.thinking,
-          experimentExecutor: savedRuntime.executor,
-        }
-      : configRef.current;
-    if (savedRuntime) {
-      configRef.current = requestedConfig;
-      setConfig(requestedConfig);
-    }
-    const startupRoute = await resolveStartupProvider({ provider: requestedConfig.provider, model: requestedConfig.model, cwd: root, limitPolicy: requestedConfig.limitPolicy }, requestedConfig.fallbackModel);
-    const config = startupRoute.fallback
-      ? { ...requestedConfig, provider: startupRoute.provider, model: startupRoute.model }
-      : requestedConfig;
-    if (startupRoute.fallback) {
-      configRef.current = config;
-      setConfig(config);
-      setProgress(`Codex unavailable · continuing with local/${startupRoute.model}...`);
-    }
-    const mode = config.mode;
-    const observation = await performResearchObservation();
-    setProgress("Research 2/3 · discovering evidence, competing hypotheses, and the next information gain...");
-    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    const project = store.project();
-    // Retry context belongs to this cycle's prompt, not to the campaign's
-    // identity. Keep one durable phase graph for the immutable ultimate goal
-    // so failures retry the active phase instead of spawning a new graph.
-    const ultimateGoal = campaign?.goal ?? objective;
-    const goalSet = campaign?.goalSetId ?? phaseGoalSetId(ultimateGoal, mode);
-    const persistedGoals = store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload));
-    if (!phaseGoalsForMode(persistedGoals, mode, goalSet).length) {
-      for (const goal of definePhaseGoals(ultimateGoal, mode, goalSet)) store.savePhaseGoal({ id: goal.id, phase: goal.phase, status: goal.status, payload: goal });
-    }
-    const phaseGoal = activePhaseGoal(phaseGoalsForMode(store.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, goalSet));
-    // Recover abandoned workers before judging lineage. A live task that has
-    // not heartbeated is recoverable; a fresh worker must never be allocated
-    // against a campaign whose objective/phase graph is still ambiguous.
-    store.staleLaneTickets();
-    store.staleAgentLanes();
-    const recoveredDirectives = store.recoverStaleAgentDirectives();
-    if (recoveredDirectives.length) setProgress(`Research recovery · resolved stale directives ${recoveredDirectives.join(", ")}`);
-    const alignment = campaign ? goalAlignment(store) : undefined;
-    if (alignment?.status === "blocked") {
-      pauseForGoalAlignment(store, alignment, "tui-autonomous-cycle");
-      const message = formatGoalAlignment(alignment);
-      store.close();
-      throw new Error(`Autonomous campaign paused before agent allocation.\n${message}`);
-    }
-    const agentTokenBudget = campaign?.runtime?.agentTokenBudget ?? 0;
-    if (campaign && agentTokenBudget > 0) {
-      const agentTokens = campaignAgentTokens(store.eventsByType("research.agent.usage"), campaign.startedAt);
-      if (agentTokens >= agentTokenBudget) {
-        const paused = pauseCampaign(campaign);
-        Object.assign(campaign, paused);
-        store.saveCampaign(paused);
-        const cancelledTasks = store.cancelQueuedTasksForCampaign(campaign.startedAt);
-        store.setSchedulerState({ status: "paused", mode, currentStep: "agent-token-budget" });
-        store.appendEvent("research.agent_budget.exhausted", { campaignStartedAt: campaign.startedAt, usedTokens: agentTokens, budgetTokens: agentTokenBudget, cancelledTasks, action: "pause-before-agent-allocation" });
-        store.close();
-        throw new Error(`Autonomous campaign paused: agent token budget exhausted (${agentTokens}/${agentTokenBudget}); cancelled ${cancelledTasks.length} queued campaign task(s).`);
-      }
-    }
-    const recentEvents = store.recentEvents(20).filter(isAgentVisibleEvent);
-    const consistencyEvents = store.recentEvents(200);
-    const evidenceConflicts = {
-      contradictions: activeContradictionEdges(store).length,
-      duplicates: activeDuplicateClaimCount(store),
-    };
-    const researchMemory = researchMemoryContext(store, 30, objective);
-    store.appendEvent("research.memory.retrieved", { ...researchMemory.retrieval, context: "tui-research" });
-    const harnessChangeHistory = store.harnessChanges().slice(-8).map((change) => ({
-      id: change.id,
-      protocolFingerprint: change.protocolFingerprint,
-      decision: change.decision,
-      contract: change.contract,
-      outcomes: change.outcomes,
-      changedComponents: change.candidateComponents.filter((candidate) => change.baselineComponents.find((baseline) => baseline.path === candidate.path && baseline.checksum !== candidate.checksum)),
-    }));
-    const peerLaneBoard = boundedPeerBoard(recentEvents);
-    const recentTrajectories = store.trajectories(50);
-    const agentRoleReviews = evaluateAgentRoles(recentTrajectories);
-    const latestTrajectoryAt = recentTrajectories[0]?.createdAt;
-    const agentInterventions = agentRoleInterventions(agentRoleReviews);
-    const coachingDirectiveIds = applyAgentCoaching(store, agentRoleReviews, latestTrajectoryAt);
-    const coachingOutcomes = evaluateAgentCoachingProgress(store, agentRoleReviews, latestTrajectoryAt);
-    store.appendEvent("research.agent.reviewed", { objective, reviews: agentRoleReviews, interventions: agentInterventions, coachingDirectiveIds, source: "tui" });
-    if (coachingDirectiveIds.length) store.appendEvent("research.agent.coaching.applied", { directiveIds: coachingDirectiveIds, roles: agentInterventions.filter((intervention) => intervention.action === "coach").map((intervention) => intervention.role), source: "autonomous-controller" });
-    if (coachingOutcomes.length) store.appendEvent("research.agent.coaching.evaluated", { objective, evidenceAt: latestTrajectoryAt, outcomes: coachingOutcomes, source: "autonomous-controller" });
-    const recentFailureCount = recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length;
-    const recentQuality = recentTrajectories.slice(0, 20).map((entry) => qualityFeedback(entry.quality));
-    const failureClasses = [
-      ...store.runs().slice(0, 20).map((entry) => (entry.payload as { failureClass?: unknown }).failureClass).filter((value): value is string => typeof value === "string"),
-      ...recentTrajectories.flatMap((entry) => {
-        const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { events?: unknown } : {};
-        if (!Array.isArray(payload.events)) return [];
-        return payload.events.flatMap((event) => {
-          if (!event || typeof event !== "object") return [];
-          const eventPayload = (event as { payload?: unknown }).payload;
-          if (!eventPayload || typeof eventPayload !== "object") return [];
-          const value = eventPayload as { providerActivity?: unknown; activity?: unknown };
-          if (value.providerActivity === true && typeof value.activity === "string") {
-            const failure = providerActivityFailureClass(value.activity);
-            return failure ? [failure] : [];
-          }
-          if ((event as { kind?: unknown }).kind !== "tool_result") return [];
-          const toolEvent = eventPayload as Record<string, unknown>;
-          const toolFailure = researchToolFailureClass({ ok: toolEvent.ok === true, error: typeof toolEvent.error === "string" ? toolEvent.error : undefined, trust: typeof toolEvent.trust === "string" ? toolEvent.trust as "controller_observation" | "untrusted_content" | "permission_boundary" : "untrusted_content", securityWarnings: Array.isArray(toolEvent.securityWarnings) ? toolEvent.securityWarnings.filter((item): item is string => typeof item === "string") : undefined });
-          return toolFailure ? [toolFailure] : [];
-        });
-      }),
-    ];
-    const campaignRemaining = campaign ? Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)) : undefined;
-    const route = routeCapability({ objective, mode, provider: config.provider, model: config.model, autonomy: config.autonomy, recentFailureCount, failureClasses, recentQuality, recentOutcomes: store.recentEvents(500).filter((event) => event.type === "research.capability_outcome").slice(-12).map((event) => {
-      const payload = event.payload as { mode?: unknown; servedProvider?: unknown; servedModel?: unknown; outcome?: unknown; quality?: unknown };
-      return { mode: typeof payload.mode === "string" ? payload.mode : undefined, provider: typeof payload.servedProvider === "string" ? payload.servedProvider : undefined, model: typeof payload.servedModel === "string" ? payload.servedModel : undefined, outcome: typeof payload.outcome === "string" ? payload.outcome : undefined, quality: typeof payload.quality === "string" ? payload.quality : undefined };
-    }), budgetRemainingMinutes: campaignRemaining, requestedParallel: savedRuntime?.lanes ?? 3 });
-    store.appendEvent("research.capability_route", { route, objective, recentFailureCount, recentQuality, predictedTier: route.tier, servedProvider: config.provider, servedModel: config.model });
-    const forecastAssessments = store.eventsByType("research.forecast.assessed")
-      .slice(-24)
-      .map((event) => event.payload && typeof event.payload === "object" ? (event.payload as { forecast?: { covered?: unknown; calibration?: unknown; normalizedError?: unknown } }).forecast : undefined)
-      .filter((forecast): forecast is { covered: boolean; calibration: "underestimated" | "overestimated" | "calibrated"; normalizedError: number } => {
-        if (!forecast || typeof forecast.covered !== "boolean" || typeof forecast.calibration !== "string" || typeof forecast.normalizedError !== "number") return false;
-        return Number.isFinite(forecast.normalizedError) && ["underestimated", "overestimated", "calibrated"].includes(forecast.calibration);
-      });
-    const forecastCalibration = summarizeForecastAssessments(forecastAssessments);
-    const distributionReport = estimateDistributionBeliefs(distributionObservationsFromSubmissions(store.submissions()));
-    const distributionBeliefs = distributionReport.splits.length ? { observations: distributionReport.observations, recommendedSplit: distributionReport.recommendedSplit, maxUncertainty: Math.max(...distributionReport.splits.map((split) => split.uncertainty)) } : undefined;
-    const allocation = allocateNextResearch({ trajectories: store.trajectories(20), phase: phaseGoal?.phase, evidenceConflicts, failureClasses, forecastCalibration, distributionBeliefs });
-    store.appendEvent("research.next_allocation", { allocation, objective });
-    const campaignDecisions = store.decisions()
-      .filter((entry) => !campaign || Date.parse(entry.createdAt) >= Date.parse(campaign.startedAt))
-      .map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>);
-    const priorStagnation = detectStagnation(campaignDecisions.slice(0, 3));
-    const adaptiveHarness = deriveAdaptiveHarnessPolicy({
-      phase: phaseGoal?.phase,
-      quality: recentQuality as Array<{ overall?: string; toolUse?: { verdict?: string }; evidenceConsistency?: { verdict?: string }; errorRecovery?: { verdict?: string }; termination?: { verdict?: string } }>,
-      failureClasses,
-      evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
-      budgetRemainingMinutes: campaignRemaining,
-      searchStagnation: priorStagnation.stagnant,
-      allocationFocus: allocation.focus,
-      allocationPriority: allocation.priority,
-    });
-    store.appendEvent("research.adaptive_harness.policy", { policy: adaptiveHarness, objective });
-    const experienceRecords = recentTrajectories.map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
-    const experienceMix = selectCurriculum(experienceRecords);
-    const curriculumGuidance = experienceMix.map((stage) => `stage ${stage.stage}: ${stage.trajectoryIds.join(", ") || "none"} (${stage.rationale})`).join("; ");
-    const researchSources = latestSourceEntries(store.sources(), 12, objective, store).map((entry) => {
-      const payload = entry.payload as { title?: string; url?: string; excerpt?: string; claims?: string[]; qualityScore?: number; evidenceClass?: string; insights?: { kind?: string; leaderboard?: unknown[]; discussions?: unknown[]; signals?: string[] } };
-      return {
-        id: entry.id,
-        title: payload.title,
-        url: payload.url,
-        excerpt: payload.excerpt,
-        claims: payload.claims?.slice(0, 8),
-        qualityScore: payload.qualityScore,
-        evidenceClass: payload.evidenceClass,
-        insights: payload.insights ? {
-          kind: payload.insights.kind,
-          leaderboard: payload.insights.leaderboard?.slice(0, 20),
-          discussions: payload.insights.discussions?.slice(0, 20),
-          signals: payload.insights.signals?.slice(0, 12),
-        } : undefined,
-      };
-    });
-    const readVerifiedState = (): ReturnType<typeof projectVerifiedSubtaskState> => {
-      if (!phaseGoal) return projectVerifiedSubtaskState(undefined);
-      const refreshStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      try {
-        return projectVerifiedSubtaskState(refreshStore.latestSubtaskAudit(phaseGoal.id)?.payload);
-      } finally {
-        refreshStore.close();
-      }
-    };
-    store.close();
-    const laneStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    laneStore.updateAgentLane({ role: "research director", status: "running", provider: config.provider, model: config.model, task: objective });
-    laneStore.close();
-    const adapter = activeAdapter();
-    let decision: Awaited<ReturnType<typeof runResearchDirector>>;
-    let laneReports: ResearchLaneReport[] = [];
-    let crossPollination: ReturnType<typeof synthesizeLaneReports> | undefined;
-    let criticReview: ResearchReview | undefined;
-    let semanticAudit: ResearchSemanticAudit | undefined;
-    const tracePrefix = `research-${Date.now()}`;
-    const tracePath = join(root, ".sota", "traces", `${tracePrefix}.jsonl`);
-    mkdirSync(dirname(tracePath), { recursive: true });
-    const toolTrace = createToolTraceRecorder(tracePrefix, { onEvent: (event) => {
-      try { appendFileSync(tracePath, `${JSON.stringify(event)}\n`, "utf8"); } catch { /* Partial trace persistence is best-effort. */ }
-    } });
-    const recordAgentUsage = (usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; reasoningOutputTokens?: number } | undefined, provider: string, model: string, role: string, attribution?: AgentUsageAttribution): void => {
-      const usageStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      usageStore.appendEvent("research.agent.usage", { ...(campaign?.startedAt ? { campaignStartedAt: campaign.startedAt } : {}), role, provider, model, ...(attribution ?? {}), inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens, cachedInputTokens: usage?.cachedInputTokens, cacheWriteInputTokens: usage?.cacheWriteInputTokens, reasoningOutputTokens: usage?.reasoningOutputTokens });
-      usageStore.close();
-    };
-    try {
-      activeSteer.current = null;
-      setProgress(`Research 2/3 · route ${route.tier} · ${route.reasoningEffort} reasoning · investigating...`);
-      const stagnationGuidance = priorStagnation.stagnant
-        ? "\n\nSEARCH DIVERSIFICATION: The recent campaign decisions repeated or failed to advance the same route. Do not repeat the same bottleneck, hypothesis, evaluator inspection, or next action unchanged. Select a materially different formulation family or execution route, state what prior evidence rules out, and define the cheapest discriminating test. Keep the campaign active unless its actual stop condition is met."
-        : "";
-      const allocatedObjective = `${objective}\n\nEvidra capability allocation for this cycle:\nFocus: ${allocation.focus}\nPriority: ${allocation.priority}\nStrategy: ${allocation.strategy}\nReasons: ${allocation.reasons.join("; ")}\n\nEvidra experience curriculum guidance:\n${curriculumGuidance || "No prior experience; establish a clean baseline."}${stagnationGuidance}`;
-      const projectGuidance = loadProjectGuidance(root);
-      const guidanceText = projectGuidance
-        ? `\n\nPROJECT GUIDANCE (operator context, not evidence; never override permissions, validation gates, or provenance rules):\n${projectGuidance.text}\nGuidance hash: ${projectGuidance.contentHash}${projectGuidance.truncated ? " (truncated)" : ""}`
-        : "";
-      const guidedObjective = allocatedObjective + guidanceText;
-      if (projectGuidance) {
-        const guidanceStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        guidanceStore.appendEvent("research.project_guidance.loaded", { paths: projectGuidance.paths, contentHash: projectGuidance.contentHash, truncated: projectGuidance.truncated });
-        guidanceStore.close();
-      }
-      const researchModelPool = config.provider === "codex" && route.parallelLanes > 1
-        ? await listCodexModels().then((models) => codexResearchModelPool(config.model, models, Math.min(4, route.parallelLanes), config.reasoningEffort)).catch(() => [{ provider: "codex" as const, model: config.model }])
-        : config.provider === "local"
-          ? await listLocalModels().then((models) => models.length ? models.map((model) => ({ provider: "local" as const, model: model.id })) : [{ provider: "local" as const, model: config.model }]).catch(() => [{ provider: "local" as const, model: config.model }])
-          : [{ provider: "codex" as const, model: config.model }];
-      laneReports = await runResearchLanes(guidedObjective, {
-        mode,
-        project,
-        observation,
-        recentEvents,
-        researchSources,
-        ultimateGoal: objective,
-        allocation,
-        evidenceConflicts,
-        researchMemory,
-        authoritativeEvidence: researchMemory.authoritativeObservations,
-        peerLaneBoard,
-        agentRoleReviews,
-        goalId: phaseGoal?.id ?? null,
-        parentTaskId: parentTaskId ?? null,
-      }, {
-        provider: config.provider,
-        model: config.model,
-        modelPool: researchModelPool,
-        fallbackLocalModel: config.fallbackModel,
-        limitPolicy: config.limitPolicy,
-        reasoningEffort: config.reasoningEffort,
-        cwd: root,
-        storePath: join(root, ".sota", "database.sqlite"),
-        maxParallel: route.parallelLanes,
-        taskId: parentTaskId ?? null,
-        campaignStartedAt: campaign?.startedAt,
-        roleTokenBudgets: campaign?.runtime?.roleTokenBudgets,
-        autonomy: config.autonomy,
-        onProgress: setProgress,
-        onProcess: registerProcess,
-        isCancelled: () => interruptedProcess.current,
-        executeTool: (call, role) => executeResearchTool(call, {
-          root,
-          storePath: join(root, ".sota", "database.sqlite"),
-          autonomy: config.autonomy,
-          role,
-          competition: adapter.config,
-          onProgress: setProgress,
-          onProcess: registerProcess,
-        }),
-        onToolCall: toolTrace.onToolCall,
-        onToolResult: toolTrace.onToolResult,
-        onActivity: toolTrace.onActivity,
-        onAssistant: toolTrace.onAssistant,
-        onUsage: recordAgentUsage,
-      });
-      if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
-      setProgress("Research 3/3 · validating lane findings, auditing evidence, and selecting the next action...");
-      crossPollination = synthesizeLaneReports(laneReports);
-      // Keep the TUI on the same bounded collaboration protocol as the CLI:
-      // fast/YOLO campaigns can send a fresh lane set over contested findings
-      // before director synthesis. Safe mode remains single-pass inspection.
-      const completedLaneCount = laneReports.filter((lane) => lane.status === "completed").length;
-      const shouldPeerReview = config.autonomy !== "safe" && completedLaneCount > 1 && (adaptiveHarness.peerReview || crossPollination.needsAdversarialReview);
-      if (shouldPeerReview) {
-        setProgress("Research · evidence is contested; independent lanes are peer-reviewing the board...");
-        const initialLaneReports = laneReports;
-        const peerReports = await runResearchLanes(
-          `${guidedObjective}\n\nPeer-review the supplied lane board. Challenge unsupported agreements, resolve tensions where primary evidence permits, and identify the cheapest discriminating test. Do not repeat workspace inspection unless the board exposes a specific evidence gap.`,
-          {
-            mode,
-            project,
-            observation,
-            recentEvents,
-            researchSources,
-            ultimateGoal: objective,
-            phaseGoal: phaseGoal ?? null,
-            allocation,
-            evidenceConflicts,
-            researchMemory,
-            authoritativeEvidence: researchMemory.authoritativeObservations,
-            peerLaneBoard: crossPollination,
-            priorLaneReports: initialLaneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
-            agentRoleReviews,
-            goalId: phaseGoal?.id ?? null,
-            parentTaskId: parentTaskId ?? null,
-          },
-          {
-            provider: config.provider,
-            model: config.model,
-            modelPool: researchModelPool,
-            fallbackLocalModel: config.fallbackModel,
-            limitPolicy: config.limitPolicy,
-            reasoningEffort: config.reasoningEffort,
-            cwd: root,
-            storePath: join(root, ".sota", "database.sqlite"),
-            maxParallel: route.parallelLanes,
-            campaignStartedAt: campaign?.startedAt,
-            roleTokenBudgets: campaign?.runtime?.roleTokenBudgets,
-            autonomy: config.autonomy,
-            laneFocus: "evidence-validation",
-            laneRotation: (campaign?.currentCycle ?? 0) + 1,
-            onProgress: setProgress,
-            onProcess: registerProcess,
-            isCancelled: () => interruptedProcess.current,
-            onActivity: toolTrace.onActivity,
-            onAssistant: toolTrace.onAssistant,
-            onUsage: recordAgentUsage,
-          },
-        );
-        laneReports = [...initialLaneReports, ...peerReports.map((lane) => ({ ...lane, role: `${lane.role} peer-review` }))];
-        crossPollination = synthesizeLaneReports(laneReports);
-        const peerStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        peerStore.appendEvent("research.peer_review.completed", { initialBoard: synthesizeLaneReports(initialLaneReports), board: crossPollination, reviewers: peerReports.map((lane) => lane.role) });
-        peerStore.close();
-      }
-      decision = await runResearchDirector(guidedObjective, {
-        mode,
-        project,
-        competition: adapter.config,
-        recentEvents,
-        observation,
-        researchSources,
-        ultimateGoal: objective,
-        phaseGoal: phaseGoal ?? null,
-        verifiedState: readVerifiedState(),
-        allocation,
-        evidenceConflicts,
-        researchMemory,
-        authoritativeEvidence: researchMemory.authoritativeObservations,
-        laneReports,
-        crossPollination,
-        agentRoleReviews,
-        adaptiveHarnessPolicy: adaptiveHarness,
-        harnessChangeHistory,
-        constraints: { no_submission: true, no_file_edits: true },
-      }, {
-        provider: config.provider,
-        model: config.model,
-        modelPool: researchModelPool,
-        reasoningEffort: route.reasoningEffort === "high" ? config.reasoningEffort : route.reasoningEffort,
-        limitPolicy: config.limitPolicy,
-        cwd: root,
-        taskId: parentTaskId ?? null,
-        goalId: phaseGoal?.id ?? null,
-        parentTaskId: parentTaskId ?? null,
-        fallbackLocalModel: config.fallbackModel,
-        maxToolRounds: adaptiveHarness.maxToolRounds,
-        maxToolAttempts: adaptiveHarness.maxToolAttempts,
-        onProcess: registerProcess,
-        onThread: (threadId) => { activeSteer.current = (message) => queueCodexMessage(threadId, message); },
-        executeTool: (call) => executeResearchTool(call, {
-          root,
-          storePath: join(root, ".sota", "database.sqlite"),
-          autonomy: config.autonomy,
-          competition: adapter.config,
-          onProgress: setProgress,
-          onProcess: registerProcess,
-        }),
-        onToolCall: toolTrace.onToolCall,
-        onToolResult: toolTrace.onToolResult,
-        onActivity: toolTrace.onActivity,
-        onAssistant: toolTrace.onAssistant,
-        onUsage: recordAgentUsage,
-        onToolBudgetExhausted: (details) => {
-          const exhaustedStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-          exhaustedStore.appendEvent("research.director.tool_budget.exhausted", { goalId: phaseGoal?.id ?? null, ...details });
-          exhaustedStore.close();
-        },
-        refreshVerifiedState: readVerifiedState,
-      }, setProgress);
-      if (interruptedProcess.current) throw new Error("Interrupted · stopping the active research cycle.");
-      // Review gates completion claims, never attempts (see the CLI campaign loop).
-      if (decision.goalStatus === "met" || decision.decision === "stop") {
-        criticReview = await runResearchCritic(objective, decision, laneReports, {
-          authoritativeEvidence: researchMemory.authoritativeObservations,
-          provider: config.provider,
-          model: config.model,
-          modelPool: researchModelPool,
-          fallbackLocalModel: config.fallbackModel,
-          limitPolicy: config.limitPolicy,
-          reasoningEffort: config.reasoningEffort,
-          cwd: root,
-          storePath: join(root, ".sota", "database.sqlite"),
-          campaignStartedAt: campaign?.startedAt,
-          roleTokenBudgets: campaign?.runtime?.roleTokenBudgets,
-          maxParallel: 1,
-          taskId: parentTaskId ?? null,
-          autonomy: config.autonomy,
-          goalId: phaseGoal?.id ?? null,
-          parentTaskId: parentTaskId ?? null,
-          executeTool: (call, role) => executeResearchTool(call, {
-            root,
-            storePath: join(root, ".sota", "database.sqlite"),
-            autonomy: config.autonomy,
-            role,
-            competition: adapter.config,
-            onProgress: setProgress,
-            onProcess: registerProcess,
-          }),
-          onProcess: registerProcess,
-          isCancelled: () => interruptedProcess.current,
-          onProgress: setProgress,
-          onActivity: toolTrace.onActivity,
-          onAssistant: toolTrace.onAssistant,
-          onUsage: recordAgentUsage,
-        });
-        semanticAudit = await runResearchSemanticAuditor(objective, decision, {
-          observation,
-          authoritativeEvidence: researchMemory.authoritativeObservations,
-          phaseGoal,
-          controllerToolObservations: semanticAuditTraceEvidence(toolTrace.events),
-          laneReports: laneReports.map((lane) => ({ role: lane.role, summary: lane.summary, findings: lane.findings, uncertainties: lane.uncertainties, evidence: lane.evidence })),
-          critic: criticReview,
-        }, {
-          provider: config.provider,
-          model: config.model,
-          modelPool: researchModelPool,
-          fallbackLocalModel: config.fallbackModel,
-          limitPolicy: config.limitPolicy,
-          reasoningEffort: config.reasoningEffort,
-          cwd: root,
-          storePath: join(root, ".sota", "database.sqlite"),
-          campaignStartedAt: campaign?.startedAt,
-          roleTokenBudgets: campaign?.runtime?.roleTokenBudgets,
-          maxParallel: 1,
-          taskId: parentTaskId ?? null,
-          autonomy: config.autonomy,
-          goalId: phaseGoal?.id ?? null,
-          parentTaskId: parentTaskId ?? null,
-          executeTool: (call, role) => executeResearchTool(call, {
-            root,
-            storePath: join(root, ".sota", "database.sqlite"),
-            autonomy: config.autonomy,
-            role,
-            competition: adapter.config,
-            onProgress: setProgress,
-            onProcess: registerProcess,
-          }),
-          onProcess: registerProcess,
-          isCancelled: () => interruptedProcess.current,
-          onProgress: setProgress,
-          onActivity: toolTrace.onActivity,
-          onAssistant: toolTrace.onAssistant,
-          onUsage: recordAgentUsage,
-        }, phaseCompletionCriteriaForAudit(phaseGoal, decision.goalStatus));
-        if (semanticAudit.verdict !== "pass") {
-          decision = { ...decision, phase: phaseGoal?.phase ?? decision.phase, decision: decision.decision === "stop" ? "inspect" : decision.decision, goalStatus: "active", nextAction: `${decision.nextAction} (semantic audit: ${[...semanticAudit.findings, ...semanticAudit.requiredChecks].join(", ")})` };
-          const auditStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-          auditStore.appendEvent("research.semantic_audit.gated", { verdict: semanticAudit.verdict, findings: semanticAudit.findings, requiredChecks: semanticAudit.requiredChecks });
-          auditStore.close();
-        }
-      }
-      clearActiveProcess();
-      activeSteer.current = null;
-      const completedLane = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      completedLane.updateAgentLane({ role: "research director", status: "idle", provider: config.provider, model: config.model, task: null });
-      completedLane.close();
-    } catch (error) {
-      const failedLane = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      failedLane.updateAgentLane({ role: "research director", status: "failed", provider: config.provider, model: config.model, task: objective, error: error instanceof Error ? error.message : String(error) });
-      failedLane.close();
-      throw error;
-    }
-    const criticGate = applyCriticGate(decision, criticReview);
-    const criticBlocks = criticGate.blocked;
-    if (criticBlocks) {
-      decision = criticGate.decision;
-      const criticGateStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      criticGateStore.appendEvent("research.critic.gate", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks });
-      criticGateStore.close();
-    }
-    decision = enforceGoalTermination(decision, { currentPhase: phaseGoal?.phase });
-    const decisionStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    const claimAudit = auditEvidenceStore(decisionStore);
-    const claimGateBefore = decision;
-    decision = enforceClaimTermination(decision, claimAudit);
-    if (decision !== claimGateBefore) decisionStore.appendEvent("research.claim_gate.rejected", { ...claimAudit, source: "tui", phase: phaseGoal?.phase ?? null });
-    const decisionRubric = assessResearchDecisionRubric(decision, {
-      baselineAvailable: Boolean((observation as { baseline?: { exitCode?: unknown } }).baseline?.exitCode === 0),
-      sourceCount: researchSources.length,
-      sourceQuality: researchSources.length
-        ? researchSources.reduce((sum, source) => sum + (typeof source.qualityScore === "number" && Number.isFinite(source.qualityScore) ? source.qualityScore : 0), 0) / researchSources.length
-        : 0,
-      sourceClaimCoverage: researchSources.length
-        ? researchSources.filter((source) => Array.isArray(source.claims) && source.claims.length > 0).length / researchSources.length
-        : 0,
-      sourceDiversity: Math.min(1, new Set(researchSources.map((source) => source.evidenceClass).filter((value): value is string => Boolean(value))).size / 3),
-      evidenceConflicts: evidenceConflicts.contradictions + evidenceConflicts.duplicates,
-    });
-    decisionStore.appendEvent("research.rubric.assessed", {
-      score: decisionRubric.score,
-      threshold: decisionRubric.threshold,
-      verdict: decisionRubric.verdict,
-      criteria: decisionRubric.criteria,
-      gaps: decisionRubric.gaps,
-      source: "tui",
-    });
-    const phaseEvents = phaseGoal ? phaseGoalEventsSince(phaseGoal, decisionStore.eventsByTypes([...PHASE_GOAL_EVENT_TYPES])) : [];
-    const phaseEvidence = phaseGoal ? {
-      mode,
-      eventTypes: phaseEvents.map((event) => event.type),
-      eventPayloads: phaseEvents.map((event) => ({ type: event.type, payload: event.payload })),
-      ...decisionStore.counts(),
-      hypotheses: phaseGoalRecordsSince(phaseGoal, decisionStore.hypotheses()),
-      experiments: phaseGoalRecordsSince(phaseGoal, decisionStore.experiments()),
-      runs: phaseGoalRecordsSince(phaseGoal, decisionStore.runs()),
-      artifacts: phaseGoalRecordsSince(phaseGoal, decisionStore.artifacts()),
-      candidateHypotheses: decision.hypotheses.length,
-      falsifiableHypotheses: decision.hypotheses.filter((hypothesis) => hypothesis.falsificationTest.trim().length > 0).length,
-      selectedHypothesisFalsifiable: Boolean(decision.selectedHypothesis && decision.hypotheses.some((hypothesis) => hypothesis.title === decision.selectedHypothesis && hypothesis.falsificationTest.trim().length > 0)),
-    } : undefined;
-    const phaseGate = phaseGoal && phaseEvidence
-      ? evaluatePhaseGoalEvidence(phaseGoal, phaseEvidence)
-      : { met: decision.goalStatus === "met", missing: [], progress: { completed: 0, total: 0, ratio: 1 } };
-    if (phaseGoal && phaseEvidence) {
-      const audit = auditPhaseGoalGate(phaseGoal, phaseGate, phaseEvidence.eventTypes);
-      decisionStore.recordSubtaskAudit(audit);
-      if (decision.goalStatus === "met" && semanticAudit) decisionStore.recordSubtaskAudit(mergePhaseGoalAudits(phaseGoal, audit, semanticAudit.criteria));
-    }
-    const effectiveDecision = decision.goalStatus === "met" && !phaseGate.met
-      ? { ...decision, goalStatus: "active" as const, nextAction: decision.nextAction + " (phase gate missing: " + phaseGate.missing.join(", ") + ")" }
-      : decision;
-    if (decision.goalStatus === "met" && !phaseGate.met) decisionStore.appendEvent("research.phase_gate.rejected", { phase: phaseGoal?.phase, missing: phaseGate.missing, progress: phaseGate.progress });
-    const decisionAudit = auditResearchDecision(effectiveDecision, {
-      currentPhase: phaseGoal?.phase,
-      durableEventTypes: new Set(decisionStore.eventsByTypes(PHASE_GOAL_EVENT_TYPES as unknown as string[]).map((event) => event.type)),
-      phaseAuditComplete: phaseGoal ? decisionStore.latestSubtaskAudit(phaseGoal.id)?.complete : undefined,
-    });
-    decisionStore.appendEvent("research.decision.audit", { ...decisionAudit, phase: phaseGoal?.phase ?? null, decision: effectiveDecision.decision });
-    decision = downgradeUnauditedDecision(effectiveDecision, decisionAudit, phaseGoal?.phase);
-    materializeResearchDecision(decisionStore, decision);
-    if (phaseGoal) {
-      const now = new Date().toISOString();
-      const durableAudit = decisionStore.latestSubtaskAudit(phaseGoal.id);
-      const auditedMet = decision.goalStatus === "met" && durableAudit?.complete === true;
-      const nextStatus = auditedMet ? "met" : decision.goalStatus === "blocked" ? "blocked" : "active";
-      decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: nextStatus, payload: { ...phaseGoal, status: nextStatus, attempts: phaseGoal.attempts + 1, updatedAt: now } });
-    }
-    if (phaseGoal && decision.goalStatus === "met" && decisionStore.latestSubtaskAudit(phaseGoal.id)?.complete === true) {
-      const goals = phaseGoalsForMode(decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, goalSet);
-      const index = goals.findIndex((goal) => goal.id === phaseGoal.id);
-      const now = new Date().toISOString();
-      if (index >= 0) {
-        decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: "met", payload: { ...goals[index], status: "met", updatedAt: now } });
-        const next = goals[index + 1];
-        if (next) decisionStore.savePhaseGoal({ id: next.id, phase: next.phase, status: "active", payload: { ...next, status: "active", updatedAt: now } });
-      }
-    }
-    decisionStore.close();
-    const researchTrajectoryEvents: TrajectoryEvent[] = [
-      { id: `research-${Date.now()}-observation`, kind: "process", payload: { status: "completed", observationKeys: Object.keys(observation) } },
-      ...toolTrace.events,
-      ...(crossPollination ? [{ id: `research-${Date.now()}-cross-pollination`, kind: "process" as const, payload: { status: "completed", laneCount: crossPollination.laneCount, completedCount: crossPollination.completedCount, agreementPairs: crossPollination.agreementPairs, independentEvidenceCount: crossPollination.independentEvidenceCount, needsAdversarialReview: crossPollination.needsAdversarialReview } }] : []),
-      ...laneReports.filter((lane) => lane.status === "failed").map((lane, index) => ({ id: `research-${Date.now()}-lane-${index}`, kind: "process" as const, payload: { status: "failed", error: lane.error ?? `${lane.role} failed` } })),
-      { id: `research-${Date.now()}-evaluator`, kind: "evaluator", payload: { evidenceConsistent: criticReview?.verdict === "proceed", criticVerdict: criticReview?.verdict ?? "missing" } },
-      { id: `research-${Date.now()}-terminal`, kind: "terminal", payload: { status: "completed", goalStatus: decision.goalStatus, goalAttained: decision.goalStatus === "met" || decision.decision === "stop" } },
-    ];
-    const researchQuality = evaluateTrajectory(researchTrajectoryEvents);
-    const routingOutcome = capabilityOutcome({ objective, mode, route, provider: config.provider, model: config.model, quality: researchQuality, parallelLanes: laneReports.length });
-    const trajectoryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    const trajectoryId = `trajectory_research_${Date.now()}`;
-    const trajectoryPayload = { objective, observation, laneReports, crossPollination, criticReview, semanticAudit, decision, tracePath: relative(root, tracePath), routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model }, events: researchTrajectoryEvents };
-    trajectoryStore.saveTrajectory({ id: trajectoryId, payload: trajectoryPayload, quality: researchQuality });
-    const experience = buildExperienceRecord({ trajectoryId, payload: trajectoryPayload, quality: researchQuality, routing: { predictedTier: route.tier, tierScores: route.tierScores, provider: config.provider, model: config.model } });
-    const priorExperiences = trajectoryStore.trajectories(100).filter((entry) => entry.id !== trajectoryId).map((entry) => buildExperienceRecord({ trajectoryId: entry.id, payload: entry.payload, quality: entry.quality as ReturnType<typeof evaluateTrajectory> }));
-    trajectoryStore.appendEvent("research.experience.recorded", { experience, capabilityProfile: capabilityProfile([...priorExperiences, experience]), curriculum: selectCurriculum([...priorExperiences, experience]) });
-    const executionPlaybook = executionPlaybookFromExperience(experience);
-    if (executionPlaybook) trajectoryStore.appendEvent("research.execution.playbook", executionPlaybook);
-    const researchGaps = Object.entries(researchQuality).filter(([key, value]) => key !== "overall" && (value as { verdict: string }).verdict !== "PASS").map(([key]) => key);
-    trajectoryStore.appendEvent("research.capability_outcome", { ...routingOutcome, objective, predictedTier: route.tier, servedProvider: config.provider, servedModel: config.model, lanes: laneReports.map((lane) => ({ role: lane.role, provider: lane.provider, model: lane.model, status: lane.status })), quality: researchQuality.overall, gaps: researchGaps, laneCount: laneReports.length });
-    if (researchQuality.overall !== "PASS") trajectoryStore.appendEvent("trajectory.capability_gaps", { trajectoryType: "research", quality: researchQuality, objective });
-    trajectoryStore.close();
-    const reviewText = criticReview ? `\n\nCritic: ${criticReview.verdict} · confidence ${criticReview.confidence.toFixed(2)}\n${criticReview.summary}${criticReview.objections.length ? `\nObjections:\n${criticReview.objections.map((item) => `- ${item}`).join("\n")}` : ""}${criticReview.requiredChecks.length ? `\nRequired checks:\n${criticReview.requiredChecks.map((item) => `- ${item}`).join("\n")}` : ""}` : "";
-    return { text: formatResearchDecision(effectiveDecision) + reviewText, goalStatus: effectiveDecision.goalStatus, decision: effectiveDecision.decision };
-  };
-
   const proposeLatestExperiment = async (): Promise<{ id: string; text: string } | null> => {
     const adapter = activeAdapter();
     const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
@@ -1666,97 +977,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
     store.appendEvent("experiment.priority.selected", { experimentId: id, hypothesisId: hypothesis.id, priority: ranked[0].priority, novelty: ranked[0].novelty, score: ranked[0] });
     store.close();
     return { id, text: `\n\nExperiment manifest proposed\nPriority: ${ranked[0].priority.toFixed(4)} · novelty ${(ranked[0].novelty * 100).toFixed(0)}% (${ranked[0].numerator.toFixed(4)} value / ${ranked[0].denominator.toFixed(4)} cost)\n${manifestSummary(manifest)}\nNext: /experiment show ${id}` };
-  };
-
-  const prepareAutomaticReplication = (parentId: string): { id: string; text: string } | null => {
-    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    const parent = store.experiments().find((candidate) => candidate.id === parentId);
-    if (!parent) { store.close(); return null; }
-    const parentManifest = ExperimentManifestSchema.parse(parent.payload);
-    if (!parentManifest.acceptance.requireReplication) { store.close(); return null; }
-    const manifest = createReplicationManifest(parentManifest, activeAdapter().config);
-    store.saveExperiment({ id: manifest.id, payload: { ...manifest, status: "proposed", replicationOf: parentId, automatic: true } });
-    store.appendEvent("replication.manifest.created", { parentId, replicationId: manifest.id, automatic: true });
-    store.close();
-    return { id: manifest.id, text: `\n\nIndependent replication ${manifest.id} prepared for ${parentId}.\n${manifestSummary(manifest)}` };
-  };
-
-  const prepareAutomaticAblations = (parentId: string): { ids: string[]; text: string; plan: ReturnType<typeof createAblationPlan> } | null => {
-    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    const parent = store.experiments().find((candidate) => candidate.id === parentId);
-    if (!parent) { store.close(); return null; }
-    const parentManifest = ExperimentManifestSchema.safeParse(parent.payload);
-    if (!parentManifest.success) { store.close(); return null; }
-    const hypothesisId = parentManifest.data.hypothesisId;
-    const hypothesis = store.hypotheses().find((candidate) => candidate.id === hypothesisId);
-    const payload = hypothesis?.payload && typeof hypothesis.payload === "object" ? hypothesis.payload as { ablationFactors?: unknown } : undefined;
-    if (parentManifest.data.searchOperator !== "ablation" || !Array.isArray(payload?.ablationFactors) || payload.ablationFactors.length === 0) {
-      store.close();
-      return null;
-    }
-    const plan = createAblationPlan({ hypothesisId, factors: payload.ablationFactors as Parameters<typeof createAblationPlan>[0]["factors"] });
-    const ids: string[] = [];
-    for (const variant of plan.variants.filter((candidate) => !candidate.control)) {
-      const id = `abl_${parentId}_${variant.factorId}`.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 96);
-      if (!store.experiments().some((candidate) => candidate.id === id)) {
-        const manifest = createExperimentManifest({
-          id,
-          parent: parentId,
-          hypothesisId,
-          outcomeType: parentManifest.data.outcomeType,
-          gitCommit: parentManifest.data.gitCommit,
-          datasetVersion: parentManifest.data.datasetVersion,
-          splitVersion: parentManifest.data.splitVersion,
-          executor: parentManifest.data.resources.executor,
-          image: parentManifest.data.resources.image,
-          gpu: parentManifest.data.resources.gpu,
-          timeoutMinutes: parentManifest.data.resources.timeoutMinutes,
-          folds: parentManifest.data.evaluation.folds,
-          seeds: parentManifest.data.evaluation.seeds,
-          requiredArtifacts: parentManifest.data.evaluation.requiredArtifacts,
-          verificationCommand: parentManifest.data.evaluation.verificationCommand,
-          verificationCommands: parentManifest.data.evaluation.verificationCommands,
-          minimumPrimaryDelta: parentManifest.data.acceptance.minimumPrimaryDelta,
-          maximumRegressionShift: parentManifest.data.acceptance.maximumRegressionShift,
-          requireReplication: false,
-          searchOperator: "ablation",
-          configPatch: { ...parentManifest.data.change.configPatch, ...variant.configPatch },
-        }, activeAdapter().config);
-        store.saveExperiment({ id, payload: { ...manifest, status: "proposed", ablationOf: parentId, ablationFactorId: variant.factorId, ablationLabel: variant.label, executionPlan: createExecutionPlan(manifest) } });
-        store.appendEvent("research.ablation.variant.scheduled", { parentId, experimentId: id, factorId: variant.factorId, label: variant.label, plan });
-      }
-      ids.push(id);
-    }
-    store.appendEvent("research.ablation.plan", plan);
-    store.close();
-    return { ids, text: `\n\nAblation plan prepared for ${parentId}: ${ids.join(", ")}`, plan };
-  };
-
-  const latestExperimentComparison = (experimentId: string): { direction?: string; evidence?: string; note?: string; baseline?: number | null; candidate?: number | null } | undefined => {
-    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    const event = store.recentEvents(500).reverse().find((candidate) => candidate.type === "experiment.comparison.completed" && (candidate.payload as { experimentId?: unknown }).experimentId === experimentId);
-    store.close();
-    return event?.payload && typeof event.payload === "object" ? (event.payload as { comparison?: { direction?: string; evidence?: string; note?: string; baseline?: number | null; candidate?: number | null } }).comparison : undefined;
-  };
-
-  const recordAutomaticAblationEvidence = (parentId: string, plan: ReturnType<typeof createAblationPlan>, ids: string[], controlMetric: number | null | undefined, direction: "minimize" | "maximize"): string | undefined => {
-    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    const adapter = activeAdapter();
-    const variants = plan.variants.filter((variant) => !variant.control);
-    const results = ids.map((id, index) => {
-      const experiment = store.experiments().find((entry) => entry.id === id);
-      const payload = experiment?.payload && typeof experiment.payload === "object" ? experiment.payload as { status?: unknown; runId?: unknown } : {};
-      const run = typeof payload.runId === "string" ? store.runs().find((entry) => entry.id === payload.runId) : undefined;
-      const runPayload = run?.payload && typeof run.payload === "object" ? run.payload as { exitCode?: unknown; metrics?: Record<string, unknown> } : {};
-      const metric = runPayload.metrics?.[adapter.config.metric.name];
-      return { id: variants[index]?.id ?? id, exitCode: payload.status === "completed" && runPayload.exitCode === 0 ? 0 : 1, terminal: ["completed", "failed", "cancelled", "orphaned"].includes(String(payload.status)), ...(typeof metric === "number" && Number.isFinite(metric) ? { metric } : {}) };
-    });
-    const evidence = evaluateAblationEvidence(plan, results, { controlMetric: typeof controlMetric === "number" ? controlMetric : undefined, direction });
-    const allTerminal = results.length === variants.length && results.every((result) => result.terminal);
-    if (!allTerminal) { store.close(); return undefined; }
-    store.appendEvent("research.ablation.evidence", { parentId, ...evidence });
-    store.close();
-    return `\nAblation evidence: ${evidence.complete ? "complete" : "incomplete"}${evidence.missingMetrics.length ? ` · missing metrics for ${evidence.missingMetrics.join(", ")}` : ""}`;
   };
 
   const recordTransferableMethodIfReplicated = (experimentId: string): void => {
@@ -2265,301 +1485,6 @@ export function App({ root }: { root: string }): React.JSX.Element {
     }
   };
 
-  const runAutonomousCycle = async (campaignOverride?: ResearchCampaign, autoContinue = false): Promise<void> => {
-    if (loopBusy.current || busy) return;
-    let pendingCampaign = campaignOverride;
-    let durableSchedulerMode: WorkbenchMode | undefined;
-    if (!pendingCampaign) {
-      const snapshotStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      pendingCampaign = snapshotStore.campaign() as ResearchCampaign | undefined;
-      const savedSchedulerMode = snapshotStore.schedulerState().mode;
-      durableSchedulerMode = savedSchedulerMode === "research" || savedSchedulerMode === "challenge" ? savedSchedulerMode : undefined;
-      snapshotStore.close();
-      pendingCampaign ??= configRef.current.campaign;
-    }
-    const mode = pendingCampaign?.runtime?.mode ?? durableSchedulerMode ?? configRef.current.mode;
-    const campaignProvider = pendingCampaign?.runtime?.provider ?? configRef.current.provider;
-    const campaignLimitPolicy = pendingCampaign?.runtime?.limitPolicy ?? configRef.current.limitPolicy;
-    if (pendingCampaign?.nextAttemptAt && Date.parse(pendingCampaign.nextAttemptAt) > Date.now()) return;
-    // A provider-limit wait is represented as a durable pause. Resume it only
-    // once the retry window has elapsed; otherwise the paused interval would
-    // count against the campaign budget and the cycle would run with a stale
-    // paused campaign object.
-    if (pendingCampaign?.status === "paused" && pendingCampaign.nextAttemptAt && Date.parse(pendingCampaign.nextAttemptAt) <= Date.now()) {
-      const resumed = { ...resumeCampaign(pendingCampaign), nextAttemptAt: undefined, limitMessage: undefined };
-      pendingCampaign = resumed;
-      campaignOverride = resumed;
-      persistCampaign(resumed);
-      configRef.current = { ...configRef.current, campaign: resumed };
-      setConfig((current) => ({ ...current, campaign: resumed }));
-    }
-    ensureActiveProject();
-    if (!acquireControllerLease(mode, "research")) return;
-    loopBusy.current = true;
-    setBusy(true); setProgress("Autonomous loop: choosing the next highest-information decision...");
-    const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
-    store.requeueStaleTasks();
-    store.setSchedulerState({ status: "running", mode, currentStep: "research" });
-    const requestedAction = store.controllerLease()?.requestedAction;
-    if (requestedAction === "pause" || requestedAction === "stop") {
-      const saved = pendingCampaign;
-      if (saved) {
-        const updated = { ...saved, status: requestedAction === "stop" ? "completed" as const : "paused" as const };
-        store.saveCampaign(updated);
-        setConfig((current) => ({ ...current, campaign: updated }));
-      }
-      store.setSchedulerState({ status: requestedAction === "stop" ? "idle" : "paused", mode, currentStep: `requested-${requestedAction}` });
-      store.close();
-      releaseControllerLease();
-      append("assistant", `Controller request applied: ${requestedAction}.`);
-      return;
-    }
-    const controllerSteers = store.consumeControllerSteers();
-    const steeringContext = controllerSteers.length
-      ? `\n\nOperator steering received at this safe boundary:\n${controllerSteers.map((item) => `- ${item.message}`).join("\n")}\nApply these instructions to this cycle where they remain compatible with the evidence, safety policy, and phase gate.`
-      : "";
-    const staleExperiment = store.experiments().find((entry) => {
-      const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { status?: unknown; stale?: unknown; recoveryAttempted?: unknown } : {};
-      return payload.status === "failed" && payload.stale === true && payload.recoveryAttempted !== true;
-    });
-    if (staleExperiment) {
-      const stalePayload = staleExperiment.payload && typeof staleExperiment.payload === "object" ? staleExperiment.payload as Record<string, unknown> : {};
-      store.saveExperiment({ id: staleExperiment.id, payload: { ...stalePayload, status: "scheduled", recoveryAttempted: true, recoveryAttemptedAt: new Date().toISOString() } });
-      store.appendEvent("experiment.recovery.scheduled", { experimentId: staleExperiment.id, reason: "controller restart", attempt: Number(stalePayload.recoveryAttempts ?? 0) + 1, policy: "one bounded retry of the immutable manifest" });
-      store.close();
-      setProgress(`Recovering stale experiment ${staleExperiment.id} (one bounded retry)...`);
-      try {
-        await executeExperiment(staleExperiment.id);
-        const recoveryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        const recoveredEntry = recoveryStore.experiments().find((entry) => entry.id === staleExperiment.id);
-        const recoveredStatus = recoveredEntry?.payload && typeof recoveredEntry.payload === "object" ? (recoveredEntry.payload as { status?: unknown }).status : undefined;
-        recoveryStore.appendEvent(recoveredStatus === "completed" ? "experiment.recovery.completed" : "experiment.recovery.failed", { experimentId: staleExperiment.id, status: recoveredStatus ?? "unknown" });
-        if (recoveredStatus !== "completed" && recoveredEntry) {
-          const recoveredPayload = recoveredEntry.payload && typeof recoveredEntry.payload === "object" ? recoveredEntry.payload as Record<string, unknown> : {};
-          recoveryStore.saveExperiment({ id: staleExperiment.id, payload: { ...recoveredPayload, status: "failed", stale: false, recoveryAttempted: true } });
-        }
-        recoveryStore.close();
-      } catch (error) {
-        const recoveryStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        const recoveredEntry = recoveryStore.experiments().find((entry) => entry.id === staleExperiment.id);
-        if (recoveredEntry) {
-          const recoveredPayload = recoveredEntry.payload && typeof recoveredEntry.payload === "object" ? recoveredEntry.payload as Record<string, unknown> : {};
-          recoveryStore.saveExperiment({ id: staleExperiment.id, payload: { ...recoveredPayload, status: "failed", stale: false, recoveryAttempted: true, recoveryError: error instanceof Error ? error.message : String(error) } });
-        }
-        recoveryStore.appendEvent("experiment.recovery.failed", { experimentId: staleExperiment.id, error: error instanceof Error ? error.message : String(error) });
-        recoveryStore.close();
-        append("assistant", `Recovery of stale experiment ${staleExperiment.id} failed; Evidra will replan from the recorded failure.`);
-      }
-    } else {
-      store.close();
-    }
-    let queueTaskId: string | undefined;
-    try {
-      const campaign = pendingCampaign;
-      const cycleNumber = campaign?.currentCycle ?? 0;
-      if (campaign) persistCampaignCheckpoint(campaign, "research-lanes", cycleNumber);
-      if (campaign?.nextAttemptAt) {
-        campaign.nextAttemptAt = undefined;
-        campaign.limitMessage = undefined;
-        persistCampaign(campaign);
-        setConfig((current) => ({ ...current, campaign: { ...campaign } }));
-      }
-      if (campaign) {
-        const elapsed = campaignElapsedMinutes(campaign);
-        if (elapsed >= campaign.budgetMinutes) {
-          campaign.status = "completed";
-          persistCampaign(campaign);
-          setConfig((current) => ({ ...current, campaign: { ...campaign, status: "completed" } }));
-          const stopped = new ResearchStore(join(root, ".sota", "database.sqlite"));
-          stopped.setSchedulerState({ status: "idle", mode, currentStep: "budget-exhausted" });
-          stopped.close();
-          append("assistant", `Autonomous research stopped: budget exhausted (${campaign.budgetMinutes} minutes).`);
-          return;
-        }
-      }
-      const objective = campaign
-        ? `Work autonomously toward this ultimate research goal: ${campaign.goal}. Stop when this condition is met: ${campaign.stopCondition}. Continue through the active internal phase goal, gathering evidence and running safe local checks as needed.${steeringContext}`
-        : `Run the next zero-to-hero research cycle: inspect current state, identify the highest-information bottleneck, and propose one falsifiable experiment with explicit validation and replication criteria.${steeringContext}`;
-      queueTaskId = `task_research_${Date.now()}`;
-      const queueStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      const queuePhaseGoal = activePhaseGoal(phaseGoalsForMode(queueStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode));
-      queueStore.enqueueTask({ id: queueTaskId, kind: "research.cycle", priority: campaign ? 10 : 5, goalId: queuePhaseGoal?.id ?? null, payload: { objective, campaign: campaign ?? null } });
-      let cycle: Awaited<ReturnType<typeof runResearchCycle>> | undefined;
-      const worker = new QueueWorker(queueStore, async (task) => {
-        const payload = task.payload as { objective?: string; lastError?: unknown };
-        const retryContext = typeof payload.lastError === "string" && payload.lastError
-          ? `\n\nThis is bounded retry ${task.attempts}. The previous attempt failed with: ${payload.lastError}\nDo not blindly repeat the failed route; inspect the failure evidence and choose a different, lower-risk path if appropriate.`
-          : "";
-        if (retryContext) queueStore.appendEvent("research.cycle.retrying", { taskId: task.id, attempt: task.attempts, error: payload.lastError });
-        cycle = await runResearchCycle(`${payload.objective ?? objective}${retryContext}`, campaign, queueTaskId);
-        return cycle;
-      }, { concurrency: 1, maxAttempts: 3, kinds: ["research.cycle"] });
-      await worker.runOnce();
-      let queuedResult = queueStore.queueTasks().find((task) => task.id === queueTaskId);
-      // runOnce intentionally does not block on delayed jobs. Drain this
-      // bounded research task here so configured retries actually happen
-      // before the controller declares the cycle blocked.
-      while (!cycle && queuedResult?.status === "queued") {
-        const retryAt = Date.parse(queuedResult.availableAt);
-        const waitMs = Number.isFinite(retryAt) ? Math.max(0, retryAt - Date.now()) : 0;
-        if (waitMs > 0) {
-          setProgress(`Research retry ${queuedResult.attempts}/3 scheduled...`);
-          await new Promise<void>((resolve) => setTimeout(resolve, Math.min(waitMs, 60_000)));
-        }
-        await worker.runOnce();
-        queuedResult = queueStore.queueTasks().find((task) => task.id === queueTaskId);
-      }
-      await worker.stop();
-      queueStore.close();
-      if (!cycle) throw new Error(`Research queue task ${queueTaskId} did not produce a cycle (${queuedResult?.status ?? "missing"}).`);
-      const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      update.setSchedulerState({ status: "running", mode, currentStep: "awaiting-next-cycle" });
-      const recentDecisions = update.decisions().map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3);
-      const stagnation = detectStagnation(recentDecisions);
-      if (stagnation.stagnant && campaign) {
-        campaign.status = "paused";
-        persistCampaign(campaign);
-        update.appendEvent("research.stagnation.detected", { cycles: stagnation.cycles, signature: stagnation.signature, action: "pause_for_review" });
-        update.setSchedulerState({ status: "paused", mode, currentStep: "stagnation-review" });
-        setConfig((current) => ({ ...current, campaign: { ...campaign } }));
-        if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
-        update.close();
-        append("assistant", `Autonomous research paused after ${stagnation.cycles} unchanged active decisions. Review the bottleneck, then use /research resume.`);
-        return;
-      }
-      update.close();
-      const proposed = mode === "challenge" || campaign?.autoExecuteExperiments === true ? await proposeLatestExperiment() : null;
-      if (campaign && proposed) persistCampaignCheckpoint(campaign, "experiment-execution", cycleNumber);
-      append("assistant", cycle.text + (proposed?.text ?? ""));
-      let approvalRequired = false;
-      if (proposed && (mode === "challenge" || campaign?.autoExecuteExperiments === true)) {
-        const permissionAllowsExecution = autonomyPolicy(config.autonomy).canRunIsolatedExperiments;
-        if (!permissionAllowsExecution) {
-          approvalRequired = true;
-          append("assistant", `Approval required before autonomous execution. The manifest is ready: ${proposed.id}\nRun /experiment run ${proposed.id} to approve this specific experiment, or switch to /permissions fast/yolo for automatic isolated execution.`);
-        } else {
-          const experimentText = await executeExperiment(proposed.id);
-          append("assistant", experimentText);
-          if (/Experiment .* completed/i.test(experimentText)) {
-            const comparison = latestExperimentComparison(proposed.id);
-            if (comparison?.direction === "improved") {
-              const ablations = prepareAutomaticAblations(proposed.id);
-              if (ablations) {
-                const ablationText = [ablations.text];
-                if (permissionAllowsExecution) {
-                  for (const ablationId of ablations.ids) ablationText.push(await executeExperiment(ablationId));
-                  const evidenceText = recordAutomaticAblationEvidence(proposed.id, ablations.plan, ablations.ids, comparison?.candidate, activeAdapter().config.metric.direction);
-                  if (evidenceText) ablationText.push(evidenceText);
-                } else {
-                  ablationText.push(`Approval required: run /experiment run ${ablations.ids.join(" or ")}`);
-                }
-                append("assistant", ablationText.join("\n"));
-              }
-              const replication = prepareAutomaticReplication(proposed.id);
-              if (replication) {
-                if (!permissionAllowsExecution) append("assistant", `${replication.text}\nApproval required: run /experiment run ${replication.id}`);
-                else append("assistant", `${replication.text}\n\n${await executeExperiment(replication.id)}`);
-              }
-            } else {
-              append("assistant", `Replication skipped for ${proposed.id}: ${comparison?.direction ?? "no measured comparison"}${comparison?.note ? ` · ${comparison.note}` : ""}.`);
-            }
-          }
-        }
-      }
-      if (approvalRequired && campaign) {
-        const approvalStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        approvalStore.setSchedulerState({ status: "running", mode, currentStep: "approval-pending-research-continues" });
-        approvalStore.appendEvent("research.autonomy.approval_required", { experimentId: proposed?.id, reason: "safe permission mode", next: `/experiment run ${proposed?.id}`, researchContinues: true });
-        approvalStore.close();
-        append("assistant", `Approval pending for ${proposed?.id ?? "the proposed experiment"}. Run /experiment run ${proposed?.id ?? "<proposal>"} when ready; research continues on other directions.`);
-      }
-      if (campaign && campaign.status === "running") {
-        persistCampaignCheckpoint(campaign, "cycle-complete", cycleNumber + 1);
-      }
-      let openFalsificationCount = 0;
-      let stopPolicyAction: "continue" | "pause" | "stop" = "continue";
-      if (campaign) {
-        const stopCheck = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        openFalsificationCount = researchMemoryContext(stopCheck, 30, campaign.goal).falsificationAgenda
-          .filter((item) => item.status === "untested" || item.status === "inconclusive").length;
-        const rewards = stopCheck.eventsByType("research.search.reward").flatMap((event) => {
-          const payload = event.payload && typeof event.payload === "object" ? event.payload as { reward?: unknown; durationSeconds?: unknown; valid?: unknown } : {};
-          const reward = Number(payload.reward);
-          return Number.isFinite(reward) ? [{ reward, durationSeconds: Number(payload.durationSeconds), valid: payload.valid !== false }] : [];
-        });
-        const stopPolicy = assessStopPolicy({
-          stopCondition: campaign.stopCondition,
-          rewards,
-          remainingBudgetMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)),
-          openFalsifications: openFalsificationCount,
-        });
-        stopPolicyAction = stopPolicy.action;
-        stopCheck.appendEvent("research.stop_policy.assessed", { ...stopPolicy, source: "tui" });
-        if (openFalsificationCount > 0 && (cycle.decision === "stop" || stopPolicy.action === "stop")) stopCheck.appendEvent("research.stop_policy.continued", { reason: "open falsification agenda", openFalsifications: openFalsificationCount, source: "tui" });
-        stopCheck.close();
-      }
-      const stopRequested = cycle.decision === "stop" || stopPolicyAction === "stop";
-      if (campaign && !approvalRequired && stopRequested && stopPolicyAction !== "pause" && openFalsificationCount === 0) {
-        campaign.status = "completed";
-        persistCampaign(campaign);
-        setConfig((current) => ({ ...current, campaign: { ...campaign, status: "completed" } }));
-        if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
-        const stopped = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        stopped.setSchedulerState({ status: "idle", mode, currentStep: "campaign-complete" });
-        stopped.close();
-        append("assistant", "Autonomous research stopping condition accepted by the research director.");
-      } else if (campaign && stopPolicyAction === "pause") {
-        campaign.status = "paused";
-        persistCampaign(campaign);
-        setConfig((current) => ({ ...current, campaign: pauseCampaign(campaign) }));
-        if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
-        append("assistant", "Autonomous research paused by the stop policy. Inspect the failure/leakage evidence, then use /research resume.");
-      } else if (campaign && !approvalRequired && stopRequested && openFalsificationCount > 0) {
-        append("assistant", `Stopping deferred: ${openFalsificationCount} falsification test(s) remain open. Continuing autonomous research.`);
-      } else if (campaign && cycle.goalStatus === "blocked") {
-        campaign.status = "paused";
-        persistCampaign(campaign);
-        setConfig((current) => ({ ...current, campaign: pauseCampaign(campaign) }));
-        if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
-        const blocked = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        blocked.setSchedulerState({ status: "paused", mode, currentStep: "blocked" });
-        blocked.close();
-        append("assistant", "Autonomous research paused because the current phase is blocked. Resolve the bottleneck, then use /resume.");
-      }
-      if (campaign?.status === "running" && autoContinue && !loopTimer.current) {
-        loopTimer.current = setInterval(() => { void runAutonomousCycle(); }, 60_000);
-        append("assistant", "Autonomous research will continue automatically. Use /loop pause or /loop stop to halt it.");
-      }
-    } catch (error) {
-      const campaign = pendingCampaign;
-      if (campaign && isProviderUsageLimit(error) && (campaignLimitPolicy === "auto" || campaignLimitPolicy === "wait")) {
-        const retryAfterMs = providerRetryAfterMs(error);
-        const nextAttemptAt = new Date(Date.now() + retryAfterMs).toISOString();
-        const waiting = { ...pauseCampaign(campaign), nextAttemptAt, limitMessage: error instanceof Error ? error.message : String(error) };
-        persistCampaign(waiting);
-        setConfig((current) => ({ ...current, campaign: waiting }));
-        const waitingStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
-        waitingStore.setSchedulerState({ status: "paused", mode, currentStep: `provider-limit-until-${nextAttemptAt}` });
-        waitingStore.appendEvent("research.provider_limit.waiting", { retryAt: nextAttemptAt, retryAfterMs, provider: campaignProvider });
-        waitingStore.close();
-        if (!loopTimer.current) loopTimer.current = setInterval(() => { void runAutonomousCycle(); }, 60_000);
-        append("assistant", `Provider usage limit reached. Research is paused safely and will retry at ${nextAttemptAt}. The campaign budget remains durable; use /loop stop to cancel waiting.`);
-        return;
-      }
-      if (queueTaskId) { const queueStore = new ResearchStore(join(root, ".sota", "database.sqlite")); queueStore.updateTask(queueTaskId, "failed", { error: error instanceof Error ? error.message : String(error) }); queueStore.close(); }
-      const update = new ResearchStore(join(root, ".sota", "database.sqlite"));
-      update.setSchedulerState({ status: "paused", mode, currentStep: "blocked" });
-      update.close();
-      append("assistant", error instanceof Error ? error.message : String(error));
-      if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
-    } finally {
-      const finalCampaign = configRef.current.campaign;
-      if (!autoContinue || !finalCampaign || finalCampaign.status !== "running" || !loopTimer.current) releaseControllerLease();
-      loopBusy.current = false;
-      setBusy(false); setProgress("");
-    }
-    };
-
   const submit = async (value: string, fromQueue = false): Promise<void> => {
     const request = value.trim();
     setInput("");
@@ -2701,16 +1626,11 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setSetupDraft((current) => ({ ...current, budgetMinutes })); setSetupStep("stop");
         append("assistant", researchSetupPrompt("stop")); return;
       }
-        const startedAt = new Date().toISOString();
         const goal = setupDraft.goal ?? "Advance the research project";
-        const campaign: ResearchCampaign = { goal, goalSetId: phaseGoalSetId(goal, configRef.current.mode, startedAt), budgetMinutes: setupDraft.budgetMinutes ?? 240, stopCondition: request, startedAt, status: "running", autoExecuteExperiments: true };
-      ensureActiveProject(); persistCampaign(campaign); setConfig((current) => ({ ...current, campaign })); setSetupStep(null); setSetupDraft({});
+        const campaign = { goal, budgetMinutes: setupDraft.budgetMinutes ?? 240, stopCondition: request };
+      ensureActiveProject(); setSetupStep(null); setSetupDraft({});
       append("assistant", `Autonomous research started\n  Goal: ${campaign.goal}\n  Budget: ${campaign.budgetMinutes} minutes\n  Stop: ${campaign.stopCondition}\n\nResearch plan\n${RESEARCH_PLAN}\n\nI will define the detailed phase goals, inspect evidence, run permitted checks, and continue until the condition or budget is reached.`);
-      setBusy(true); setProgress("Starting autonomous research...");
-      try {
-        await runAutonomousCycle(campaign, true);
-      } catch (error) { appendError(error); }
-      finally { setBusy(false); setProgress(""); }
+      startCampaignController(configRef.current.mode === "challenge" ? "challenge" : "research", campaign);
       return;
     }
     if (request === "/exit" || request === "/quit") { exit(); return; }
@@ -2873,10 +1793,9 @@ export function App({ root }: { root: string }): React.JSX.Element {
         setOnboardingComplete(true);
         activeCodexThread.current = resumedConfig.provider === "codex" ? resumedConfig.codexThreadId : undefined;
         if (campaign && (campaign.status === "paused" || campaign.status === "running")) {
-          const activeCampaign = resumeCampaign(campaign) as ResearchCampaign;
-          persistCampaign(activeCampaign);
-          setConfig((current) => ({ ...current, campaign: activeCampaign }));
-          setTimeout(() => { void runAutonomousCycle(activeCampaign, true); }, 0);
+          const resumeMode = resolveCampaignMode(campaign.runtime?.mode, resumedConfig.mode);
+          configRef.current = resumedConfig;
+          if (!requestLiveControllerAction("resume", resumeMode)) resumeCampaignController(resumeMode);
         } else if (campaign) {
           append("assistant", `Saved campaign restored as ${campaign.status}. No workers were restarted; use /research start for a new campaign.`);
         }
@@ -2986,7 +1905,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
       historyStore.saveCampaign(resumed); historyStore.setSchedulerState({ status: "running", mode: requestedMode, currentStep: "resuming" }); historyStore.close();
       setConfig((existing) => ({ ...existing, mode: requestedMode, campaign: resumed }));
       append("assistant", `${requestedMode === "challenge" ? "Challenge" : "Research"} run ${requestedStartedAt} resumed. Evidra will continue from its durable phase, evidence, and experiment state.`);
-      setTimeout(() => { void runAutonomousCycle(resumed, true); }, 0);
+      resumeCampaignController(requestedMode, requestedStartedAt);
       return;
     }
     if (["/challenge pause", "/challenge resume", "/challenge stop", "/challenge status", "/research pause", "/research resume", "/research stop", "/research status"].includes(request)) {
@@ -3020,22 +1939,26 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", `The campaign's time budget is exhausted. Extend it first with /${actualMode} budget add 90m, then resume.`);
         return;
       }
+      if (action === "pause" && saved.status === "completed") {
+        store.close();
+        append("assistant", `${actualMode === "challenge" ? "Challenge" : "Research"} campaign is already completed/stopped.`);
+        return;
+      }
+      if (store.liveControllerLease()) {
+        store.close();
+        requestLiveControllerAction(action as "pause" | "resume" | "stop", actualMode);
+        return;
+      }
       if (action === "pause") {
-        pauseActiveProcesses();
-        if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
         const paused = pauseCampaign(saved);
         store.saveCampaign(paused); store.setSchedulerState({ status: "paused", mode: actualMode, currentStep: "paused" }); store.close();
-        releaseControllerLease();
         setConfig((current) => ({ ...current, mode: actualMode, campaign: paused }));
-        append("assistant", `${actualMode === "challenge" ? "Challenge" : "Research"} paused. Active workers are paused and the campaign is resumable.`);
+        append("assistant", `${actualMode === "challenge" ? "Challenge" : "Research"} paused. The campaign is resumable.`);
         return;
       }
       if (action === "stop") {
-        terminateActiveProcesses();
-        if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
         const stopped = { ...saved, status: "completed" as const };
         store.saveCampaign(stopped); store.setSchedulerState({ status: "idle", mode: actualMode, currentStep: "stopped" }); store.close();
-        releaseControllerLease();
         setConfig((current) => ({ ...current, mode: actualMode, campaign: stopped }));
         append("assistant", `${actualMode === "challenge" ? "Challenge" : "Research"} stopped. It remains saved for inspection, but will not resume automatically.`);
         return;
@@ -3045,34 +1968,35 @@ export function App({ root }: { root: string }): React.JSX.Element {
         append("assistant", `The campaign's time budget is exhausted. Extend it first with /${actualMode} budget add 90m, then resume.`);
         return;
       }
-      const resumed = { ...resumeCampaign(saved), nextAttemptAt: undefined, limitMessage: undefined };
-      store.saveCampaign(resumed); store.setSchedulerState({ status: "running", mode: actualMode, currentStep: "resuming" }); store.close();
-      setConfig((current) => ({ ...current, mode: actualMode, campaign: resumed }));
-      append("assistant", `${actualMode === "challenge" ? "Challenge" : "Research"} resumed. Evidra will continue from the latest durable phase, evidence, and experiment state.`);
-      setTimeout(() => { void runAutonomousCycle(resumed, true); }, 0);
+      store.close();
+      setConfig((current) => ({ ...current, mode: actualMode }));
+      append("assistant", `${actualMode === "challenge" ? "Challenge" : "Research"} resuming. Evidra will continue from the latest durable phase, evidence, and experiment state.`);
+      resumeCampaignController(actualMode);
       return;
     }
     if (request === "/pause" || request === "/resume") {
       if (request === "/pause") pauseActiveProcesses();
       if (request === "/resume") resumeActiveProcesses();
-      if (request === "/pause" && loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
       const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
       const savedCampaign = store.campaign() as ResearchCampaign | undefined;
       const controlMode = resolveCampaignMode(savedCampaign?.runtime?.mode, store.schedulerState().mode);
       if (request === "/resume" && savedCampaign?.budgetExhausted) { store.close(); append("assistant", `The campaign's time budget is exhausted. Extend it with /${controlMode} budget add 90m before resuming.`); return; }
-      store.setSchedulerState({ status: request === "/pause" ? "paused" : "running", mode: controlMode, currentStep: null });
-      const campaign = savedCampaign
-        ? request === "/pause" ? pauseCampaign(savedCampaign) : resumeCampaign(savedCampaign)
-        : undefined;
-      if (campaign) {
-        store.saveCampaign(campaign);
-        setConfig((current) => ({ ...current, campaign }));
-        if (request === "/resume" && !loopTimer.current) {
-          void runAutonomousCycle(campaign, true);
+      if (store.liveControllerLease()) {
+        store.close();
+        requestLiveControllerAction(request === "/pause" ? "pause" : "resume", controlMode);
+        return;
+      }
+      if (request === "/pause") {
+        store.setSchedulerState({ status: "paused", mode: controlMode, currentStep: null });
+        if (savedCampaign) {
+          const campaign = pauseCampaign(savedCampaign);
+          store.saveCampaign(campaign);
+          setConfig((current) => ({ ...current, campaign }));
         }
       }
       store.close();
       append("assistant", request === "/pause" ? "Scheduling paused. Running jobs are unchanged." : "Scheduling resumed.");
+      if (request === "/resume" && savedCampaign && savedCampaign.status !== "completed") resumeCampaignController(controlMode);
       return;
     }
     if (request === "/research" || request === "/research start") {
@@ -3115,9 +2039,13 @@ export function App({ root }: { root: string }): React.JSX.Element {
       }
       if (["stop", "pause"].includes(action)) {
         const status = action === "stop" ? "idle" : "paused";
-        if (loopTimer.current) { clearInterval(loopTimer.current); loopTimer.current = null; }
         const savedCampaign = store.campaign() as ResearchCampaign | undefined;
         const loopMode = resolveCampaignMode(savedCampaign?.runtime?.mode, store.schedulerState().mode);
+        if (store.liveControllerLease()) {
+          store.close();
+          requestLiveControllerAction("pause", loopMode);
+          return;
+        }
         store.setSchedulerState({ status, mode: loopMode, currentStep: null });
         if (savedCampaign) {
           const campaign = pauseCampaign(savedCampaign);
@@ -3134,12 +2062,20 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
       const savedCampaign = store.campaign() as ResearchCampaign | undefined;
+      const liveController = store.liveControllerLease();
       store.close();
-      await runAutonomousCycle(savedCampaign);
-      if (action === "start" && !loopTimer.current) {
-        loopTimer.current = setInterval(() => { void runAutonomousCycle(); }, 60_000);
-        append("assistant", "Autonomous loop started. It will evaluate the next decision every 60 seconds. Use /loop pause or /loop stop to halt it.");
+      if (action === "once") {
+        ensureActiveProject(); setBusy(true); setProgress("Starting empirical research cycle...");
+        try { append("assistant", await runCliProposal("Run the next zero-to-hero research cycle: inspect current state, identify the highest-information bottleneck, and propose one falsifiable experiment with explicit validation and replication criteria.")); }
+        catch (error) { appendError(error); }
+        finally { setBusy(false); setProgress(""); }
+        return;
       }
+      const loopMode = resolveCampaignMode(savedCampaign?.runtime?.mode, configRef.current.mode);
+      if (liveController) append("assistant", `The campaign controller is already running (pid ${liveController.pid}). Use /${loopMode} status or /timeline to follow it.`);
+      else if (!savedCampaign || savedCampaign.status === "completed") append("assistant", "No resumable campaign exists. Start one with /research start or /challenge start.");
+      else if (savedCampaign.budgetExhausted) append("assistant", `The campaign's time budget is exhausted. Extend it with /${loopMode} budget add 90m before resuming.`);
+      else resumeCampaignController(loopMode);
       return;
     }
     if (request === "/guidance") {
@@ -3334,7 +2270,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         baselineStore.close();
         setProgress("Zero-to-hero: generating the first falsifiable research decision...");
         appendTool(`Baseline ${baseline.exitCode === 0 ? "completed" : "failed"}.\n${baseline.stdout || baseline.stderr}`);
-        const decisionText = (await runResearchCycle("Starting from the verified baseline, identify the first highest-information experiment. Include a falsification test, leakage risks, compute estimate, and replication plan.")).text;
+        const decisionText = await runCliProposal("Starting from the verified baseline, identify the first highest-information experiment. Include a falsification test, leakage risks, compute estimate, and replication plan.", ["--reuse-recorded-baseline"]);
         const proposed = await proposeLatestExperiment();
         append("assistant", decisionText + (proposed?.text ?? ""));
         if (proposed) {
@@ -3666,12 +2602,8 @@ export function App({ root }: { root: string }): React.JSX.Element {
             storeWithLink.close();
           }
         }
-        const startedAt = new Date().toISOString();
-        const campaign: ResearchCampaign = { goal, goalSetId: phaseGoalSetId(goal, configRef.current.mode, startedAt), budgetMinutes: 240, stopCondition: "stop when the evaluator-backed score is materially improved and the result survives independent replication", startedAt, status: "running", autoExecuteExperiments: true };
-        persistCampaign(campaign);
-        setConfig((current) => ({ ...current, campaign }));
-        append("assistant", `Challenge campaign started\n  goal: ${goal}\n  sources ingested: ${ingested.length}\n  mode: challenge\n  execution: baseline → research lanes → critic → isolated implementation → experiment → replication\n  autonomous experiments: enabled (external submission remains approval-gated)`);
-        await runAutonomousCycle(campaign, true);
+        append("assistant", `Challenge campaign started\n  goal: ${goal}\n  sources ingested: ${ingested.length}\n  mode: challenge\n  execution: baseline → research lanes → critic → isolated implementation → experiment → replication\n  autonomous experiments: ${autonomyPolicy(configRef.current.autonomy).canRunIsolatedExperiments ? "enabled" : "approval-gated"} (external submission remains approval-gated)`);
+        startCampaignController("challenge", { goal, budgetMinutes: 240, stopCondition: "stop when the evaluator-backed score is materially improved and the result survives independent replication" });
       } catch (error) { appendError(error); }
       finally { setBusy(false); setProgress(""); }
       return;
@@ -4935,21 +3867,24 @@ export function App({ root }: { root: string }): React.JSX.Element {
         return;
       }
       if (!objective || objective === "start") {
-        if (config.campaign?.status === "running") { append("assistant", "An autonomous research campaign is already running. Use /status or /usage to inspect it."); return; }
+        const runningStore = new ResearchStore(join(root, ".sota", "database.sqlite"));
+        const runningController = runningStore.liveControllerLease();
+        runningStore.close();
+        if (runningController) { append("assistant", "An autonomous research campaign is already running. Use /status or /usage to inspect it."); return; }
         setSetupDraft({}); setSetupStep("goal");
         append("assistant", researchSetupPrompt("goal"));
         return;
       }
       if (objective === "next") {
         ensureActiveProject(); setBusy(true); setProgress("Starting empirical research cycle...");
-        try { append("assistant", (await runResearchCycle("Inspect the current workspace and choose the highest-information next research action.")).text); }
+        try { append("assistant", await runCliProposal("Inspect the current workspace and choose the highest-information next research action.")); }
         catch (error) { appendError(error); }
         finally { setBusy(false); setProgress(""); }
         return;
       }
       setBusy(true); setProgress("Starting empirical research cycle...");
       try {
-        ensureActiveProject(); append("assistant", (await runResearchCycle(objective)).text);
+        ensureActiveProject(); append("assistant", await runCliProposal(objective));
       } catch (error) {
         append("assistant", error instanceof Error ? error.message : String(error));
       } finally { setBusy(false); setProgress(""); }
