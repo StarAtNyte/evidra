@@ -68,6 +68,9 @@ export const CompetitionConfigSchema = z.object({
   evaluator: z.object({
     command: z.array(z.string()),
     estimatorPath: z.string(),
+    /** Optional evaluator on data the agents never see. A run becomes the champion only if
+     * it improves the primary metric and does not regress on this holdout. */
+    holdoutCommand: z.array(z.string()).min(1).optional(),
   }),
   workspacePath: z.string().optional(),
   baselineCommand: z.array(z.string()).optional(),

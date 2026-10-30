@@ -19,7 +19,7 @@ import { formatResearchStarterBriefs, RESEARCH_STARTER_BRIEFS } from "./core/res
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "./core/experiment-manifest.js";
 import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatResearchStagePlan, phaseCompletionCriteriaForAudit, phaseGoalCanAdvance, phaseGoalCycleAudit, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForCurrentSet, phaseGoalsForMode, researchStageProgress, RESEARCH_STAGE_PLAN } from "./core/phase-goals.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema, type ExperimentExecutorKind } from "./core/types.js";
-import { competitionIdForMode, competitionManifestForInitialization, declaredEvaluatorCommand, loadCompetitionAdapter } from "./competitions/adapters.js";
+import { competitionIdForMode, competitionManifestForInitialization, declaredEvaluatorCommand, hasPlaceholderEvaluator, loadCompetitionAdapter, PLACEHOLDER_EVALUATOR_GUIDANCE } from "./competitions/adapters.js";
 import { auditData, dataAuditFingerprint, dataAuditManifestFingerprint } from "./core/data-audit.js";
 import { createValidationPolicy, ValidationPolicySchema, writeValidationPolicy } from "./core/validation-policy.js";
 import { distributionObservationsFromFeedback, estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
@@ -132,7 +132,7 @@ import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTas
 import { runSafetyBenchmark } from "./core/safety-bench.js";
 import { runOrchestrationBenchmark } from "./core/orchestration-bench.js";
 import { runGovernanceBenchmark } from "./core/governance-bench.js";
-import { championExperimentIds, championImplementation, experimentLog, selectRatchetReference } from "./core/ratchet.js";
+import { championExperimentIds, championImplementation, experimentLog, holdoutAllows, holdoutReference, isAgentVisibleEvent, selectRatchetReference } from "./core/ratchet.js";
 import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.js";
 import { approvalInbox } from "./core/approvals.js";
 import { loadProjectGuidance } from "./core/project-guidance.js";
@@ -362,9 +362,23 @@ async function runCampaignExperiment(rootPath: string, experimentId: string, sta
   });
 }
 
+/** The current campaign's start, used to keep champions from leaking across campaigns. */
+function activeCampaignStart(store: ResearchStore): string | undefined {
+  const startedAt = (store.campaign() as { startedAt?: unknown } | undefined)?.startedAt;
+  return typeof startedAt === "string" ? startedAt : undefined;
+}
+
+/** Run a holdout evaluator and parse the primary metric; undefined when it fails or reports none. */
+async function holdoutMetricFor(cwd: string, command: string[], environment: NodeJS.ProcessEnv, metricName: string, timeoutMinutes: number): Promise<number | undefined> {
+  const result = await runProcess(command, cwd, timeoutMinutes * 60_000, undefined, undefined, environment);
+  if (result.exitCode !== 0) return undefined;
+  const metric = parseMetricOutput(result.stdout, metricName).metrics[metricName];
+  return typeof metric === "number" && Number.isFinite(metric) ? metric : undefined;
+}
+
 /** The champion and recent attempts, given to the director every cycle. */
 function campaignExperimentLog(store: ResearchStore, metricName: string): { champion: ReturnType<typeof experimentLog>["champion"]; experimentLog: ReturnType<typeof experimentLog>["recent"] } {
-  const log = experimentLog(store, metricName);
+  const log = experimentLog(store, metricName, activeCampaignStart(store));
   return { champion: log.champion, experimentLog: log.recent };
 }
 
@@ -375,7 +389,7 @@ async function seedFromChampion(worktree: string, experimentId: string): Promise
   if (status.exitCode !== 0 || status.stdout.trim()) return;
   const store = new ResearchStore(statePath);
   try {
-    const champion = championImplementation(store);
+    const champion = championImplementation(store, activeCampaignStart(store));
     if (!champion || champion.experimentId === experimentId || !existsSync(champion.worktree)) return;
     const copied: string[] = [];
     for (const path of champion.files) {
@@ -2615,7 +2629,7 @@ sources.command("adapt")
     const adapter = activeCompetition();
     const source = sourceEntry.payload as { title?: unknown; url?: unknown; claims?: unknown; excerpt?: unknown; contentHash?: unknown };
     const adaptationObjective = objective?.trim() || `Adapt the technique from '${typeof source.title === "string" ? source.title : id}' into testable improvements for the active workspace.`;
-    const recentEvents = store.recentEvents(20);
+    const recentEvents = store.recentEvents(20).filter(isAgentVisibleEvent);
     const researchMemory = researchMemoryContext(store, 20, adaptationObjective);
     store.appendEvent("research.memory.retrieved", { ...researchMemory.retrieval, context: "source-adaptation" });
     const sourceContext = {
@@ -5479,7 +5493,8 @@ research
       // history used for convergence decisions in a long-running campaign.
       const searchRewardEvents = recordsForCampaign(store.eventsByType("research.search.reward"), campaign.startedAt);
       const recentEvents = mergeCampaignToolFailures(
-        campaignEvents.slice(-20),
+        // Holdout scores stay hidden from the agents so they cannot be optimized directly.
+        campaignEvents.filter(isAgentVisibleEvent).slice(-20),
         store.eventsByType("research.tool.failed", 256),
         campaign.startedAt,
       );
@@ -5921,6 +5936,7 @@ research
       const cadence = discoveryCadence(recordsForCampaign(store.eventsByType("research.decision.audit"), campaign.startedAt), recordsForCampaign(store.runs(), campaign.startedAt));
       if (cadence.guidance) store.appendEvent("research.discovery.cadence", { idleCycles: cadence.idleCycles, action: "bounded-experiment-guidance", gatesUnchanged: true });
       const cycleObjective = allocatedObjective + guidanceText + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance + progressGuidance + cadence.guidance + verificationRuntimeGuidance(adapter.config.evaluator.command)
+        + (hasPlaceholderEvaluator(adapter.config) ? `\n\n${PLACEHOLDER_EVALUATOR_GUIDANCE}` : "")
         + (goalProgress.pivotRequired ? "\n\nPLATEAU: the champion has stopped improving. Propose structurally different families (a new representation, mechanism, or objective), not more tuning of the current one." : "");
       const researchSources = latestSourcePayloads(store.sources(), 12, cycleObjective, store);
       const researchMemory = researchMemoryContext(store, 30, cycleObjective, {
@@ -7212,7 +7228,7 @@ research.command("propose")
     }
     store.appendEvent("research.observation", observation);
     const observationId = recordWorkspaceObservation(store, observation);
-    const recentEvents = store.recentEvents(20);
+    const recentEvents = store.recentEvents(20).filter(isAgentVisibleEvent);
     const researchMemory = researchMemoryContext(store, 30, objective, { objective, taskType: "general research", context: "research" });
     store.appendEvent("research.memory.retrieved", { ...researchMemory.retrieval, context: "one-shot-research" });
     const harnessChangeHistory = store.harnessChanges().slice(-8).map((change) => ({
@@ -7931,7 +7947,8 @@ experiment.command("run")
         const comparison = compareRuns(baselineRun, RunResultSchema.parse(recorded), metricName, primaryMetricDirection === "minimize");
         // The search ratchet climbs on every completed run that beat the champion, as autoresearch
         // keeps each improving commit. Validation acceptance gates claims and submissions, not search.
-        const acceptedExperimentIds = new Set(championExperimentIds(resultStore).filter((experimentId) => experimentId !== id));
+        const campaignStartedAt = activeCampaignStart(resultStore);
+        const acceptedExperimentIds = new Set(championExperimentIds(resultStore, campaignStartedAt).filter((experimentId) => experimentId !== id));
         const historicalRuns = resultStore.experiments().flatMap((candidate) => {
           if (!acceptedExperimentIds.has(candidate.id)) return [];
           const candidateManifest = ExperimentManifestSchema.safeParse(candidate.payload);
@@ -7951,8 +7968,24 @@ experiment.command("run")
         const ratchetComparison = ratchet.sourceId === baselineRun.runId ? comparison : compareRuns(ratchetBaselineRun, RunResultSchema.parse(recorded), metricName, primaryMetricDirection === "minimize");
         resultStore.appendEvent("experiment.ratchet.checked", { experimentId: id, originalBaseline: baselineMetric, reference: ratchet, referenceRunId: ratchet.sourceId, referenceMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, comparison: ratchetComparison });
         if (ratchetComparison.direction === "improved") {
-          resultStore.appendEvent("experiment.champion.updated", { experimentId: id, runId: result.runId, metric: recorded.metrics[metricName], previousRunId: ratchet.sourceId, previousMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, hypothesisId: manifest.hypothesisId });
-          console.log(`New champion: ${metricName} ${ratchetBaselineRun.metrics[metricName] ?? baselineMetric} → ${recorded.metrics[metricName]}; later experiments start from this implementation.`);
+          const holdoutCommand = adapter.config.evaluator.holdoutCommand;
+          let holdoutPassed = true;
+          if (holdoutCommand) {
+            let reference = holdoutReference(resultStore, campaignStartedAt);
+            if (reference === undefined) {
+              reference = await holdoutMetricFor(adapter.workspacePath(root), holdoutCommand, prepareExperimentEnvironment(manifest, adapter.workspacePath(root)), metricName, adapter.config.evaluatorTimeoutMinutes);
+              resultStore.appendEvent("experiment.holdout.completed", { experimentId: "original", metric: reference ?? null, kept: reference !== undefined });
+            }
+            const candidateHoldout = await holdoutMetricFor(experimentCwd, commandForCandidate(holdoutCommand, hypothesis?.payload), experimentEnvironment, metricName, adapter.config.evaluatorTimeoutMinutes);
+            holdoutPassed = holdoutAllows(candidateHoldout, reference, primaryMetricDirection);
+            resultStore.appendEvent("experiment.holdout.completed", { experimentId: id, metric: candidateHoldout ?? null, reference: reference ?? null, kept: holdoutPassed });
+          }
+          if (holdoutPassed) {
+            resultStore.appendEvent("experiment.champion.updated", { experimentId: id, runId: result.runId, metric: recorded.metrics[metricName], previousRunId: ratchet.sourceId, previousMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, hypothesisId: manifest.hypothesisId });
+            console.log(`New champion: ${metricName} ${ratchetBaselineRun.metrics[metricName] ?? baselineMetric} → ${recorded.metrics[metricName]}; later experiments start from this implementation.`);
+          } else {
+            console.log(`${metricName} improved but the hidden holdout did not; not kept (likely overfitting the development split).`);
+          }
         }
         const operator = manifest.searchOperator ?? "ucb_portfolio";
         resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison, searchOperator: operator });

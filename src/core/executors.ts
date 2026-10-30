@@ -435,7 +435,7 @@ export function validateRunMetric(result: RunResult, metricName: string): RunRes
 export class LocalExecutor implements ExperimentExecutor {
   readonly kind = "local" as const;
 
-  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = manifest.evaluation?.metrics?.[0]?.name ?? "score", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
     const experimentEnvironment = prepareExperimentEnvironment(manifest, cwd, environment);
     try {
       return toRunResult(manifest, await runProcess(command, cwd, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, experimentEnvironment, manifest.resources.earlyStopping), metricName);
@@ -470,7 +470,7 @@ export class ContainerExecutor implements ExperimentExecutor {
 
   constructor(private readonly workspaceRoot?: string, private readonly onRemoteExecution?: RemoteExecutionObserver) {}
 
-  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = manifest.evaluation?.metrics?.[0]?.name ?? "score", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
     prepareExperimentEnvironment(manifest, cwd, environment);
     // Runtime clients need controller-side endpoint/auth configuration. Only
     // explicit --env entries above cross into the worker container.
@@ -615,7 +615,7 @@ export class SlurmExecutor implements ExperimentExecutor {
 
   constructor(private readonly workspaceRoot?: string, private readonly onRemoteExecution?: RemoteExecutionObserver) {}
 
-  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = manifest.evaluation?.metrics?.[0]?.name ?? "score", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
     const launchRoot = resolve(this.workspaceRoot ?? cwd);
     const available = await runProcess(["which", "sbatch"], launchRoot, 5_000);
     if (available.exitCode !== 0) return toRunResult(manifest, { command, cwd, exitCode: 127, durationMs: 0, stdout: "", stderr: "No Slurm sbatch runtime was found. Install Slurm client tools or select another executor." }, metricName, true);
@@ -728,7 +728,7 @@ export class ModalExecutor implements ExperimentExecutor {
 
   constructor(private readonly workspaceRoot?: string, private readonly onRemoteExecution?: RemoteExecutionObserver) {}
 
-  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = manifest.evaluation?.metrics?.[0]?.name ?? "score", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
     const experimentEnvironment = prepareExperimentEnvironment(manifest, cwd, environment);
     // Modal CLI profiles (created by `modal token set`) are valid credentials
     // too; do not require secrets to be duplicated into Evidra's environment.

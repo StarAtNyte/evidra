@@ -74,6 +74,7 @@ import { activeContradictionEdges, activeDuplicateClaimCount, latestSourceEntrie
 import { detectStagnation } from "../core/stagnation.js";
 import { assessStopPolicy } from "../core/stop-policy.js";
 import { applyCriticGate } from "../core/critic-gate.js";
+import { isAgentVisibleEvent } from "../core/ratchet.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../core/experiment-patches.js";
 import { recordBaselineEvidence } from "../core/baseline.js";
 import { redactSecrets } from "../core/redaction.js";
@@ -1083,7 +1084,7 @@ export function App({ root }: { root: string }): React.JSX.Element {
         throw new Error(`Autonomous campaign paused: agent token budget exhausted (${agentTokens}/${agentTokenBudget}); cancelled ${cancelledTasks.length} queued campaign task(s).`);
       }
     }
-    const recentEvents = store.recentEvents(20);
+    const recentEvents = store.recentEvents(20).filter(isAgentVisibleEvent);
     const consistencyEvents = store.recentEvents(200);
     const evidenceConflicts = {
       contradictions: activeContradictionEdges(store).length,

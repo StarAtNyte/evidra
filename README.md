@@ -32,6 +32,14 @@ locked evaluator, keep it if it beats the best result so far, and otherwise disc
 - **Attempts are cheap; claims are reviewed.** The director can run any concrete idea, from tuning to a new
   algorithm or architecture, without first justifying it. The critic and semantic auditor review only claims
   that the goal is met. Validation, replication, and submission gates apply to promotion, never to trying.
+- **A hidden holdout catches overfitting.** Set `evaluator.holdoutCommand` in `competition.json` to an
+  evaluator over data the agents cannot read. A run becomes champion only if it improves the primary metric
+  and does not regress on the holdout; holdout scores are never shown to the agents.
+- **Five phases, not nine.** New campaigns go orientation → baseline → search → replication → promotion. The
+  controller still runs the data audit itself; it is no longer a phase the director has to work through.
+- **Any workspace, any goal.** Without a real evaluator (the `local-research` default is `true`), the director
+  is told to build a scorer as its first experiment, or to produce the deliverable (a design, report, or
+  dataset) as a verified artifact, instead of auditing while it waits for a metric.
 - **The director sees the results log.** Each cycle it receives the champion and the recent attempts (idea,
   method family, metric, kept or not), so it can refine what works and switch families when one stalls.
 

@@ -26,12 +26,20 @@ export function selectRatchetReference(
 }
 
 interface EventSource {
-  eventsByType(type: string): Array<{ payload: unknown }>;
+  eventsByType(type: string): Array<{ payload: unknown; createdAt?: string }>;
 }
 
-/** Experiments that became the search champion, oldest first. */
-export function championExperimentIds(store: EventSource): string[] {
-  return store.eventsByType("experiment.champion.updated").flatMap((event) => {
+/** Events of one type, limited to a campaign when its start time is given. */
+function eventsSince(store: EventSource, type: string, since?: string): Array<{ payload: unknown; createdAt?: string }> {
+  const events = store.eventsByType(type);
+  if (!since) return events;
+  const start = Date.parse(since);
+  return events.filter((event) => !event.createdAt || Date.parse(event.createdAt) >= start);
+}
+
+/** Experiments that became the search champion, oldest first; `since` scopes them to a campaign. */
+export function championExperimentIds(store: EventSource, since?: string): string[] {
+  return eventsSince(store, "experiment.champion.updated", since).flatMap((event) => {
     const experimentId = (event.payload as { experimentId?: unknown } | undefined)?.experimentId;
     return typeof experimentId === "string" ? [experimentId] : [];
   });
@@ -42,8 +50,8 @@ export function championExperimentIds(store: EventSource): string[] {
  * recorded source snapshot. Experiments then compound improvements instead of
  * restarting from the original commit.
  */
-export function championImplementation(store: EventSource): { experimentId: string; worktree: string; files: string[] } | undefined {
-  const experimentId = championExperimentIds(store).at(-1);
+export function championImplementation(store: EventSource, since?: string): { experimentId: string; worktree: string; files: string[] } | undefined {
+  const experimentId = championExperimentIds(store, since).at(-1);
   if (!experimentId) return undefined;
   const snapshot = store.eventsByType("experiment.implementation.completed").reverse()
     .map((event) => event.payload as { experimentId?: unknown; worktree?: unknown; files?: unknown } | undefined)
@@ -72,9 +80,11 @@ export function experimentLog(
     hypotheses(): Array<{ id: string; payload: unknown }>;
   },
   metricName: string,
+  since?: string,
   limit = 30,
 ): { champion: { experimentId: string; idea: string; metric: number | null } | null; recent: ExperimentLogEntry[] } {
-  const champions = new Set(championExperimentIds(store));
+  const championIds = championExperimentIds(store, since);
+  const champions = new Set(championIds);
   const runs = new Map(store.runs().map((run) => [run.id, run.payload as { metrics?: Record<string, unknown> }]));
   const hypotheses = new Map(store.hypotheses().map((entry) => [entry.id, entry.payload as { title?: unknown; formulationFamily?: unknown }]));
   const entries = store.experiments().map((entry): ExperimentLogEntry => {
@@ -90,10 +100,34 @@ export function experimentLog(
       kept: champions.has(entry.id),
     };
   });
-  const championId = championExperimentIds(store).at(-1);
+  const championId = championIds.at(-1);
   const champion = entries.find((entry) => entry.experimentId === championId);
   return {
     champion: champion ? { experimentId: champion.experimentId, idea: champion.idea, metric: champion.metric } : null,
     recent: entries.slice(-limit),
   };
+}
+
+/**
+ * The holdout score a new champion must not regress: the current champion's,
+ * or the original solution's when no champion has been kept. Holdout scores
+ * are recorded only as experiment.holdout.completed events and are never
+ * shown to the research agents, so they cannot be optimized directly.
+ */
+export function holdoutReference(store: EventSource, since?: string): number | undefined {
+  const kept = eventsSince(store, "experiment.holdout.completed", since)
+    .map((event) => event.payload as { metric?: unknown; kept?: unknown } | undefined)
+    .filter((payload) => payload?.kept === true && typeof payload.metric === "number" && Number.isFinite(payload.metric));
+  return kept.at(-1)?.metric as number | undefined;
+}
+
+export function holdoutAllows(candidate: number | undefined, reference: number | undefined, direction: "maximize" | "minimize"): boolean {
+  if (candidate === undefined || !Number.isFinite(candidate)) return false;
+  if (reference === undefined) return true;
+  return direction === "minimize" ? candidate <= reference : candidate >= reference;
+}
+
+/** Events research agents may see: everything except hidden holdout scores. */
+export function isAgentVisibleEvent(event: { type: string }): boolean {
+  return event.type !== "experiment.holdout.completed";
 }

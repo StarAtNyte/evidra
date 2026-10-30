@@ -111,7 +111,7 @@ import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTas
 import { evaluateGpuBudget, observedGpuHours } from "../dist/core/compute-budget.js";
 import { collaborationUtility } from "../dist/core/adaptive-harness.js";
 import { assessCodeHealth, assessCodeHealthTrend, snapshotCodeHealth } from "../dist/core/code-health.js";
-import { championExperimentIds, championImplementation, experimentLog, selectRatchetReference } from "../dist/core/ratchet.js";
+import { championExperimentIds, championImplementation, experimentLog, holdoutAllows, holdoutReference, isAgentVisibleEvent, selectRatchetReference } from "../dist/core/ratchet.js";
 
 test("failed autonomous screening persists a retryable failed experiment instead of stranding it running", () => {
   const failed = failedAutonomousExperimentPayload({ id: "exp-1", status: "running", manifest: { immutable: true } }, {
@@ -2937,6 +2937,36 @@ test("code health detects severe test deletion and untested structural growth", 
   assert.equal(sameLineageTrend.untestedGrowthStreak, 4);
 });
 
+test("a placeholder evaluator is recognized so the director builds a scorer or a deliverable", async () => {
+  const { hasPlaceholderEvaluator, localResearchConfig } = await import("../dist/competitions/adapters.js");
+  assert.equal(hasPlaceholderEvaluator(localResearchConfig), true);
+  assert.equal(hasPlaceholderEvaluator({ evaluator: { command: [":"], estimatorPath: "" } }), true);
+  assert.equal(hasPlaceholderEvaluator({ evaluator: { command: ["python", "score.py"], estimatorPath: "model.py" } }), false);
+});
+
+test("a hidden holdout guards champions and champions stay inside their campaign", () => {
+  const events = {
+    "experiment.champion.updated": [
+      { payload: { experimentId: "old-campaign" }, createdAt: "2026-01-01T00:00:00.000Z" },
+      { payload: { experimentId: "this-campaign" }, createdAt: "2026-02-02T00:00:00.000Z" },
+    ],
+    "experiment.holdout.completed": [
+      { payload: { experimentId: "original", metric: 0.5, kept: true }, createdAt: "2026-02-01T00:00:00.000Z" },
+      { payload: { experimentId: "overfit", metric: 0.7, kept: false }, createdAt: "2026-02-01T01:00:00.000Z" },
+    ],
+  };
+  const store = { eventsByType: (type) => events[type] ?? [] };
+  assert.deepEqual(championExperimentIds(store, "2026-02-01T00:00:00.000Z"), ["this-campaign"]);
+  assert.equal(holdoutReference(store, "2026-02-01T00:00:00.000Z"), 0.5, "a rejected holdout never becomes the reference");
+  assert.equal(holdoutAllows(0.45, 0.5, "minimize"), true);
+  assert.equal(holdoutAllows(0.55, 0.5, "minimize"), false, "dev gains that regress the holdout are overfitting");
+  assert.equal(holdoutAllows(0.55, 0.5, "maximize"), true);
+  assert.equal(holdoutAllows(undefined, 0.5, "minimize"), false, "a failed holdout run cannot be kept");
+  assert.equal(holdoutAllows(0.9, undefined, "minimize"), true);
+  assert.equal(isAgentVisibleEvent({ type: "experiment.holdout.completed" }), false);
+  assert.equal(isAgentVisibleEvent({ type: "experiment.champion.updated" }), true);
+});
+
 test("champions compound: the latest improving run seeds the next experiment and heads the results log", () => {
   const events = {
     "experiment.champion.updated": [{ payload: { experimentId: "exp-1" } }, { payload: { experimentId: "exp-3" } }],
@@ -4385,8 +4415,14 @@ test("phase advancement uses shared domain evidence for both research and challe
   }
 });
 
+// Campaigns created before the five-phase loop still hold these phases; their gates must keep working.
+function legacyPhaseGoal(goal, mode, phase) {
+  const template = definePhaseGoals(goal, mode)[0];
+  return { ...template, id: `${template.id}_${phase}`, phase };
+}
+
 test("hypothesis phase gates require a falsifiable selected direction", () => {
-  const goal = definePhaseGoals("test", "research").find((entry) => entry.phase === "hypothesis");
+  const goal = legacyPhaseGoal("test", "research", "hypothesis");
   const base = { eventTypes: ["experiment.created"], eventPayloads: [], hypotheses: 1, experiments: 1, runs: 0, artifacts: 0, candidateHypotheses: 1, falsifiableHypotheses: 0, selectedHypothesisFalsifiable: false };
   assert.deepEqual(evaluatePhaseGoalEvidence(goal, base).missing, ["falsifiable hypothesis", "selected hypothesis has a falsification test"]);
   assert.equal(evaluatePhaseGoalEvidence(goal, { ...base, falsifiableHypotheses: 1, selectedHypothesisFalsifiable: true }).met, true);
@@ -4644,7 +4680,7 @@ test("semantic auditor output is grounded before it can pass", () => {
 });
 
 test("validation phase completion requires the latest policy lifecycle event to be a lock", () => {
-  const goal = definePhaseGoals("lock a trustworthy split", "challenge").find((entry) => entry.phase === "validation");
+  const goal = legacyPhaseGoal("lock a trustworthy split", "challenge", "validation");
   const created = { type: "validation.policy.created", payload: { checksum: "sha256:policy" } };
   const reused = { type: "validation.policy.reused", payload: { checksum: "sha256:policy", locked: true, version: "policy-v1" } };
   const locked = { type: "validation.policy.locked", payload: { checksum: "sha256:policy" } };
@@ -4741,7 +4777,7 @@ test("current campaign goal progress ignores prior campaign goal sets", () => {
   const currentGoals = phaseGoalsForCurrentSet(combined, "challenge", current[0].goalSetId);
   assert.equal(currentGoals.length, current.length);
   assert.ok(currentGoals.every((goal) => goal.goalSetId === current[0].goalSetId));
-  assert.deepEqual(researchStageProgress(currentGoals).map((stage) => [stage.completed, stage.total]), [[0, 3], [0, 3], [0, 3]]);
+  assert.deepEqual(researchStageProgress(currentGoals).map((stage) => [stage.completed, stage.total]), [[0, 2], [0, 1], [0, 2]]);
   const newest = phaseGoalsForCurrentSet(combined, "challenge");
   assert.ok(newest.every((goal) => goal.goalSetId === current[0].goalSetId));
 });
@@ -4759,12 +4795,12 @@ test("goals CLI scopes by the active campaign and makes historical sets opt-in",
     const cli = join(process.cwd(), "dist", "cli.js");
     const env = { ...process.env, EVIDRA_STATE_DIR: state };
     const currentReport = JSON.parse(execFileSync(process.execPath, [cli, "goals", "--mode", "challenge", "--json"], { cwd: root, env, encoding: "utf8" }));
-    assert.equal(currentReport.goals.length, 9);
+    assert.equal(currentReport.goals.length, 5);
     assert.ok(currentReport.goals.every((goal) => goal.goalSetId === current[0].goalSetId));
     assert.ok(currentReport.stages.every((stage) => stage.completed <= stage.total));
     assert.equal(currentReport.stages[0].completed, 0, "completed history must not advance the active campaign");
     const historyReport = JSON.parse(execFileSync(process.execPath, [cli, "goals", "--mode", "challenge", "--all", "--json"], { cwd: root, env, encoding: "utf8" }));
-    assert.equal(historyReport.goals.length, 18);
+    assert.equal(historyReport.goals.length, 10);
     assert.equal(new Set(historyReport.goals.map((goal) => goal.goalSetId)).size, 2);
     assert.deepEqual(historyReport.stages, currentReport.stages, "history view keeps stage progress tied to the active campaign");
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -4777,11 +4813,12 @@ test("three-stage research progress is derived from detailed durable goals", () 
   assert.equal(researchStageForPhase("replication"), "validate");
   const progress = researchStageProgress(goals);
   assert.deepEqual(progress.map((stage) => [stage.stage, stage.completed, stage.total, stage.status]), [
-    ["orient", 0, 3, "active"],
-    ["discover", 0, 3, "pending"],
-    ["validate", 0, 3, "pending"],
+    ["orient", 0, 2, "active"],
+    ["discover", 0, 1, "pending"],
+    ["validate", 0, 2, "pending"],
   ]);
-  const advanced = goals.map((goal, index) => index < 3 ? { ...goal, status: "met" } : index === 3 ? { ...goal, status: "active" } : goal);
+  assert.deepEqual(goals.map((goal) => goal.phase), ["orientation", "baseline", "evaluation", "replication", "promotion"], "new campaigns go from baseline straight into the search loop");
+  const advanced = goals.map((goal, index) => index < 2 ? { ...goal, status: "met" } : index === 2 ? { ...goal, status: "active" } : goal);
   assert.equal(researchStageProgress(advanced)[0].status, "met");
   assert.equal(researchStageProgress(advanced)[1].status, "active");
 });
@@ -4975,7 +5012,7 @@ test("replication phase requires a successful run for the declared child manifes
 });
 
 test("data-audit phase requires clean findings or explicit acceptance", () => {
-  const goal = definePhaseGoals("test", "challenge").find((entry) => entry.phase === "data_audit");
+  const goal = legacyPhaseGoal("test", "challenge", "data_audit");
   const report = { type: "data.audit.completed", payload: { fingerprint: "fp-1", duplicateGroups: [{ files: ["a", "b"] }], distributionShift: [], warnings: [] } };
   assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [report.type], eventPayloads: [report], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, false);
   const accepted = { type: "data.audit.accepted", payload: { accepted: true, fingerprint: "fp-1", reason: "duplicates are intentional source mirrors" } };

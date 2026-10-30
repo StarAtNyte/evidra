@@ -14,14 +14,14 @@ export const RESEARCH_STAGE_PLAN: readonly { stage: ResearchStage; title: string
   {
     stage: "discover",
     title: "Discover",
-    question: "Which competing explanations or interventions are worth testing next?",
-    answer: "Retrieve and ground relevant evidence, form falsifiable hypotheses, compare expected information gain and cost, then select an isolated experiment.",
+    question: "Which ideas, from tuning to new algorithms, beat the current best?",
+    answer: "Try ideas in isolated experiments, keep each run that beats the champion, build the next attempt on it, and switch method family when progress stalls.",
   },
   {
     stage: "validate",
     title: "Validate",
     question: "What result would survive scrutiny rather than merely look promising?",
-    answer: "Run controlled evaluations, inspect errors and secondary objectives, replicate promising signals independently, and stop only when the declared condition is evidenced.",
+    answer: "Replicate the champion independently, confirm it on the hidden holdout when one is declared, and stop only when the declared condition is evidenced.",
   },
 ];
 
@@ -29,10 +29,12 @@ export function formatResearchStagePlan(): string {
   return RESEARCH_STAGE_PLAN.map((step, index) => `${String(index + 1).padStart(2, "0")} · ${step.title}\n   Question: ${step.question}\n   Answer: ${step.answer}`).join("\n\n");
 }
 
+// Campaigns created before the five-phase search loop still carry data_audit,
+// validation, hypothesis and implementation goals; keep mapping them.
 const STAGE_PHASES: Record<ResearchStage, readonly ResearchPhase[]> = {
   orient: ["orientation", "baseline", "data_audit"],
-  discover: ["validation", "hypothesis", "implementation"],
-  validate: ["evaluation", "replication", "promotion"],
+  discover: ["validation", "hypothesis", "implementation", "evaluation"],
+  validate: ["replication", "promotion"],
 };
 
 /** Map the detailed phase machine to the three user-facing research stages. */
@@ -63,8 +65,8 @@ export function researchStageProgress(goals: readonly Pick<PhaseGoal, "phase" | 
     return {
       stage,
       completed,
-      total: phaseSet.length,
-      ratio: phaseSet.length ? completed / phaseSet.length : 0,
+      total: scoped.length,
+      ratio: scoped.length ? completed / scoped.length : 0,
       activePhase: active?.phase,
       status,
     };
@@ -85,11 +87,7 @@ export function phaseGoalSetId(ultimateGoal: string, mode: "research" | "challen
 const PHASES: Array<{ phase: ResearchPhase; title: string; objective: string; criteria: string[] }> = [
   { phase: "orientation", title: "Understand the workspace", objective: "Inventory the repository, research question, rules, data contract, and execution environment.", criteria: ["repository inventory recorded", "workspace configuration loaded", "execution environment checked"] },
   { phase: "baseline", title: "Establish a trusted baseline", objective: "Run the canonical evaluator and record reproducible baseline metrics and logs.", criteria: ["baseline exits successfully", "primary metric parsed", "baseline artifacts checksummed"] },
-  { phase: "data_audit", title: "Audit data and leakage", objective: "Find distribution problems, duplicates, leakage paths, and invalid assumptions before optimization.", criteria: ["data audit report recorded", "leakage audit completed", "critical findings resolved or explicitly accepted"] },
-  { phase: "validation", title: "Lock validation policy", objective: "Choose a versioned validation and split policy that reflects plausible hidden test environments.", criteria: ["split version recorded", "primary metric defined", "validation policy locked"] },
-  { phase: "hypothesis", title: "Find the highest-information hypothesis", objective: "Generate, rank, and select a falsifiable improvement with an explicit test and cost.", criteria: ["hypothesis graph populated", "selected hypothesis has a falsification test", "experiment manifest created"] },
-  { phase: "implementation", title: "Implement an isolated experiment", objective: "Implement the selected change in a clean worktree and pass smoke checks.", criteria: ["isolated worktree created", "change implemented", "smoke checks pass"] },
-  { phase: "evaluation", title: "Evaluate with evidence", objective: "Run the experiment, capture artifacts, recompute metrics, and compare against baseline.", criteria: ["run completed", "metrics and logs checksummed", "statistical comparison recorded"] },
+  { phase: "evaluation", title: "Search for improvements", objective: "Try ideas, from tuning to new algorithms and architectures, in isolated experiments; keep each run that beats the champion and switch method family when one stalls.", criteria: ["run completed", "metrics and logs checksummed", "statistical comparison recorded"] },
   { phase: "replication", title: "Independently replicate", objective: "Repeat promising improvements with an independent seed or implementation before acceptance.", criteria: ["replication manifest created", "replication run completed", "replication agrees within configured tolerance"] },
   { phase: "promotion", title: "Promote only verified work", objective: "Require leakage clearance, review approval, and complete provenance before promotion or submission.", criteria: ["all evidence gates pass", "review approval recorded", "promotion provenance written"] },
 ];
