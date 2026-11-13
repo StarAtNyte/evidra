@@ -260,9 +260,22 @@ export interface PhaseGoalEvidence {
   selectedHypothesisFalsifiable?: boolean;
 }
 
+/** One unmet gate criterion with who can resolve it and how. */
+export interface PhaseGateCriterion {
+  criterion: string;
+  /** Research agents can produce the evidence, or only an operator command can. */
+  resolvedBy: "agent" | "operator";
+  /** Integrity criteria (leakage, duplicates, shift, locked validation) are never deferred. */
+  integrity: boolean;
+  remediation: string;
+  commands: string[];
+}
+
 export interface PhaseGoalGate {
   met: boolean;
   missing: string[];
+  /** Structured form of `missing`, used to steer agents and explain pauses. */
+  unmet: PhaseGateCriterion[];
   /** Dense steering signal; this never overrides the all-required-checks gate. */
   progress: { completed: number; total: number; ratio: number };
 }
@@ -272,10 +285,13 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
   const has = (type: string): boolean => evidence.eventTypes.includes(type);
   const payloads = (type: string): unknown[] => evidence.eventPayloads.filter((event) => event.type === type).map((event) => event.payload);
   const missing: string[] = [];
+  const unmet: PhaseGateCriterion[] = [];
   const checks: boolean[] = [];
-  const requireCheck = (satisfied: boolean, message: string): void => {
+  const requireCheck = (satisfied: boolean, message: string, detail: Partial<Omit<PhaseGateCriterion, "criterion">> = {}): void => {
     checks.push(satisfied);
-    if (!satisfied) missing.push(message);
+    if (satisfied) return;
+    missing.push(message);
+    unmet.push({ criterion: message, resolvedBy: "agent", integrity: true, remediation: "Produce this evidence through the normal research loop (a recorded run, manifest, or comparison).", commands: [], ...detail });
   };
   switch (goal.phase) {
     case "orientation": requireCheck(has("research.observation") || has("project.created"), "workspace observation"); break;
@@ -298,24 +314,39 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
     }
     case "data_audit": {
       const reports = payloads("data.audit.completed");
-      requireCheck(reports.length > 0, "data audit report");
+      requireCheck(reports.length > 0, "data audit report", { remediation: "The campaign controller records a task-scoped data audit each cycle; an operator can also run it.", commands: ["evidra challenge audit"] });
       if (reports.length) {
-        const latest = reports.at(-1) as { fingerprint?: unknown; duplicateGroups?: unknown[]; distributionShift?: unknown[]; warnings?: unknown[] };
-        const clean = (latest.duplicateGroups?.length ?? 0) === 0 && (latest.distributionShift?.length ?? 0) === 0 && (latest.warnings?.length ?? 0) === 0;
+        const latest = reports.at(-1) as { fingerprint?: unknown; duplicateGroups?: unknown; distributionShift?: unknown; warnings?: unknown; notes?: unknown };
         const accepted = payloads("data.audit.accepted").some((payload) => {
           const value = payload as { accepted?: unknown; fingerprint?: unknown };
           return value.accepted === true && typeof latest.fingerprint === "string" && value.fingerprint === latest.fingerprint;
         });
-        requireCheck(clean || accepted, "critical audit findings resolved or explicitly accepted");
+        const findings = dataAuditFindingCounts(latest);
+        requireCheck(findings.blocking === 0 || accepted, "critical audit findings resolved or explicitly accepted", {
+          resolvedBy: "operator",
+          integrity: true,
+          remediation: "Fix the duplicate, leakage, or distribution-shift findings in the data or split and let the controller re-audit, or review them and accept them explicitly.",
+          commands: ['evidra challenge audit --accept "<reason the findings are acceptable>"'],
+        });
+        // Reports written before informational notes were separated carry
+        // coverage observations in `warnings`. They are not integrity
+        // findings, but the report cannot prove that either; ask for an
+        // acknowledgement (or a fresh audit) without treating it as leakage.
+        if (findings.blocking === 0) requireCheck(findings.legacyInformational === 0 || accepted, "informational audit notes acknowledged", {
+          resolvedBy: "operator",
+          integrity: false,
+          remediation: "This audit predates informational notes; a fresh audit reclassifies them, or an operator can acknowledge them.",
+          commands: ["evidra challenge audit", 'evidra challenge audit --accept "<reason>"'],
+        });
       }
       break;
     }
     case "validation": {
-      requireCheck(has("validation.policy.created") || has("validation.policy.reused"), "versioned validation policy");
+      requireCheck(has("validation.policy.created") || has("validation.policy.reused"), "versioned validation policy", { resolvedBy: "operator", remediation: "Generate a validation policy for the active task.", commands: ["evidra validation generate", "evidra validation lock"] });
       const policyLifecycle = evidence.eventPayloads.filter((event) => ["validation.policy.created", "validation.policy.reused", "validation.policy.locked", "validation.policy.unlocked"].includes(event.type));
       const latestPolicyEvent = policyLifecycle.at(-1)?.type;
       const latestPayload = policyLifecycle.at(-1)?.payload as { locked?: unknown; checksum?: unknown } | undefined;
-      requireCheck(latestPolicyEvent === "validation.policy.locked" || (latestPolicyEvent === "validation.policy.reused" && latestPayload?.locked === true && typeof latestPayload.checksum === "string"), "validation policy locked");
+      requireCheck(latestPolicyEvent === "validation.policy.locked" || (latestPolicyEvent === "validation.policy.reused" && latestPayload?.locked === true && typeof latestPayload.checksum === "string"), "validation policy locked", { resolvedBy: "operator", remediation: "Lock the generated policy, or reuse a locked one that matches the task; a stale lock (task manifest edited after locking) is regenerated automatically only when no candidate was evaluated under it.", commands: ["evidra validation lock", "evidra validation reuse", "evidra validation inspect"] });
       break;
     }
     case "hypothesis":
@@ -365,5 +396,58 @@ export function evaluatePhaseGoalEvidence(goal: Pick<PhaseGoal, "phase">, eviden
     }
   }
   const completed = checks.filter(Boolean).length;
-  return { met: missing.length === 0, missing, progress: { completed, total: checks.length, ratio: checks.length ? completed / checks.length : 1 } };
+  return { met: missing.length === 0, missing, unmet, progress: { completed, total: checks.length, ratio: checks.length ? completed / checks.length : 1 } };
+}
+
+const LEGACY_INFORMATIONAL_AUDIT_WARNING = /not content-inspected|skipped due to audit limits|constant tabular columns|high-missingness tabular columns/i;
+
+/** Count blocking findings in a full or summarized audit payload, including legacy payloads. */
+export function dataAuditFindingCounts(report: { duplicateGroups?: unknown; distributionShift?: unknown; warnings?: unknown; notes?: unknown }): { blocking: number; legacyInformational: number } {
+  const count = (value: unknown): number => Array.isArray(value) ? value.length : typeof value === "number" && Number.isFinite(value) ? value : 0;
+  const warnings = Array.isArray(report.warnings) ? report.warnings.map(String) : [];
+  // Current reports keep informational notes separately, so every warning is
+  // blocking. Older reports mixed both; classify their known coverage texts.
+  const legacy = !Array.isArray(report.notes);
+  const legacyInformational = legacy ? warnings.filter((warning) => LEGACY_INFORMATIONAL_AUDIT_WARNING.test(warning)).length : 0;
+  return { blocking: count(report.duplicateGroups) + count(report.distributionShift) + warnings.length - legacyInformational, legacyInformational };
+}
+
+/** Steering text that names exactly what the active phase gate still needs. */
+export function formatPhaseGateGuidance(phase: ResearchPhase, gate: Pick<PhaseGoalGate, "met" | "unmet">): string {
+  if (gate.met || gate.unmet.length === 0) return "";
+  const lines = gate.unmet.map((item) => `- ${item.criterion}${item.resolvedBy === "operator" ? " [operator action]" : ""}: ${item.remediation}${item.commands.length ? ` Run: ${item.commands.map((command) => `\`${command}\``).join("; ")}.` : ""}`);
+  const operatorOnly = gate.unmet.every((item) => item.resolvedBy === "operator");
+  return `\n\nPHASE GATE (${phase}): the phase cannot complete until these criteria are evidenced; re-inspecting the workspace does not satisfy them.\n${lines.join("\n")}`
+    + (operatorOnly ? "\nOnly operator actions remain. Do not repeat inspections or objections about them; state the operator command in the bottleneck and propose a concrete falsifiable hypothesis to pursue next." : "");
+}
+
+/**
+ * Decide whether a stalled phase may advance instead of pausing. This is
+ * deliberately narrow: every unmet criterion must be operator-resolvable and
+ * non-integrity (for example an acknowledgement of informational audit
+ * notes), and the director must have a concrete, falsifiable hypothesis
+ * selected. Integrity gates (leakage, duplicates, shift, validation lock)
+ * always pause for the operator; promotion stays gated on explicit leakage
+ * and reviewer approval regardless.
+ */
+export function phaseGateDeferral(
+  gate: Pick<PhaseGoalGate, "met" | "unmet">,
+  decision: { selectedHypothesis?: string | null; hypotheses: Array<{ title: string; falsificationTest: string }> },
+): { advance: boolean; deferred: PhaseGateCriterion[]; reason: string } {
+  if (gate.met || gate.unmet.length === 0) return { advance: false, deferred: [], reason: "phase gate has no unmet criteria" };
+  const blocking = gate.unmet.filter((item) => item.resolvedBy !== "operator" || item.integrity);
+  if (blocking.length) return { advance: false, deferred: [], reason: `blocking criteria remain: ${blocking.map((item) => item.criterion).join(", ")}` };
+  const selected = decision.selectedHypothesis?.trim()
+    ? decision.hypotheses.find((hypothesis) => hypothesis.title === decision.selectedHypothesis && hypothesis.falsificationTest.trim().length > 0)
+    : undefined;
+  if (!selected) return { advance: false, deferred: [], reason: "no concrete falsifiable hypothesis is selected" };
+  return { advance: true, deferred: gate.unmet, reason: `only operator acknowledgements remain (${gate.unmet.map((item) => item.criterion).join(", ")}); advancing to test '${selected.title}'` };
+}
+
+/** Operator-facing stagnation explanation naming the unmet gate and exact commands. */
+export function formatStagnationPause(cycles: number, phase: ResearchPhase | undefined, gate: Pick<PhaseGoalGate, "met" | "unmet"> | undefined): string {
+  const head = `Campaign paused after ${cycles} unchanged active decisions`;
+  if (!phase || !gate || gate.met || gate.unmet.length === 0) return `${head}; review the bottleneck before resuming.`;
+  const lines = gate.unmet.map((item) => `  - ${item.criterion}${item.resolvedBy === "operator" ? " (operator)" : ""}${item.commands.length ? `: ${item.commands.join("  |  ")}` : `: ${item.remediation}`}`);
+  return `${head}; the ${phase} phase gate is unmet:\n${lines.join("\n")}\nResolve these, then resume the campaign.`;
 }

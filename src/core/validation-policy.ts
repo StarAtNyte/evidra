@@ -31,6 +31,11 @@ export const ValidationPolicySchema = z.object({
 });
 export type ValidationPolicy = z.infer<typeof ValidationPolicySchema>;
 
+/** The fields that define a validation contract; createdAt and other metadata are excluded. */
+export function validationPolicyContract(policy: ValidationPolicy): string {
+  return JSON.stringify({ version: policy.version, datasetRevision: policy.datasetRevision, primarySplit: policy.primarySplit, secondarySplits: policy.secondarySplits, folds: policy.folds, seeds: policy.seeds, metric: policy.metric, secondaryMetrics: policy.secondaryMetrics, acceptance: policy.acceptance });
+}
+
 export function createValidationPolicy(competition: CompetitionConfig): ValidationPolicy {
   const split = competition.validation?.primarySplit ?? "mini";
   const folds = competition.validation?.folds ?? [0];

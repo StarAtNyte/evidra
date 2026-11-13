@@ -35,7 +35,7 @@ import { workbenchHtml } from "../dist/core/dashboard-web.js";
 import { boundProcessOutput, processFailureResult, ProcessStartError, runProcess } from "../dist/core/process.js";
 import { competitionIdForMode, competitionManifestForInitialization, declaredEvaluatorCommand, loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { whestbenchConfig } from "../dist/competitions/whestbench.js";
-import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
+import { createValidationPolicy, splitStrategy, writeValidationPolicy } from "../dist/core/validation-policy.js";
 import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInspection, guardWorkspaceCommand } from "../dist/core/permissions.js";
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { queueRecoveryAction } from "../dist/core/queue-recovery.js";
@@ -52,7 +52,7 @@ import { classifyResearchSetupInput } from "../dist/core/research-setup.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
 import { hasExperimentInputStagingCapacity, stageExperimentInputs } from "../dist/core/experiment-inputs.js";
-import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatResearchStagePlan, mergePhaseGoalAudits, phaseCompletionCriteriaForAudit, phaseGoalCanAdvance, phaseGoalCycleAudit, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForCurrentSet, phaseGoalsForMode, researchStageForPhase, researchStageProgress, RESEARCH_STAGE_PLAN } from "../dist/core/phase-goals.js";
+import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatPhaseGateGuidance, formatResearchStagePlan, formatStagnationPause, phaseGateDeferral, mergePhaseGoalAudits, phaseCompletionCriteriaForAudit, phaseGoalCanAdvance, phaseGoalCycleAudit, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForCurrentSet, phaseGoalsForMode, researchStageForPhase, researchStageProgress, RESEARCH_STAGE_PLAN } from "../dist/core/phase-goals.js";
 import { assertSubtaskContract, auditSubtask, projectVerifiedSubtaskState, subtaskAuditFingerprint, subtaskStateFromAudit, validateSubtaskContract } from "../dist/core/subtask-state.js";
 import { alignResearchDecisionPhase, auditResearchDecision, downgradeUnauditedDecision } from "../dist/core/decision-auditor.js";
 import { preserveInterruptedImplementation, captureImplementationSnapshot, captureVerificationSourcePin, implementationChanged, implementationEditRetryPrompt, implementationRetryPrompt, resolveImplementationPaths, seedImplementationArtifacts, seedImplementationSource, seedVerificationImplementation, verifyImplementationSnapshot } from "../dist/core/implementation-guard.js";
@@ -64,7 +64,8 @@ import { researchLaneConcurrency, semanticAuditNeedsFreshInspection, RESEARCH_SC
 import { workspaceReadPathsFromSearchResult } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../dist/core/experiment-manifest.js";
 import { distributionObservationsFromFeedback, distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.js";
-import { auditData, dataAuditFingerprint, dataAuditManifestFingerprint } from "../dist/core/data-audit.js";
+import { auditData, DATA_AUDIT_VERSION, dataAuditFingerprint, dataAuditManifestFingerprint } from "../dist/core/data-audit.js";
+import { reconcileValidationPolicyLock } from "../dist/core/validation-reconcile.js";
 import { discoverAutoLabTasks, parseAutoLabDiscovery } from "../dist/core/autolab.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, trivialSuccessCommand, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { persistExecutionStageResult, runReducedValidation } from "../dist/core/stage-executor.js";
@@ -3537,9 +3538,11 @@ test("data audit distinguishes checksum coverage from content inspection for com
     writeFileSync(join(root, "train.csv"), "id,value\n1,a\n2,b\n");
     const report = auditData(root);
     assert.equal(report.scannedFiles, 3, "all files were checksummed");
-    assert.equal(report.tabularDiagnostics.length, 1, "only the supported CSV parser emits content diagnostics");
-    assert.deepEqual(report.uninspectedDataFiles.map((entry) => [entry.file, entry.format]).sort(), [["metadata.json", "JSON"], ["records.parquet", "Parquet"]]);
-    assert.ok(report.warnings.some((warning) => /empty tabular diagnostics do not establish absence/i.test(warning)));
+    assert.equal(report.tabularDiagnostics.length, 1, "only CSV holds records; the JSON object is metadata");
+    assert.deepEqual(report.metadataFiles, ["metadata.json"]);
+    assert.deepEqual(report.uninspectedDataFiles.map((entry) => [entry.file, entry.format]).sort(), [["records.parquet", "Parquet"]]);
+    assert.ok(report.notes.some((note) => /empty tabular diagnostics do not establish absence/i.test(note)));
+    assert.deepEqual(report.warnings, [], "unreadable formats are informational, not blocking findings");
     assert.match(dataAuditFingerprint(report), /^sha256:/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -3552,7 +3555,59 @@ test("data audit names oversized dataset files whose contents and checksums were
     const report = auditData(root, 10, 10);
     assert.deepEqual(report.skippedFiles, ["shard.parquet"]);
     assert.deepEqual(report.uninspectedDataFiles, [{ file: "shard.parquet", format: "Parquet", reason: "file size 40 exceeds the 10-byte audit limit; content and checksum were not inspected" }]);
-    assert.ok(report.warnings.some((warning) => /empty tabular diagnostics do not establish absence/i.test(warning)));
+    assert.ok(report.notes.some((note) => /empty tabular diagnostics do not establish absence/i.test(note)));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("data audit parses JSON record arrays and JSONL as tabular data and classifies other JSON as metadata", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-data-audit-json-"));
+  try {
+    writeFileSync(join(root, "records.json"), JSON.stringify([{ id: 1, label: "a" }, { id: 2, label: "b" }, { id: 2, label: "b" }]));
+    writeFileSync(join(root, "lines.jsonl"), '{"id":1,"x":0.5}\n{"id":2,"x":0.7}\n');
+    writeFileSync(join(root, "events.ndjson"), '{"id":1}\n{"id":2}\n');
+    writeFileSync(join(root, "schema.json"), JSON.stringify({ columns: ["id", "label"], rows: 3 }));
+    writeFileSync(join(root, "broken.json"), "{not json");
+    const report = auditData(root);
+    const records = report.tabularDiagnostics.find((entry) => entry.file === "records.json");
+    assert.equal(records.rows, 3);
+    assert.equal(records.columns, 2);
+    assert.equal(records.duplicateRows, 1, "JSON records receive the same duplicate-row diagnostics as CSV");
+    assert.ok(report.tabularDiagnostics.some((entry) => entry.file === "lines.jsonl" && entry.rows === 2));
+    assert.ok(report.tabularDiagnostics.some((entry) => entry.file === "events.ndjson" && entry.rows === 2));
+    assert.deepEqual(report.metadataFiles, ["schema.json"]);
+    assert.deepEqual(report.uninspectedDataFiles.map((entry) => entry.file), ["broken.json"]);
+    assert.ok(report.warnings.some((warning) => /duplicate rows/i.test(warning)), "duplicate records remain a blocking finding");
+    assert.equal(report.warnings.some((warning) => /content-inspected|metadata/i.test(warning)), false);
+    assert.ok(report.notes.some((note) => /classified as metadata/.test(note)));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("data audit excludes workspace manifests, validation policies, and the state directory", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-data-audit-manifests-"));
+  try {
+    const manifest = JSON.stringify({ id: "toy", datasetRevision: "v1" });
+    writeFileSync(join(root, "competition.json"), manifest);
+    mkdirSync(join(root, "competitions", "toy"), { recursive: true });
+    writeFileSync(join(root, "competitions", "toy", "competition.json"), manifest);
+    mkdirSync(join(root, ".evidra"));
+    writeFileSync(join(root, ".evidra", "config.json"), "{}");
+    mkdirSync(join(root, "state"));
+    writeFileSync(join(root, "state", "validation-policy.json"), "{}");
+    writeFileSync(join(root, "state", "notes.json"), "{}");
+    writeFileSync(join(root, "validation-policy.lock.json"), "{}");
+    writeFileSync(join(root, "train.csv"), "id,y\n1,0\n2,1\n");
+    const report = auditData(root, undefined, undefined, { excludeDirectories: [join(root, "state")] });
+    assert.equal(report.scannedFiles, 1, "only the dataset file is audited");
+    assert.deepEqual(report.duplicateGroups, [], "identical manifests are not reported as duplicated data");
+    assert.deepEqual(report.uninspectedDataFiles, []);
+    assert.deepEqual(report.warnings, []);
+    assert.ok(report.excludedFiles.includes("competition.json"));
+    assert.ok(report.excludedFiles.includes(join("competitions", "toy", "competition.json")));
+    assert.ok(report.excludedFiles.includes("state/"));
+    assert.equal(report.auditVersion, DATA_AUDIT_VERSION);
+    const before = dataAuditManifestFingerprint(root, undefined, { excludeDirectories: [join(root, "state")] });
+    writeFileSync(join(root, "competition.json"), JSON.stringify({ id: "toy", datasetRevision: "v2" }));
+    assert.equal(dataAuditManifestFingerprint(root, undefined, { excludeDirectories: [join(root, "state")] }), before, "editing the task manifest does not invalidate the dataset audit");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -5019,6 +5074,99 @@ test("data-audit phase requires clean findings or explicit acceptance", () => {
   assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [report.type, accepted.type], eventPayloads: [report, accepted], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, true);
   const stale = { ...accepted, payload: { ...accepted.payload, fingerprint: "old-report" } };
   assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [report.type, stale.type], eventPayloads: [report, stale], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, false);
+});
+
+test("data-audit phase treats informational notes as non-blocking and names operator remediation", () => {
+  const goal = legacyPhaseGoal("test", "challenge", "data_audit");
+  const informational = { type: "data.audit.completed", payload: { fingerprint: "fp-2", duplicateGroups: 0, distributionShift: 0, warnings: [], notes: ["1 dataset file(s) were not content-inspected (Parquet); empty tabular diagnostics do not establish absence of duplicates, leakage, or distribution shift."] } };
+  assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [informational.type], eventPayloads: [informational], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, true, "unreadable formats alone do not block the gate");
+
+  const blocking = { type: "data.audit.completed", payload: { fingerprint: "fp-3", duplicateGroups: 2, distributionShift: 0, warnings: ["2 exact duplicate file group(s) detected; ensure split policy keeps duplicates together."], notes: [] } };
+  const blocked = evaluatePhaseGoalEvidence(goal, { eventTypes: [blocking.type], eventPayloads: [blocking], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
+  assert.equal(blocked.met, false, "summarized duplicate counts still block");
+  assert.equal(blocked.unmet[0].resolvedBy, "operator");
+  assert.equal(blocked.unmet[0].integrity, true);
+  assert.match(blocked.unmet[0].commands[0], /evidra challenge audit --accept/);
+
+  // Reports written before notes existed mixed coverage text into warnings.
+  const legacy = { type: "data.audit.completed", payload: { fingerprint: "fp-4", duplicateGroups: 0, warnings: ["3 dataset file(s) were not content-inspected (JSON); empty tabular diagnostics do not establish absence of duplicates, leakage, or distribution shift."] } };
+  const legacyGate = evaluatePhaseGoalEvidence(goal, { eventTypes: [legacy.type], eventPayloads: [legacy], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
+  assert.deepEqual(legacyGate.missing, ["informational audit notes acknowledged"]);
+  assert.equal(legacyGate.unmet[0].integrity, false);
+});
+
+test("unmet phase gates steer agents, explain stagnation pauses, and defer only non-integrity acknowledgements", () => {
+  const goal = legacyPhaseGoal("test", "challenge", "data_audit");
+  const legacy = { type: "data.audit.completed", payload: { fingerprint: "fp-5", warnings: ["2 dataset file(s) were not content-inspected (JSON); empty tabular diagnostics do not establish absence of duplicates, leakage, or distribution shift."] } };
+  const gate = evaluatePhaseGoalEvidence(goal, { eventTypes: [legacy.type], eventPayloads: [legacy], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
+  const guidance = formatPhaseGateGuidance("data_audit", gate);
+  assert.match(guidance, /PHASE GATE \(data_audit\)/);
+  assert.match(guidance, /informational audit notes acknowledged \[operator action\]/);
+  assert.match(guidance, /`evidra challenge audit --accept "<reason>"`/);
+  assert.match(guidance, /Only operator actions remain/);
+  assert.equal(formatPhaseGateGuidance("data_audit", { met: true, unmet: [] }), "");
+
+  const pause = formatStagnationPause(3, "data_audit", gate);
+  assert.match(pause, /Campaign paused after 3 unchanged active decisions; the data_audit phase gate is unmet/);
+  assert.match(pause, /evidra challenge audit --accept/);
+  assert.match(formatStagnationPause(3, undefined, undefined), /review the bottleneck/);
+
+  const hypothesis = { title: "latent-class component", falsificationTest: "held-out log-likelihood does not improve over the baseline" };
+  assert.equal(phaseGateDeferral(gate, { selectedHypothesis: hypothesis.title, hypotheses: [hypothesis] }).advance, true, "a concrete hypothesis advances past a pending acknowledgement");
+  assert.equal(phaseGateDeferral(gate, { selectedHypothesis: null, hypotheses: [hypothesis] }).advance, false, "no selected hypothesis means pause");
+  assert.equal(phaseGateDeferral(gate, { selectedHypothesis: "vague", hypotheses: [{ title: "vague", falsificationTest: " " }] }).advance, false, "an unfalsifiable hypothesis means pause");
+
+  const duplicates = { type: "data.audit.completed", payload: { fingerprint: "fp-6", duplicateGroups: 1, warnings: ["1 exact duplicate file group(s) detected; ensure split policy keeps duplicates together."], notes: [] } };
+  const integrityGate = evaluatePhaseGoalEvidence(goal, { eventTypes: [duplicates.type], eventPayloads: [duplicates], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
+  assert.equal(phaseGateDeferral(integrityGate, { selectedHypothesis: hypothesis.title, hypotheses: [hypothesis] }).advance, false, "integrity findings are never deferred");
+  const validationGate = evaluatePhaseGoalEvidence(legacyPhaseGoal("test", "challenge", "validation"), { eventTypes: [], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
+  assert.equal(phaseGateDeferral(validationGate, { selectedHypothesis: hypothesis.title, hypotheses: [hypothesis] }).advance, false, "an unlocked validation policy is never deferred");
+});
+
+test("controller-raised attention items stay visible until cleared", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-controller-attention-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.appendEvent("research.attention.raised", { id: "stagnation:data_audit", severity: "critical", kind: "stagnation", summary: "Campaign paused on the data_audit phase gate; unmet: informational audit notes acknowledged", next: 'evidra challenge audit --accept "<reason>"' });
+    const open = operatorAttention(store).items.find((item) => item.id === "stagnation:data_audit");
+    assert.equal(open?.severity, "critical");
+    assert.match(open.next, /evidra challenge audit --accept/);
+    store.appendEvent("research.attention.cleared", { id: "stagnation:data_audit", reason: "data_audit phase advanced" });
+    assert.equal(operatorAttention(store).items.some((item) => item.id === "stagnation:data_audit"), false);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("stale validation locks are re-locked only when no candidate was evaluated under them", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-validation-reconcile-"));
+  try {
+    const paths = { policy: join(root, "validation-policy.json"), lock: join(root, "validation-policy.lock.json") };
+    const config = { id: "toy", name: "Toy", taskType: "classification", datasetRevision: "data-v1", metric: { name: "macro_f1", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } };
+    writeValidationPolicy(paths.policy, createValidationPolicy(config));
+    const original = lockValidationPolicy(paths.policy, paths.lock);
+    assert.equal(reconcileValidationPolicyLock(paths, createValidationPolicy(config), () => []).status, "current");
+
+    // competition.json edited after locking: the dataset revision moved.
+    const edited = createValidationPolicy({ ...config, datasetRevision: "data-v2" });
+    const blocked = reconcileValidationPolicyLock(paths, edited, () => ["exp-1"]);
+    assert.equal(blocked.status, "operator_required");
+    assert.deepEqual(blocked.evaluatedExperimentIds, ["exp-1"]);
+    assert.ok(blocked.changedFields.includes("datasetRevision"));
+    assert.ok(blocked.commands.some((command) => command.startsWith("evidra validation unlock --reason")));
+    assert.equal(readValidationPolicyLock(paths.lock).checksum, original.checksum, "an evaluated policy is never changed automatically");
+
+    const relocked = reconcileValidationPolicyLock(paths, edited, () => []);
+    assert.equal(relocked.status, "relocked");
+    assert.equal(relocked.previousChecksum, original.checksum);
+    assert.notEqual(relocked.checksum, original.checksum);
+    assert.match(relocked.unlockRecord.unlockReason, /automatic: .*datasetRevision.*no candidate was evaluated/);
+    const lock = readValidationPolicyLock(paths.lock);
+    assert.equal(lock.locked, true);
+    assert.equal(lock.checksum, relocked.checksum);
+    assert.equal(assertValidationPolicy(paths.policy, paths.lock).checksum, relocked.checksum);
+    assert.equal(JSON.parse(readFileSync(paths.policy, "utf8")).datasetRevision, "data-v2");
+    assert.equal(reconcileValidationPolicyLock(paths, edited, () => []).status, "current");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("data audit fingerprints are stable across generation timestamps", () => {

@@ -17,11 +17,12 @@ import { campaignEvidenceConflictCounts, mergeCampaignToolFailures, recordsForCa
 import { materializeExternalScoreSources, materializeResearchDecision } from "./core/research-graph.js";
 import { formatResearchStarterBriefs, RESEARCH_STARTER_BRIEFS } from "./core/research-starters.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "./core/experiment-manifest.js";
-import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatResearchStagePlan, phaseCompletionCriteriaForAudit, phaseGoalCanAdvance, phaseGoalCycleAudit, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForCurrentSet, phaseGoalsForMode, researchStageProgress, RESEARCH_STAGE_PLAN } from "./core/phase-goals.js";
+import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatPhaseGateGuidance, formatResearchStagePlan, formatStagnationPause, phaseGateDeferral, type PhaseGoalGate, phaseCompletionCriteriaForAudit, phaseGoalCanAdvance, phaseGoalCycleAudit, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForCurrentSet, phaseGoalsForMode, researchStageProgress, RESEARCH_STAGE_PLAN } from "./core/phase-goals.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema, type ExperimentExecutorKind } from "./core/types.js";
 import { competitionIdForMode, competitionManifestForInitialization, declaredEvaluatorCommand, hasPlaceholderEvaluator, loadCompetitionAdapter, PLACEHOLDER_EVALUATOR_GUIDANCE } from "./competitions/adapters.js";
-import { auditData, dataAuditFingerprint, dataAuditManifestFingerprint } from "./core/data-audit.js";
-import { createValidationPolicy, ValidationPolicySchema, writeValidationPolicy } from "./core/validation-policy.js";
+import { auditData, DATA_AUDIT_VERSION, dataAuditFingerprint, dataAuditManifestFingerprint } from "./core/data-audit.js";
+import { createValidationPolicy, validationPolicyContract, ValidationPolicySchema, writeValidationPolicy } from "./core/validation-policy.js";
+import { reconcileValidationPolicyLock, STALE_VALIDATION_LOCK_COMMANDS } from "./core/validation-reconcile.js";
 import { distributionObservationsFromFeedback, estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, verificationOnlyHasEvidence, verificationSourcePinError, type ExecutionStage } from "./core/execution-stages.js";
 import { missingVerificationScripts, planVerificationExecution } from "./core/verification-execution.js";
@@ -151,6 +152,19 @@ const PHASE_GATE_EVENT_TYPES = [
   "replication.manifest.created", "experiment.autonomous.replication.completed", "experiment.gates.updated",
   "experiment.validation.assessed", "research.ablation.plan", "research.ablation.evidence",
 ] as const;
+/** Evaluate the active phase gate from durable evidence recorded since the phase began. */
+function phaseGateSnapshot(store: ResearchStore, phaseGoal: ReturnType<typeof PhaseGoalSchema.parse>, mode: "research" | "challenge"): PhaseGoalGate {
+  const phaseEvents = phaseGoalEventsSince(phaseGoal, store.eventsByTypes([...PHASE_GATE_EVENT_TYPES]));
+  return evaluatePhaseGoalEvidence(phaseGoal, {
+    mode,
+    eventTypes: phaseEvents.map((event) => event.type),
+    eventPayloads: phaseEvents.map((event) => ({ type: event.type, payload: event.payload })),
+    hypotheses: phaseGoalRecordsSince(phaseGoal, store.hypotheses()),
+    experiments: phaseGoalRecordsSince(phaseGoal, store.experiments()),
+    runs: phaseGoalRecordsSince(phaseGoal, store.runs()),
+    artifacts: phaseGoalRecordsSince(phaseGoal, store.artifacts()),
+  });
+}
 const SOURCE_FRONTIER_EVENT_TYPES = [
   "research.source.search.completed",
   "research.web.search.completed",
@@ -4942,11 +4956,11 @@ challengeBudget.command("tokens <count>").description("Set a paused challenge ca
 challenge.command("inspect").action(() => console.log(JSON.stringify(activeCompetition().config, null, 2)));
 challenge.command("audit").option("--accept <reason>", "explicitly accept unresolved audit findings with a reason").action((options: { accept?: string }) => {
   const adapter = activeCompetition();
-  const report = auditData(adapter.workspacePath(root));
+  const report = auditData(adapter.workspacePath(root), undefined, undefined, { excludeDirectories: [stateDirectory] });
   const fingerprint = dataAuditFingerprint(report);
   const store = new ResearchStore(statePath);
   store.appendEvent("data.audit.completed", { ...report, fingerprint });
-  if (options.accept?.trim()) store.appendEvent("data.audit.accepted", { accepted: true, fingerprint, reason: options.accept.trim(), findings: { duplicateGroups: report.duplicateGroups.length, distributionShift: report.distributionShift.length, warnings: report.warnings.length } });
+  if (options.accept?.trim()) store.appendEvent("data.audit.accepted", { accepted: true, fingerprint, reason: options.accept.trim(), findings: { duplicateGroups: report.duplicateGroups.length, distributionShift: report.distributionShift.length, warnings: report.warnings.length, notes: report.notes.length } });
   store.close();
   console.log(JSON.stringify(report, null, 2));
 });
@@ -5444,11 +5458,34 @@ research
         const policyPaths = validationPaths();
         const policyLock = readValidationPolicyLock(policyPaths.lock);
         if (policyLock?.locked && !phaseGoalEventsSince(phaseGoal, store.eventsByTypes(["validation.policy.reused"])).length) {
-          const verifiedLock = assertValidationPolicy(policyPaths.policy, policyPaths.lock);
-          const existingPolicy = ValidationPolicySchema.parse(JSON.parse(readFileSync(policyPaths.policy, "utf8")));
-          const expectedPolicy = createValidationPolicy(adapter.config);
-          if (validationPolicyContract(existingPolicy) === validationPolicyContract(expectedPolicy)) {
-            store.appendEvent("validation.policy.reused", { path: policyPaths.policy, checksum: verifiedLock.checksum, version: existingPolicy.version, datasetRevision: existingPolicy.datasetRevision, primarySplit: existingPolicy.primarySplit, metric: existingPolicy.metric, locked: true, reason: "reused the checksum-verified immutable policy because its complete validation contract matches the active task" });
+          const reconciliation = reconcileValidationPolicyLock(policyPaths, createValidationPolicy(adapter.config), (lock) => candidatesEvaluatedUnderPolicy(store, lock));
+          if (reconciliation.status === "current" && reconciliation.policy) {
+            const existingPolicy = reconciliation.policy;
+            store.appendEvent("validation.policy.reused", { path: policyPaths.policy, checksum: reconciliation.checksum, version: existingPolicy.version, datasetRevision: existingPolicy.datasetRevision, primarySplit: existingPolicy.primarySplit, metric: existingPolicy.metric, locked: true, reason: "reused the checksum-verified immutable policy because its complete validation contract matches the active task" });
+          } else if (reconciliation.status === "relocked" && reconciliation.policy) {
+            // Auditable replacement: the old and new checksums and the
+            // changed contract fields are durable, and no candidate was
+            // judged under the stale policy.
+            const audit = { reason: reconciliation.reason, previousChecksum: reconciliation.previousChecksum, checksum: reconciliation.checksum, previousVersion: reconciliation.previousVersion, version: reconciliation.version, changedFields: reconciliation.changedFields, automatic: true };
+            store.appendEvent("validation.policy.unlocked", { ...reconciliation.unlockRecord, automatic: true });
+            store.appendEvent("validation.policy.created", { path: policyPaths.policy, checksum: reconciliation.checksum, policy: reconciliation.policy, automatic: true, reason: reconciliation.reason });
+            store.appendEvent("validation.policy.locked", { ...reconciliation.lockRecord, automatic: true, reason: reconciliation.reason, previousChecksum: reconciliation.previousChecksum });
+            store.appendEvent("validation.policy.stale_lock.resolved", audit);
+            store.appendEvent("research.attention.cleared", { id: "validation-policy-stale", reason: "stale validation lock regenerated and re-locked" });
+            console.log(`Validation policy was stale (${reconciliation.changedFields.join(", ")}); no candidate was evaluated under it, so it was regenerated and re-locked (${reconciliation.previousChecksum} -> ${reconciliation.checksum}).`);
+          } else if (reconciliation.status === "operator_required") {
+            const prior = store.eventsByType("validation.policy.stale_lock.blocked", 1).at(-1)?.payload as { previousChecksum?: unknown; expectedVersion?: unknown } | undefined;
+            if (prior?.previousChecksum !== reconciliation.previousChecksum || prior?.expectedVersion !== reconciliation.version) {
+              store.appendEvent("validation.policy.stale_lock.blocked", { reason: reconciliation.reason, previousChecksum: reconciliation.previousChecksum, previousVersion: reconciliation.previousVersion, expectedVersion: reconciliation.version, changedFields: reconciliation.changedFields, evaluatedExperimentIds: reconciliation.evaluatedExperimentIds.slice(0, 50), commands: reconciliation.commands });
+              store.appendEvent("research.attention.raised", {
+                id: "validation-policy-stale",
+                severity: "critical",
+                kind: "validation-policy-stale",
+                summary: `Locked validation policy ${reconciliation.previousVersion} no longer matches the task (${reconciliation.changedFields.join(", ")}); ${reconciliation.evaluatedExperimentIds.length} candidate(s) were evaluated under it, so it was not changed automatically`,
+                next: reconciliation.commands.join(" && "),
+              });
+            }
+            console.log(`Validation policy lock is stale (${reconciliation.changedFields.join(", ")}) and ${reconciliation.evaluatedExperimentIds.length} candidate(s) were evaluated under it. Operator action required:\n${reconciliation.commands.map((command) => `  ${command}`).join("\n")}`);
           }
         }
       }
@@ -5939,7 +5976,10 @@ research
       const progressGuidance = changeGuidance + (goalProgress.directive ? `\n\n${goalProgress.directive}` : "") + (proxyTransfer ? `\n\n${proxyTransferGuidance(proxyTransfer.calibration, transferIncumbent)}` : "");
       const cadence = discoveryCadence(recordsForCampaign(store.eventsByType("research.decision.audit"), campaign.startedAt), recordsForCampaign(store.runs(), campaign.startedAt));
       if (cadence.guidance) store.appendEvent("research.discovery.cadence", { idleCycles: cadence.idleCycles, action: "bounded-experiment-guidance", gatesUnchanged: true });
-      const cycleObjective = allocatedObjective + guidanceText + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance + progressGuidance + cadence.guidance + verificationRuntimeGuidance(adapter.config.evaluator.command)
+      // Name the concrete unmet gate criteria (and operator commands) every
+      // cycle so the director and critic do not loop on generic inspection.
+      const phaseGateGuidance = phaseGoal ? formatPhaseGateGuidance(phaseGoal.phase, phaseGateSnapshot(store, phaseGoal, mode)) : "";
+      const cycleObjective = allocatedObjective + guidanceText + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance + progressGuidance + cadence.guidance + phaseGateGuidance + verificationRuntimeGuidance(adapter.config.evaluator.command)
         + (hasPlaceholderEvaluator(adapter.config) ? `\n\n${PLACEHOLDER_EVALUATOR_GUIDANCE}` : "")
         + (goalProgress.pivotRequired ? "\n\nPLATEAU: the champion has stopped improving. Propose structurally different families (a new representation, mechanism, or objective), not more tuning of the current one." : "");
       const researchSources = latestSourcePayloads(store.sources(), 12, cycleObjective, store);
@@ -5962,26 +6002,34 @@ research
       // metadata or unrelated datasets for challenge leakage and block every
       // subsequent phase despite a valid task-scoped audit path.
       const auditRoot = adapter.workspacePath(root);
-      const manifestFingerprint = dataAuditManifestFingerprint(auditRoot);
+      const auditOptions = { excludeDirectories: [stateDirectory] };
+      const manifestFingerprint = dataAuditManifestFingerprint(auditRoot, undefined, auditOptions);
       const priorAuditEvent = store.eventsByType("data.audit.completed").at(-1);
       const priorAudit = priorAuditEvent?.payload && typeof priorAuditEvent.payload === "object"
         ? priorAuditEvent.payload as Record<string, unknown>
         : undefined;
-      const reusableAudit = priorAudit?.root === auditRoot && priorAudit.manifestFingerprint === manifestFingerprint
+      // Reports from an older audit version classified findings differently
+      // (for example, unparsed JSON as a blocking warning); recompute them.
+      const reusableAudit = priorAudit?.root === auditRoot && priorAudit.manifestFingerprint === manifestFingerprint && priorAudit.auditVersion === DATA_AUDIT_VERSION
         ? priorAudit
         : undefined;
       const dataAuditSummary = reusableAudit
         ? { ...reusableAudit, reused: true, auditEventAt: priorAuditEvent?.createdAt }
         : (() => {
-          const dataAudit = auditData(auditRoot);
+          const dataAudit = auditData(auditRoot, undefined, undefined, auditOptions);
           const summary = {
             root: dataAudit.root,
+            auditVersion: dataAudit.auditVersion,
             scannedFiles: dataAudit.scannedFiles,
             totalBytes: dataAudit.totalBytes,
             duplicateGroups: dataAudit.duplicateGroups.length,
+            distributionShift: dataAudit.distributionShift.length,
             skippedFiles: dataAudit.skippedFiles.slice(0, 200),
             uninspectedDataFiles: dataAudit.uninspectedDataFiles.slice(0, 200),
+            metadataFiles: dataAudit.metadataFiles.slice(0, 200),
+            excludedFiles: dataAudit.excludedFiles.slice(0, 200),
             warnings: dataAudit.warnings.slice(0, 20),
+            notes: dataAudit.notes.slice(0, 20),
             fingerprint: dataAuditFingerprint(dataAudit),
             manifestFingerprint,
             reused: false,
@@ -6066,6 +6114,7 @@ research
       let criticReview: Awaited<ReturnType<typeof runResearchCritic>> | undefined;
       let semanticAudit: ResearchSemanticAudit | undefined;
       let phaseDomainGateMet = false;
+      let phaseGate: PhaseGoalGate | undefined;
       let laneReports: Awaited<ReturnType<typeof runResearchLanes>> = [];
       let crossPollination: ReturnType<typeof synthesizeLaneReports> | undefined;
       const tracePrefix = `research-${cycle}-${Date.now()}`;
@@ -6500,6 +6549,7 @@ research
           selectedHypothesisFalsifiable: Boolean(decision.selectedHypothesis && decision.hypotheses.some((hypothesis) => hypothesis.title === decision.selectedHypothesis && hypothesis.falsificationTest.trim().length > 0)),
         });
         phaseDomainGateMet = gate.met;
+        phaseGate = gate;
         const domainAudit = auditPhaseGoalGate(phaseGoal, gate, phaseEvents.map((event) => event.type));
         decisionStore.recordSubtaskAudit(phaseGoalCycleAudit(phaseGoal, domainAudit, semanticAudit?.criteria ?? []));
         if (decision.goalStatus === "met" && !gate.met) {
@@ -7041,6 +7091,12 @@ research
         openFalsifications: researchMemory.falsificationAgenda.filter((item) => item.status === "untested" || item.status === "inconclusive").length,
       });
       decisionStore.appendEvent("research.stop_policy.assessed", { cycle, ...stopPolicy });
+      // A second stagnant window would pause. If the only unmet criteria are
+      // non-integrity operator acknowledgements and the director has a
+      // concrete falsifiable hypothesis, advance and keep the acknowledgement
+      // visible instead of burning the campaign on a pause.
+      const pauseForStagnation = stagnation.stagnant && campaignEvents.some((event) => event.type === "research.stagnation.recovery_started");
+      const gateDeferral = pauseForStagnation && phaseGoal && phaseGate && !phaseDomainGateMet ? phaseGateDeferral(phaseGate, decision) : undefined;
       if (phaseGoal) {
         const now = new Date().toISOString();
         const goals = phaseGoalsForMode(decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, campaignGoalSetId);
@@ -7050,10 +7106,22 @@ research
           // across controller restart and protects against stale in-memory
           // decisions claiming a phase was met.
           const durableAudit = decisionStore.latestSubtaskAudit(phaseGoal.id);
-          const met = phaseGoalCanAdvance(phaseDomainGateMet, durableAudit);
+          const deferred = gateDeferral?.advance === true;
+          const met = phaseGoalCanAdvance(phaseDomainGateMet, durableAudit) || deferred;
+          if (deferred && gateDeferral) {
+            decisionStore.appendEvent("research.phase_gate.deferred", { phase: phaseGoal.phase, reason: gateDeferral.reason, deferredCriteria: gateDeferral.deferred, selectedHypothesis: decision.selectedHypothesis ?? null, cycle });
+            decisionStore.appendEvent("research.attention.raised", {
+              id: `phase-gate-deferred:${phaseGoal.phase}`,
+              severity: "warning",
+              kind: "phase-gate-deferred",
+              summary: `${phaseGoal.phase} advanced with deferred operator acknowledgement: ${gateDeferral.deferred.map((item) => item.criterion).join(", ")}`,
+              next: [...new Set(gateDeferral.deferred.flatMap((item) => item.commands))].join("  |  ") || "/status",
+            });
+          }
           if (decision.goalStatus === "met" && !met) decisionStore.appendEvent("research.phase_transition.rejected", { phase: phaseGoal.phase, reason: "missing successful domain gate or durable subtask audit", domainGateMet: phaseDomainGateMet, audit: durableAudit?.payload ?? null });
           const nextStatus = met ? "met" : decision.goalStatus === "blocked" ? "blocked" : "active";
           decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: nextStatus, payload: { ...goals[index], status: nextStatus, attempts: phaseGoal.attempts + 1, updatedAt: now } });
+          if (met) decisionStore.appendEvent("research.attention.cleared", { id: `stagnation:${phaseGoal.phase}`, reason: `${phaseGoal.phase} phase advanced` });
           if (met && goals[index + 1]) {
             const next = goals[index + 1];
             decisionStore.savePhaseGoal({ id: next.id, phase: next.phase, status: "active", payload: { ...next, status: "active", updatedAt: now } });
@@ -7070,12 +7138,24 @@ research
       // Only a second unchanged window may pause the campaign; otherwise a
       // locally stuck director can terminate before trying another formulation
       // family, evaluator route, or search operator.
-      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || (stagnation.stagnant && stagnationRecoveryStarted) || stopPolicy.action !== "continue" || elapsedMinutes >= campaign.budgetMinutes;
+      const stagnationPause = stagnation.stagnant && stagnationRecoveryStarted && gateDeferral?.advance !== true;
+      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || stagnationPause || stopPolicy.action !== "continue" || elapsedMinutes >= campaign.budgetMinutes;
+      const unmetGate = phaseGate && !phaseDomainGateMet && gateDeferral?.advance !== true ? phaseGate : undefined;
+      const stagnationMessage = formatStagnationPause(stagnation.cycles, phaseGoal?.phase, unmetGate);
       if (terminal) {
-        if (decision.goalStatus === "blocked" || (stagnation.stagnant && stagnationRecoveryStarted) || stopPolicy.action === "pause") Object.assign(campaign, pauseCampaign(campaign));
+        if (decision.goalStatus === "blocked" || stagnationPause || stopPolicy.action === "pause") Object.assign(campaign, pauseCampaign(campaign));
         else if (elapsedMinutes >= campaign.budgetMinutes && decision.decision !== "stop" && stopPolicy.action !== "stop") Object.assign(campaign, pauseCampaignForBudget(campaign));
         else campaign.status = "completed";
-        if (stagnation.stagnant) decisionStore.appendEvent("research.stagnation.detected", { cycles: stagnation.cycles, signature: stagnation.signature, action: "pause_for_review" });
+        if (stagnation.stagnant) {
+          decisionStore.appendEvent("research.stagnation.detected", { cycles: stagnation.cycles, signature: stagnation.signature, action: "pause_for_review", phase: phaseGoal?.phase ?? null, unmetCriteria: unmetGate?.unmet ?? [], message: stagnationMessage });
+          if (stagnationPause) decisionStore.appendEvent("research.attention.raised", {
+            id: `stagnation:${phaseGoal?.phase ?? "campaign"}`,
+            severity: "critical",
+            kind: "stagnation",
+            summary: unmetGate ? `Campaign paused on the ${phaseGoal?.phase} phase gate; unmet: ${unmetGate.unmet.map((item) => item.criterion).join(", ")}` : `Campaign paused after ${stagnation.cycles} unchanged decisions; review the bottleneck`,
+            next: unmetGate ? [...new Set(unmetGate.unmet.flatMap((item) => item.commands))].join("  |  ") || "/status" : "/status",
+          });
+        }
         if (stopPolicy.action !== "continue") decisionStore.appendEvent("research.stop_policy.triggered", { cycle, action: stopPolicy.action, reason: stopPolicy.reason, samples: stopPolicy.samples, meanRewardPerMinute: stopPolicy.meanRewardPerMinute });
         decisionStore.saveCampaign(campaign);
       } else if (stagnation.stagnant) {
@@ -7091,7 +7171,8 @@ research
       finishCycleTask("completed", { terminal, decision: decision.decision, goalStatus: decision.goalStatus });
       decisionStore.close();
       console.log(formatResearchDecision(decision));
-      if (stagnation.stagnant && terminal) console.log(`\nCampaign paused after ${stagnation.cycles} unchanged active decisions; review the bottleneck before resuming.`);
+      if (gateDeferral?.advance) console.log(`\nPhase gate deferred · ${gateDeferral.reason}. Pending operator action: ${[...new Set(gateDeferral.deferred.flatMap((item) => item.commands))].join("; ")}`);
+      if (stagnation.stagnant && terminal) console.log(`\n${stagnationMessage}`);
       else if (stagnation.stagnant) console.log(`\nSearch stagnation detected · forcing a diverse research cycle (${stagnation.cycles} repeated decisions).`);
       if (stopPolicy.action !== "continue") console.log(`\nCampaign ${stopPolicy.action}: ${stopPolicy.reason}.`);
       if (criticReview) console.log(`\nCritic: ${criticReview.verdict} · confidence ${criticReview.confidence.toFixed(2)}\n${criticReview.summary}${criticReview.objections.length ? `\nObjections:\n${criticReview.objections.map((item) => `- ${item}`).join("\n")}` : ""}`);
@@ -7351,7 +7432,20 @@ program.command("baseline")
 
 const validation = new Command("validation").description("Manage the immutable validation policy");
 const validationPaths = () => ({ policy: join(stateDirectory, "validation-policy.json"), lock: join(stateDirectory, "validation-policy.lock.json") });
-const validationPolicyContract = (policy: ReturnType<typeof ValidationPolicySchema.parse>) => JSON.stringify({ version: policy.version, datasetRevision: policy.datasetRevision, primarySplit: policy.primarySplit, secondarySplits: policy.secondarySplits, folds: policy.folds, seeds: policy.seeds, metric: policy.metric, secondaryMetrics: policy.secondaryMetrics, acceptance: policy.acceptance });
+/** Candidate experiments that ran, or were evaluated, while this exact policy lock was in force. */
+function candidatesEvaluatedUnderPolicy(store: ResearchStore, lock: { checksum: string; lockedAt: string }): string[] {
+  const lockedAt = Date.parse(lock.lockedAt);
+  const since = (createdAt: string): boolean => !Number.isFinite(lockedAt) || Date.parse(createdAt) >= lockedAt;
+  const ids: string[] = [];
+  for (const event of store.eventsByTypes(["validation.policy.verified", "experiment.stage.full_validation.completed"])) {
+    if (!since(event.createdAt)) continue;
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as { experimentId?: unknown; checksum?: unknown } : {};
+    if (typeof payload.checksum === "string" && payload.checksum !== lock.checksum) continue;
+    ids.push(typeof payload.experimentId === "string" ? payload.experimentId : "unknown-experiment");
+  }
+  for (const run of store.runs()) if (since(run.createdAt)) ids.push(run.experimentId);
+  return ids;
+}
 validation.command("inspect").action(() => {
   const paths = validationPaths();
   const lock = readValidationPolicyLock(paths.lock);
@@ -7385,7 +7479,10 @@ validation.command("reuse").description("Record reuse of a checksum-verified loc
   const adapter = activeCompetition();
   const policy = ValidationPolicySchema.parse(JSON.parse(readFileSync(paths.policy, "utf8")));
   const expected = createValidationPolicy(adapter.config);
-  if (validationPolicyContract(policy) !== validationPolicyContract(expected)) throw new Error("The locked policy does not match the active task's dataset, split, metric, or acceptance contract; do not reuse it.");
+  if (validationPolicyContract(policy) !== validationPolicyContract(expected)) {
+    const changed = (["version", "datasetRevision", "primarySplit", "secondarySplits", "folds", "seeds", "metric", "secondaryMetrics", "acceptance"] as const).filter((field) => JSON.stringify(policy[field]) !== JSON.stringify(expected[field]));
+    throw new Error(`The locked policy does not match the active task's dataset, split, metric, or acceptance contract (changed: ${changed.join(", ")}); do not reuse it. To replace it deliberately:\n${STALE_VALIDATION_LOCK_COMMANDS.map((command) => `  ${command}`).join("\n")}`);
+  }
   const store = new ResearchStore(statePath);
   store.appendEvent("validation.policy.reused", { path: paths.policy, checksum: lock.checksum, version: policy.version, datasetRevision: policy.datasetRevision, primarySplit: policy.primarySplit, metric: policy.metric, locked: true, reason: "checksum-verified immutable policy exactly matches the active task contract" });
   store.close();
@@ -7518,8 +7615,8 @@ experiment.command("run")
     const declaredSecondaryMetrics = manifest.evaluation.metrics.slice(1);
     const validationPathsForRun = validationPaths();
     if (readValidationPolicyLock(validationPathsForRun.lock)?.locked) {
-      assertValidationPolicy(validationPathsForRun.policy, validationPathsForRun.lock);
-      store.appendEvent("validation.policy.verified", { experimentId: id, lockPath: validationPathsForRun.lock });
+      const verifiedLock = assertValidationPolicy(validationPathsForRun.policy, validationPathsForRun.lock);
+      store.appendEvent("validation.policy.verified", { experimentId: id, lockPath: validationPathsForRun.lock, checksum: verifiedLock.checksum });
     }
     let executionPlan: ExecutionStage[] = Array.isArray((entry.payload as { executionPlan?: unknown }).executionPlan)
       ? (entry.payload as { executionPlan: ExecutionStage[] }).executionPlan

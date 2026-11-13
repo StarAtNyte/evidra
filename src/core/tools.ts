@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, mkdirSync, realpathSync, lstatSync, statSync, openSync, readSync, closeSync, fstatSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { auditData } from "./data-audit.js";
 import { guardAutonomousCommand, guardReadOnlyInspection, guardWorkspaceCommand, type AutonomyLevel } from "./permissions.js";
 import { runProcess, type ProcessControl } from "./process.js";
@@ -727,7 +727,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       }
       case "data.audit": {
         const target = typeof args.path === "string" ? inside(context.root, args.path) : context.root;
-        output = auditData(target);
+        output = auditData(target, undefined, undefined, { excludeDirectories: [dirname(context.storePath)] });
         break;
       }
       case "artifact.audit": {
