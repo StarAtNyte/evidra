@@ -53,8 +53,12 @@ export function effectiveCodexModel(preferred?: string): string {
 export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type CodexWebSearchMode = "disabled" | "cached" | "live";
 
-export function effectiveCodexSandbox(requested?: CodexSandboxMode): CodexSandboxMode {
+export function effectiveCodexSandbox(requested?: CodexSandboxMode, autonomy?: string): CodexSandboxMode {
   const baseline = requested ?? "read-only";
+  // yolo/fast autonomy promises a writable executor workspace. A stale
+  // process-wide read-only override (or one inherited by a resumed campaign)
+  // must not silently downgrade an executor that asked for workspace-write.
+  if ((autonomy === "yolo" || autonomy === "fast") && baseline === "workspace-write" && process.env.EVIDRA_CODEX_SANDBOX === "read-only") return baseline;
   const override = process.env.EVIDRA_CODEX_SANDBOX;
   if (override !== "read-only" && override !== "workspace-write" && override !== "danger-full-access") return baseline;
   // A process-wide environment override must not weaken a role-level
@@ -161,6 +165,8 @@ export interface ExecAgentOptions {
   threadId?: string;
   reasoningEffort?: string;
   sandbox?: CodexSandboxMode;
+  /** Campaign autonomy level; fast/yolo keep writable executors writable. */
+  sandboxAutonomy?: string;
   /** Local reference images attached to the first Codex turn. */
   images?: string[];
   /** Disable Codex-configured MCP servers for tightly scoped agent roles. */
@@ -730,7 +736,7 @@ export class CodexExecAgent {
       get paused() { return paused; },
     };
     onProcess?.(control);
-    const sandboxMode = sandboxOverride ?? effectiveCodexSandbox(this.options.sandbox);
+    const sandboxMode = sandboxOverride ?? effectiveCodexSandbox(this.options.sandbox, this.options.sandboxAutonomy);
     const isolatedWorkspace = sandboxMode === "danger-full-access" && this.options.sandbox !== "workspace-write";
     const isolated = isolatedWorkspace ? createIsolatedCodexWorkspace(this.options.cwd) : undefined;
     const model = effectiveCodexModel(this.options.model);

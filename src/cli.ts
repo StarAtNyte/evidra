@@ -428,7 +428,7 @@ async function implementCampaignHypothesis(
   experimentId: string,
   hypothesis: unknown,
   manifest: unknown,
-  options: { provider: "codex" | "claude" | "local"; model: string; thinking: string; fallbackLocalModel?: string; limitPolicy?: "auto" | "wait" | "fallback" | "stop"; protectedCommands?: string[][]; workspaceRelativePath?: string },
+  options: { provider: "codex" | "claude" | "local"; model: string; thinking: string; fallbackLocalModel?: string; limitPolicy?: "auto" | "wait" | "fallback" | "stop"; protectedCommands?: string[][]; workspaceRelativePath?: string; autonomy?: AutonomyLevel },
 ): Promise<void> {
   const worktree = await ensureWorktree(rootPath, rootPath, experimentId);
   const manifestMode = (manifest as { implementationMode?: unknown }).implementationMode;
@@ -563,7 +563,7 @@ async function implementCampaignHypothesis(
         model: options.model,
         cwd: worktree,
         reasoningEffort: options.thinking,
-        sandbox: "workspace-write",
+        sandbox: "workspace-write", sandboxAutonomy: options.autonomy,
         limitPolicy: options.limitPolicy ?? "auto",
       }, options.fallbackLocalModel, (message) => console.log(`Experiment ${experimentId} · ${message}`));
       // A local fallback cannot edit the worktree, so it returns a patch. Codex
@@ -617,7 +617,7 @@ async function implementCampaignHypothesis(
           model: options.model,
           cwd: worktree,
           reasoningEffort: options.thinking,
-          sandbox: "workspace-write",
+          sandbox: "workspace-write", sandboxAutonomy: options.autonomy,
           limitPolicy: options.limitPolicy ?? "auto",
         }, options.fallbackLocalModel, (message) => console.log(`Experiment ${experimentId} · direct edit recovery · ${message}`));
       } catch (error) {
@@ -6961,7 +6961,7 @@ research
             decisionStore.close();
             let run: { exitCode: number; stdout: string; stderr: string };
             try {
-              await implementCampaignHypothesis(root, experimentId, selectedHypothesis, manifest, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, thinking: options.thinking, fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", protectedCommands: [adapter.config.evaluator.command], workspaceRelativePath: relative(root, adapter.workspacePath(root)) });
+              await implementCampaignHypothesis(root, experimentId, selectedHypothesis, manifest, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, thinking: options.thinking, fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", protectedCommands: [adapter.config.evaluator.command], workspaceRelativePath: relative(root, adapter.workspacePath(root)), autonomy: autonomy as AutonomyLevel });
               if (candidateHalvingEnabled) {
                 run = await runCampaignExperiment(root, experimentId, "reduced", campaignRemainingMs(campaign));
                 const screenStore = new ResearchStore(statePath);

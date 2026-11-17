@@ -1520,6 +1520,24 @@ test("phase plan revisions fingerprint structural changes but ignore progress up
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("fast/yolo autonomy keeps writable executors writable despite a stale read-only override", () => {
+  const previous = process.env.EVIDRA_CODEX_SANDBOX;
+  process.env.EVIDRA_CODEX_SANDBOX = "read-only";
+  assert.equal(effectiveCodexSandbox("workspace-write", "yolo"), "workspace-write");
+  assert.equal(effectiveCodexSandbox("workspace-write", "fast"), "workspace-write");
+  assert.equal(effectiveCodexSandbox("workspace-write", "safe"), "read-only");
+  assert.equal(effectiveCodexSandbox("read-only", "yolo"), "read-only");
+  if (previous === undefined) delete process.env.EVIDRA_CODEX_SANDBOX;
+  else process.env.EVIDRA_CODEX_SANDBOX = previous;
+});
+
+test("research director prompt does not treat its read-only turn as a blocker", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("../src/agents/research-director.ts", import.meta.url), "utf8");
+  assert.match(source, /read-only is by design and is never a blocker/);
+  assert.match(source, /accepted stand-in for the official contract/);
+});
+
 test("Codex sandbox preserves read-only role boundaries", () => {
   const previous = process.env.EVIDRA_CODEX_SANDBOX;
   delete process.env.EVIDRA_CODEX_SANDBOX;
