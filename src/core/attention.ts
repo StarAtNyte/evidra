@@ -251,6 +251,24 @@ export function operatorAttention(store: ResearchStore, root?: string): Operator
   for (const stale of store.staleAgentDirectives().slice(0, 24)) {
     items.push({ id: `directive-stale:${stale.directive.id}`, severity: "critical", kind: "directive-stale", summary: `Directive #${stale.directive.id} to ${stale.directive.role} was acknowledged but ${stale.reason}`, next: "/agents recover" });
   }
+  // Controller-raised items (stale validation lock, stagnation on an unmet
+  // phase gate, deferred acknowledgements) stay open until a later clear.
+  const cleared = new Map<string, string>();
+  for (const event of store.eventsByType("research.attention.cleared", 64)) {
+    const id = (event.payload as { id?: unknown } | null)?.id;
+    if (typeof id === "string") cleared.set(id, event.createdAt);
+  }
+  const raised = new Map<string, { item: OperatorAttentionItem; createdAt: string }>();
+  for (const event of store.eventsByType("research.attention.raised", 64)) {
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+    if (typeof payload.id !== "string" || typeof payload.summary !== "string") continue;
+    const severity: AttentionSeverity = payload.severity === "critical" || payload.severity === "info" ? payload.severity : "warning";
+    raised.set(payload.id, { createdAt: event.createdAt, item: { id: payload.id, severity, kind: typeof payload.kind === "string" ? payload.kind : "controller", summary: payload.summary.slice(0, 400), next: typeof payload.next === "string" && payload.next.trim() ? payload.next.slice(0, 400) : "/status" } });
+  }
+  for (const { item, createdAt } of raised.values()) {
+    const clearedAt = cleared.get(item.id);
+    if (!clearedAt || clearedAt < createdAt) items.push(item);
+  }
   const control = store.queueControl();
   if (control.paused) items.push({ id: "queue-control", severity: "info", kind: "queue-control", summary: `Queue dispatch paused${control.reason ? ` · ${control.reason}` : ""}`, next: "/queue resume" });
 

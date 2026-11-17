@@ -155,3 +155,15 @@ export function loadCompetitionAdapter(projectRoot: string, id = "local-research
 export function registerCompetitionAdapter(adapter: CompetitionAdapter): void {
   adapters.set(adapter.id, adapter);
 }
+
+/** True when the workspace declares no real scorer (e.g. the local-research default `true`). */
+export function hasPlaceholderEvaluator(config: Pick<CompetitionConfig, "evaluator">): boolean {
+  const command = config.evaluator.command.map((part) => part.trim()).filter(Boolean);
+  return command.length === 0 || (command.length === 1 && ["true", ":"].includes(command[0]));
+}
+
+/**
+ * Direction for a campaign without a metric. Without it the director keeps
+ * auditing while waiting for a score that can never arrive.
+ */
+export const PLACEHOLDER_EVALUATOR_GUIDANCE = "NO SCORING EVALUATOR: this workspace's evaluator is a placeholder, so there is no metric to climb. Do not keep auditing while waiting for one. If the goal is measurable, make building the evaluator your first experiment: a script that prints the metric as JSON, delivered as an artifact so the operator can point competition.json at it. If the goal is a deliverable such as a design, report, or dataset, produce it now as an artifact hypothesis (outcomeType artifact, implementationMode modify) whose verificationCommands check that it exists and is well-formed, then improve it in later cycles.";

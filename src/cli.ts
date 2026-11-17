@@ -1,26 +1,33 @@
 #!/usr/bin/env node
+import { discoveryCadence, verificationRuntimeGuidance, incompleteVerificationProposal } from "./core/discovery-cadence.js";
+import { architectureNovelty } from "./core/architecture-search.js";
+import { formatHarnessFeedback, parseHarnessFeedbackRole, projectHarnessFailureFeedback } from "./core/harness-feedback.js";
+import { workspaceBackupDestination } from "./core/backup-path.js";
+import { reconcileRemoteExperiment } from "./core/remote-reconciliation.js";
 import { Command } from "commander";
-import { appendFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync, realpathSync } from "node:fs";
+import { appendFileSync, copyFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync, realpathSync } from "node:fs";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { externalActionNeedsReconciliation, ResearchStore, queueEffectivePriority, routineRetryDelaySeconds } from "./core/store.js";
 import { externalScoreEvidenceContext, hashExternalArtifact } from "./core/submission-feedback.js";
 import { campaignEvidenceConflictCounts, mergeCampaignToolFailures, recordsForCampaign } from "./core/campaign-scope.js";
 import { materializeExternalScoreSources, materializeResearchDecision } from "./core/research-graph.js";
 import { formatResearchStarterBriefs, RESEARCH_STARTER_BRIEFS } from "./core/research-starters.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "./core/experiment-manifest.js";
-import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatResearchStagePlan, phaseCompletionCriteriaForAudit, phaseGoalCanAdvance, phaseGoalCycleAudit, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForCurrentSet, phaseGoalsForMode, researchStageProgress, RESEARCH_STAGE_PLAN } from "./core/phase-goals.js";
+import { activePhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatPhaseGateGuidance, formatResearchStagePlan, formatStagnationPause, phaseGateDeferral, type PhaseGoalGate, phaseCompletionCriteriaForAudit, phaseGoalCanAdvance, phaseGoalCycleAudit, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForCurrentSet, phaseGoalsForMode, researchStageProgress, RESEARCH_STAGE_PLAN } from "./core/phase-goals.js";
 import { ExperimentManifestSchema, PhaseGoalSchema, RunResultSchema, type ExperimentExecutorKind } from "./core/types.js";
-import { competitionIdForMode, competitionManifestForInitialization, declaredEvaluatorCommand, loadCompetitionAdapter } from "./competitions/adapters.js";
-import { auditData, dataAuditFingerprint, dataAuditManifestFingerprint } from "./core/data-audit.js";
-import { createValidationPolicy, ValidationPolicySchema, writeValidationPolicy } from "./core/validation-policy.js";
+import { competitionIdForMode, competitionManifestForInitialization, declaredEvaluatorCommand, hasPlaceholderEvaluator, loadCompetitionAdapter, PLACEHOLDER_EVALUATOR_GUIDANCE } from "./competitions/adapters.js";
+import { auditData, DATA_AUDIT_VERSION, dataAuditFingerprint, dataAuditManifestFingerprint } from "./core/data-audit.js";
+import { createValidationPolicy, validationPolicyContract, ValidationPolicySchema, writeValidationPolicy } from "./core/validation-policy.js";
+import { reconcileValidationPolicyLock, STALE_VALIDATION_LOCK_COMMANDS } from "./core/validation-reconcile.js";
 import { distributionObservationsFromFeedback, estimateDistributionBeliefs, type ExternalValidationObservation } from "./core/distribution-beliefs.js";
 import { advanceExecutionStage, createExecutionPlan, validateExecutionContract, verificationOnlyHasEvidence, verificationSourcePinError, type ExecutionStage } from "./core/execution-stages.js";
-import { planVerificationExecution } from "./core/verification-execution.js";
+import { missingVerificationScripts, planVerificationExecution } from "./core/verification-execution.js";
 import { canonicalSourceUrl, retrieveSource, searchResearchSources, sourceClaimRecords, sourceClaims, sourceFrontier, sourceSearchText, sourceIsFresh, SOURCE_SEARCH_RANKING_VERSION } from "./core/sources.js";
-import { competitionResearchClaimType, competitionResearchSources, competitionSourceRefreshMs } from "./core/competition-sources.js";
+import { competitionChangeGuidance, competitionResearchClaimType, competitionResearchSources, competitionSourceChange, competitionSourceRefreshMs, type CompetitionChangeEvent } from "./core/competition-sources.js";
 import { extractCompetitionInsights } from "./core/competition-insights.js";
 import { dashboardHtml, dashboardSnapshot, paintingJobsSnapshot } from "./core/dashboard.js";
 import { workbenchHtml } from "./core/dashboard-web.js";
@@ -33,6 +40,8 @@ import { evaluateSubmissionPolicy } from "./core/submission-policy.js";
 import { renderTimeline } from "./core/timeline.js";
 import { activeContradictionEdges, latestSourcePayloads, researchMemoryContext } from "./core/research-context.js";
 import { detectStagnation } from "./core/stagnation.js";
+import { assessGoalProgress, stalledPivotCycles } from "./core/progress.js";
+import { appendTransferObservation, calibrateProxyTransfer, expectedExternalScore, proxyTransferGuidance, readTransferObservations, type ProxyTransferCalibration } from "./core/proxy-transfer.js";
 import { assessStopPolicy } from "./core/stop-policy.js";
 import { classifyVerifier } from "./core/formal-verification.js";
 import { detectRouteDrift } from "./core/drift-detection.js";
@@ -48,16 +57,18 @@ import { persistExecutionStageResult } from "./core/stage-executor.js";
 import { availableResearchTools, executeResearchTool } from "./core/tools.js";
 import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "./core/external-tools.js";
 import { projectVerifiedSubtaskState } from "./core/subtask-state.js";
-import { classifyProcessFailure, executorFor, mergeEvaluatorResult, parseMetricOutput, prepareExperimentEnvironment, validateRunMetrics } from "./core/executors.js";
+import { classifyProcessFailure, executorFor, mergeEvaluatorResult, parseMetricOutput, prepareExperimentEnvironment, prepareWorkerHome, safeWorkerEnvironment, validateRunMetrics } from "./core/executors.js";
+import { rankFinalCandidates, runCampaignFinalize, type FinalCandidate } from "./core/finalize.js";
+import { packEvidence } from "./core/evidence-pack.js";
 import { sha256File } from "./core/evidence.js";
-import { captureImplementationSnapshot, captureVerificationSourcePin, implementationChanged, implementationEditRetryPrompt, implementationRetryPrompt, resolveImplementationPaths, seedImplementationArtifacts, seedImplementationSource, seedVerificationImplementation, verifyImplementationSnapshot, type ImplementationSnapshot, type PinnedImplementationArtifact } from "./core/implementation-guard.js";
+import { preserveInterruptedImplementation, captureImplementationSnapshot, captureVerificationSourcePin, implementationChanged, implementationEditRetryPrompt, implementationRetryPrompt, resolveImplementationPaths, seedImplementationArtifacts, seedImplementationSource, seedVerificationImplementation, verifyImplementationSnapshot, type ImplementationSnapshot, type PinnedImplementationArtifact } from "./core/implementation-guard.js";
 import { captureEnvironment } from "./core/environment.js";
 import { ensureWorktree, worktreeBasePath } from "./core/worktree.js";
 import { compareRuns } from "./core/statistics.js";
 import { createToolTraceRecorder, evaluateTrajectory, providerActivityFailureClass, researchToolFailureClass, semanticAuditTraceEvidence, type TrajectoryEvent } from "./core/trajectories.js";
 import { recoverUncommittedTraceFiles } from "./core/trajectory-recovery.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "./core/experiment-patches.js";
-import { applyCriticGate, formatOpenCriticConstraintGuidance, latestOpenCriticConstraint, promoteExplicitExploratoryRun, promoteOperatorSteeredExploration } from "./core/critic-gate.js";
+import { applyCriticGate, formatOpenCriticConstraintGuidance, latestOpenCriticConstraint } from "./core/critic-gate.js";
 import { recordBaselineEvidence, recordBaselineReuse } from "./core/baseline.js";
 import { redactSecrets, redactStructured } from "./core/redaction.js";
 import { observedGpuHours } from "./core/compute-budget.js";
@@ -72,7 +83,8 @@ import { formatResearchDecision, runResearchDirector } from "./agents/research-d
 import { boundedPeerBoard, laneToolObservationContext, runResearchLanes } from "./agents/research-lanes.js";
 import { runResearchCritic, runResearchSemanticAuditor, type ResearchSemanticAudit } from "./agents/research-lanes.js";
 import { createPaintingJob, runPaintingJob } from "./agents/painting.js";
-import { checkProvider, codexLoginStatus, codexResearchModelPool, CodexExecAgent, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listCodexModels, listLocalModels, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
+import { claudeLoginStatus, DEFAULT_CLAUDE_MODEL, effectiveClaudeModel, resolveClaudeBinary } from "./agents/claude-exec.js";
+import { checkProvider, isAgentProvider, codexLoginStatus, isToolCapableProvider, codexResearchModelPool, CodexExecAgent, DEFAULT_CODEX_MODEL, isProviderFallbackEligible, isProviderUsageLimit, isRetryableAgentError, listCodexModels, listLocalModels, providerRetryAfterMs, resolveCodexBinary, resolveCodexModel, resolveLocalFallbackModel, resolveStartupProvider, runWithLocalFallback } from "./agents/codex-exec.js";
 import { startInteractive } from "./session/interactive.js";
 import { render } from "ink";
 import React from "react";
@@ -82,13 +94,14 @@ import { evidraVersion } from "./version.js";
 import { autonomyPolicy, type AutonomyLevel } from "./core/permissions.js";
 import { capabilityOutcome, qualityFeedback, routeCapability } from "./core/capability-router.js";
 import { allocateNextResearch } from "./core/allocation.js";
+import { distilCampaignLessons } from "./core/campaign-lessons.js";
 import { buildExperienceRecord, capabilityProfile, curriculumReplay, experienceJsonl, experienceReplayWorld, selectCurriculum } from "./core/experience.js";
 import { executionPlaybookFromExperience } from "./core/execution-playbooks.js";
 import { evaluateReducedPromotion, retryRouteIsNew, type ExperimentRetryRoute } from "./core/scheduler.js";
 import { validateCompetitionContract } from "./core/competition-contract.js";
 import { assessForecast, summarizeForecastAssessments } from "./core/forecast-calibration.js";
 import { candidateChangePath } from "./core/hypothesis-path.js";
-import { withExecutionHeartbeat } from "./core/execution-heartbeat.js";
+import { recordRemoteExecution, withExecutionHeartbeat } from "./core/execution-heartbeat.js";
 import { researchFailureRecord } from "./core/research-failure.js";
 import { DEFAULT_SEARCH_OPERATORS, DEFAULT_SEARCH_OPERATOR_COSTS, DEFAULT_SEARCH_OPERATOR_NOVELTY, rankSearchArms, searchReward, summarizeSearchPolicyEvidence } from "./core/search-policy.js";
 import { planPortfolio } from "./core/portfolio.js";
@@ -120,7 +133,7 @@ import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTas
 import { runSafetyBenchmark } from "./core/safety-bench.js";
 import { runOrchestrationBenchmark } from "./core/orchestration-bench.js";
 import { runGovernanceBenchmark } from "./core/governance-bench.js";
-import { selectRatchetReference } from "./core/ratchet.js";
+import { championExperimentIds, explorationHypothesis, holdoutAllows, holdoutReference, implementationOf, isAgentVisibleEvent, normalizeFamily, parentExperimentId, searchState, selectRatchetReference } from "./core/ratchet.js";
 import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.js";
 import { approvalInbox } from "./core/approvals.js";
 import { loadProjectGuidance } from "./core/project-guidance.js";
@@ -139,6 +152,19 @@ const PHASE_GATE_EVENT_TYPES = [
   "replication.manifest.created", "experiment.autonomous.replication.completed", "experiment.gates.updated",
   "experiment.validation.assessed", "research.ablation.plan", "research.ablation.evidence",
 ] as const;
+/** Evaluate the active phase gate from durable evidence recorded since the phase began. */
+function phaseGateSnapshot(store: ResearchStore, phaseGoal: ReturnType<typeof PhaseGoalSchema.parse>, mode: "research" | "challenge"): PhaseGoalGate {
+  const phaseEvents = phaseGoalEventsSince(phaseGoal, store.eventsByTypes([...PHASE_GATE_EVENT_TYPES]));
+  return evaluatePhaseGoalEvidence(phaseGoal, {
+    mode,
+    eventTypes: phaseEvents.map((event) => event.type),
+    eventPayloads: phaseEvents.map((event) => ({ type: event.type, payload: event.payload })),
+    hypotheses: phaseGoalRecordsSince(phaseGoal, store.hypotheses()),
+    experiments: phaseGoalRecordsSince(phaseGoal, store.experiments()),
+    runs: phaseGoalRecordsSince(phaseGoal, store.runs()),
+    artifacts: phaseGoalRecordsSince(phaseGoal, store.artifacts()),
+  });
+}
 const SOURCE_FRONTIER_EVENT_TYPES = [
   "research.source.search.completed",
   "research.web.search.completed",
@@ -157,6 +183,8 @@ import { assessCodeHealth, assessScopedCodeHealthTrend, snapshotCodeHealth, type
 const root = findWorkspaceRoot();
 const stateDirectory = resolve(process.env.EVIDRA_STATE_DIR ?? join(root, ".sota"));
 const statePath = join(stateDirectory, "database.sqlite");
+// Full provider transcripts (prompts, raw events, outcomes) for audit evidence.
+process.env.EVIDRA_TRANSCRIPT_DIR ??= join(stateDirectory, "transcripts");
 class CampaignAgentTokenBudgetExceeded extends Error {
   constructor(readonly usedTokens: number, readonly budgetTokens: number) {
     super(`Aggregate agent-token budget exhausted (${usedTokens}/${budgetTokens}).`);
@@ -348,12 +376,59 @@ async function runCampaignExperiment(rootPath: string, experimentId: string, sta
   });
 }
 
+/** The current campaign's start, used to keep champions from leaking across campaigns. */
+function activeCampaignStart(store: ResearchStore): string | undefined {
+  const startedAt = (store.campaign() as { startedAt?: unknown } | undefined)?.startedAt;
+  return typeof startedAt === "string" ? startedAt : undefined;
+}
+
+/** Run a holdout evaluator and parse the primary metric; undefined when it fails or reports none. */
+async function holdoutMetricFor(cwd: string, command: string[], environment: NodeJS.ProcessEnv, metricName: string, timeoutMinutes: number): Promise<number | undefined> {
+  const result = await runProcess(command, cwd, timeoutMinutes * 60_000, undefined, undefined, environment);
+  if (result.exitCode !== 0) return undefined;
+  const metric = parseMetricOutput(result.stdout, metricName).metrics[metricName];
+  return typeof metric === "number" && Number.isFinite(metric) ? metric : undefined;
+}
+
+/** The champion, the per-family archive, recent attempts, and whether this cycle must explore. */
+function campaignSearchState(store: ResearchStore, metric: { name: string; direction: "maximize" | "minimize" }): ReturnType<typeof searchState> {
+  return searchState(store, metric.name, metric.direction, activeCampaignStart(store));
+}
+
+/**
+ * Start a fresh experiment worktree from its parent: the best attempt in the
+ * hypothesis's own method family, or the champion for a new family.
+ */
+async function seedFromParent(worktree: string, experimentId: string, family: string): Promise<void> {
+  const status = await runProcess(["git", "status", "--porcelain=v1", "--untracked-files=no"], worktree, 60_000);
+  // A resumed worktree already holds this experiment's own edits; never overwrite them.
+  if (status.exitCode !== 0 || status.stdout.trim()) return;
+  const store = new ResearchStore(statePath);
+  try {
+    const metric = activeCompetition().config.metric;
+    const parentId = parentExperimentId(store, metric.name, metric.direction, family, activeCampaignStart(store));
+    const parent = parentId && parentId !== experimentId ? implementationOf(store, parentId) : undefined;
+    if (!parent || !existsSync(parent.worktree)) return;
+    const copied: string[] = [];
+    for (const path of parent.files) {
+      const source = join(parent.worktree, path);
+      if (!existsSync(source)) continue;
+      mkdirSync(dirname(join(worktree, path)), { recursive: true });
+      copyFileSync(source, join(worktree, path));
+      copied.push(path);
+    }
+    if (copied.length) store.appendEvent("experiment.implementation.inherited", { experimentId, parentExperimentId: parent.experimentId, family: normalizeFamily(family), files: copied });
+  } finally {
+    store.close();
+  }
+}
+
 async function implementCampaignHypothesis(
   rootPath: string,
   experimentId: string,
   hypothesis: unknown,
   manifest: unknown,
-  options: { provider: "codex" | "local"; model: string; thinking: string; fallbackLocalModel?: string; limitPolicy?: "auto" | "wait" | "fallback" | "stop"; protectedCommands?: string[][]; workspaceRelativePath?: string; autonomy?: AutonomyLevel },
+  options: { provider: "codex" | "claude" | "local"; model: string; thinking: string; fallbackLocalModel?: string; limitPolicy?: "auto" | "wait" | "fallback" | "stop"; protectedCommands?: string[][]; workspaceRelativePath?: string; autonomy?: AutonomyLevel },
 ): Promise<void> {
   const worktree = await ensureWorktree(rootPath, rootPath, experimentId);
   const manifestMode = (manifest as { implementationMode?: unknown }).implementationMode;
@@ -372,7 +447,7 @@ async function implementCampaignHypothesis(
     store.appendEvent("experiment.worktree.created", { experimentId, worktree, implementationMode: "verify" });
     let stagedArtifactPaths: string[] = [];
     try {
-      const staged = seedImplementationArtifacts(rootPath, worktree, options.workspaceRelativePath ?? ".", implementationArtifacts);
+      const staged = seedImplementationArtifacts(rootPath, worktree, options.workspaceRelativePath ?? ".", implementationArtifacts, { replaceExisting: true });
       stagedArtifactPaths = staged.map((artifact) => relative(worktree, artifact.targetPath));
       for (const artifact of staged) store.appendEvent("experiment.implementation.artifact_staged", { experimentId, sourcePath: relative(rootPath, artifact.sourcePath), sha256: artifact.sourceSha256, targetPath: relative(worktree, artifact.targetPath), implementationMode: "verify" });
     } catch (error) {
@@ -413,6 +488,7 @@ async function implementCampaignHypothesis(
     if (!seed) console.log(`Experiment ${experimentId} · verification-only; preserving source and running declared evidence checks`);
     return;
   }
+  await seedFromParent(worktree, experimentId, normalizeFamily((hypothesis as { formulationFamily?: unknown } | undefined)?.formulationFamily));
   const captureCodeHealth = async (): Promise<ReturnType<typeof snapshotCodeHealth>> => {
     const inventory = await runProcess(["rg", "--files", "-g", "!.git/**", "-g", "!.sota/**", "-g", "!node_modules/**"], worktree, 60_000);
     const files: CodeHealthFile[] = [];
@@ -432,9 +508,8 @@ async function implementCampaignHypothesis(
   const implementationPaths = resolveImplementationPaths(worktree, options.workspaceRelativePath ?? ".", target);
   const integrity = captureProtectedFiles(implementationPaths.workspaceRoot, options.protectedCommands ?? [], [], target ? [target] : []);
   const targetPath = implementationPaths.targetPath;
-  const safeTarget = targetPath && existsSync(targetPath) ? targetPath : undefined;
+  let safeTarget = targetPath && existsSync(targetPath) ? targetPath : undefined;
   const targetRelativeToWorktree = implementationPaths.targetRelativeToWorktree;
-  const targetHashBefore = safeTarget ? sha256File(safeTarget) : undefined;
   const seed = manifestValue.change?.configPatch?.implementationSource;
   let seededImplementation: { sourcePath: string; sourceSha256: string; targetPath: string } | undefined;
   if (seed) {
@@ -446,7 +521,13 @@ async function implementCampaignHypothesis(
     seedStore.appendEvent("experiment.implementation.seeded", { experimentId, sourcePath: relative(rootPath, seededImplementation.sourcePath), sha256: seededImplementation.sourceSha256, targetPath: relative(worktree, seededImplementation.targetPath) });
     seedStore.close();
   }
-  const stagedArtifacts = seedImplementationArtifacts(rootPath, worktree, options.workspaceRelativePath ?? ".", implementationArtifacts);
+  // An explicit verified seed defines the candidate baseline, including its helpers.
+  // Allow that baseline to replace older tracked copies only in the isolated worktree.
+  const stagedArtifacts = seedImplementationArtifacts(rootPath, worktree, options.workspaceRelativePath ?? ".", implementationArtifacts, { replaceExisting: Boolean(seededImplementation) });
+  // Staging a different baseline is not an engineer's algorithmic intervention.
+  // Measure subsequent edits against the fully staged candidate, including new entrypoints.
+  safeTarget = targetPath && existsSync(targetPath) ? targetPath : undefined;
+  const targetHashBefore = safeTarget ? sha256File(safeTarget) : undefined;
   const stagedArtifactPaths = stagedArtifacts.map((artifact) => relative(worktree, artifact.targetPath));
   if (stagedArtifacts.length) {
     const artifactStore = new ResearchStore(statePath);
@@ -458,13 +539,16 @@ async function implementCampaignHypothesis(
     return status.stdout.split("\0").filter(Boolean).map((entry) => entry.slice(3).split(" -> ").at(-1) ?? entry.slice(3));
   };
   const inventory = await runProcess(["rg", "--files", "-g", "!.git/**", "-g", "!.sota/**", "-g", "!node_modules/**"], worktree, 60_000);
+  const engineerGuidance = loadProjectGuidance(rootPath, "experiment engineer");
   const task = {
     role: "experiment engineer",
-    objective: `Implement the selected hypothesis in this isolated worktree. Inspect the existing project, make the smallest reproducible change described by the hypothesis, run relevant smoke checks, and leave the worktree ready for evaluation. Do not touch files outside this worktree, submit anything, or invent a result.${seededImplementation ? " A checksum-verified seed has already been copied to the declared candidate entrypoint; preserve that implementation and make only the hypothesis-specific change." : ""}${stagedArtifacts.length ? " Checksum-pinned auxiliary inputs are staged at the listed paths. Treat them as immutable evidence/input: do not modify them. If the evaluated solution needs fitted parameters at runtime, embed them in source or make the package explicitly include the verified asset." : ""} If the selected provider cannot edit files directly, return ONLY an applicable unified diff whose first line begins with diff --git; otherwise perform the edit and summarize it.`,
+    objective: `Implement the selected hypothesis in this isolated worktree. It already holds the current champion implementation (the best result so far); build on it. Implement the idea fully: if it calls for a new algorithm or architecture, write it, rewriting or replacing code as needed, and do not water it down to a token tweak. Keep the code as simple as the idea allows. Run quick smoke checks so the evaluator will not crash, then leave the worktree ready for evaluation. If the solution trains or persists learned artifacts, check save, reload, and inference on a tiny fixture before an expensive fit, and report infeasibility instead of silently shortening training. Do not touch files outside this worktree, change the evaluator, submit anything, or invent a result.${seededImplementation ? " A checksum-verified seed has already been copied to the declared candidate entrypoint; preserve that implementation and make only the hypothesis-specific change." : ""}${stagedArtifacts.length ? " Checksum-pinned auxiliary inputs are staged at the listed paths. Treat them as immutable evidence/input: do not modify them. If the evaluated solution needs fitted parameters at runtime, embed them in source or make the package explicitly include the verified asset." : ""} If the selected provider cannot edit files directly, return ONLY an applicable unified diff whose first line begins with diff --git; otherwise perform the edit and summarize it.`,
     context: {
       manifest,
       hypothesis,
       worktree,
+      // The engineer writes the code, so it needs the project's own brief as much as the researchers do.
+      ...(engineerGuidance ? { projectGuidance: { paths: engineerGuidance.paths, text: engineerGuidance.text } } : {}),
       ...(seededImplementation ? { seededImplementation: { sourceSha256: seededImplementation.sourceSha256, targetPath: relative(worktree, seededImplementation.targetPath) } } : {}),
       workspaceFiles: [...new Set([...inventory.stdout.split("\n").filter(Boolean), ...stagedArtifactPaths])].slice(0, 300),
       ...(stagedArtifacts.length ? { stagedImplementationArtifacts: stagedArtifacts.map((artifact) => ({ path: relative(worktree, artifact.targetPath), sha256: artifact.sourceSha256, readOnlyInput: true })) } : {}),
@@ -472,48 +556,58 @@ async function implementCampaignHypothesis(
     },
   } as const;
   let implementationFailure: string | undefined;
-  if (options.provider === "codex") {
-    const result = await runWithLocalFallback(task, {
-      provider: options.provider,
-      model: options.model,
-      cwd: worktree,
-      reasoningEffort: options.thinking,
-      sandbox: "workspace-write", sandboxAutonomy: options.autonomy,
-      limitPolicy: options.limitPolicy ?? "auto",
-    }, options.fallbackLocalModel, (message) => console.log(`Experiment ${experimentId} · ${message}`));
-    // A local fallback cannot edit the worktree, so it returns a patch. Codex
-    // normally edits in place and returns prose; applying only a parseable
-    // diff keeps both routes compatible and avoids trusting model narration.
-    const fallbackDiff = extractUnifiedDiff(String(result.output));
-    if (fallbackDiff) {
-      try { await applyUnifiedDiff(worktree, fallbackDiff); }
-      catch (error) { implementationFailure = error instanceof Error ? error.message : String(error); }
+  await preserveInterruptedImplementation(async () => {
+    if (isToolCapableProvider(options.provider)) {
+      const result = await runWithLocalFallback(task, {
+        provider: options.provider,
+        model: options.model,
+        cwd: worktree,
+        reasoningEffort: options.thinking,
+        sandbox: "workspace-write", sandboxAutonomy: options.autonomy,
+        limitPolicy: options.limitPolicy ?? "auto",
+      }, options.fallbackLocalModel, (message) => console.log(`Experiment ${experimentId} · ${message}`));
+      // A local fallback cannot edit the worktree, so it returns a patch. Codex
+      // normally edits in place and returns prose; applying only a parseable
+      // diff keeps both routes compatible and avoids trusting model narration.
+      const fallbackDiff = extractUnifiedDiff(String(result.output));
+      if (fallbackDiff) {
+        try { await applyUnifiedDiff(worktree, fallbackDiff); }
+        catch (error) { implementationFailure = error instanceof Error ? error.message : String(error); }
+      }
+    } else {
+      const result = await runWithLocalFallback({
+        ...task,
+        objective: `${task.objective}\nYou cannot call tools directly. Return ONLY a unified diff whose first line begins with diff --git. The diff must be applicable from the worktree root. Do not return a plan or prose.`,
+      }, {
+        provider: options.provider,
+        model: options.model,
+        cwd: worktree,
+        reasoningEffort: options.thinking,
+        sandbox: "read-only",
+      }, undefined, (message) => console.log(`Experiment ${experimentId} · ${message}`));
+      const diff = extractUnifiedDiff(String(result.output));
+      if (!diff) implementationFailure = "Local experiment engineer did not return a valid unified diff.";
+      else {
+        try { await applyUnifiedDiff(worktree, diff); }
+        catch (error) { implementationFailure = error instanceof Error ? error.message : String(error); }
+      }
     }
-  } else {
-    const result = await runWithLocalFallback({
-      ...task,
-      objective: `${task.objective}\nYou cannot call tools directly. Return ONLY a unified diff whose first line begins with diff --git. The diff must be applicable from the worktree root. Do not return a plan or prose.`,
-    }, {
-      provider: options.provider,
-      model: options.model,
-      cwd: worktree,
-      reasoningEffort: options.thinking,
-      sandbox: "read-only",
-    }, undefined, (message) => console.log(`Experiment ${experimentId} · ${message}`));
-    const diff = extractUnifiedDiff(String(result.output));
-    if (!diff) implementationFailure = "Local experiment engineer did not return a valid unified diff.";
-    else {
-      try { await applyUnifiedDiff(worktree, diff); }
-      catch (error) { implementationFailure = error instanceof Error ? error.message : String(error); }
-    }
-  }
+  }, {
+    worktree,
+    paths: async () => [...(await changedSourcePaths()).filter(path => /\.(?:ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|cpp|cc|cxx|c|h|hpp|rb|php|swift|sh)$/i.test(path)), ...stagedArtifactPaths],
+    record: payload => {
+      const interruptedStore = new ResearchStore(statePath);
+      try { interruptedStore.appendEvent("experiment.implementation.interrupted", { experimentId, ...payload }); }
+      finally { interruptedStore.close(); }
+    },
+  });
   const currentPaths = await changedSourcePaths();
   const currentTargetHash = safeTarget && existsSync(safeTarget) ? sha256File(safeTarget) : undefined;
   if (!implementationChanged(targetHashBefore, currentTargetHash, currentPaths, Boolean(safeTarget))) {
     console.log(`Experiment ${experimentId} · candidate source unchanged${implementationFailure ? ` (${implementationFailure})` : ""}; attempting up to two validated patch recoveries`);
     let patchFailure: string | undefined;
     let recovered = false;
-    if (options.provider === "codex") {
+    if (isToolCapableProvider(options.provider)) {
       try {
         await runWithLocalFallback({
           ...task,
@@ -801,6 +895,8 @@ async function ingestCompetitionSources(adapter: ReturnType<typeof activeCompeti
         store.saveClaim({ id: claimId, payload: { id: claimId, statement, excerpt: claim.excerpt, sourceSpan: { start: claim.start, end: claim.end }, scope: source.url, confidence: 0.35, sourceType: competitionResearchClaimType(configured.kind), sourceId: source.id, status: "active" } });
         store.saveEdge({ id: `edge_${claimId}_${source.id}`, fromId: claimId, toId: source.id, relation: "derived_from", confidence: 0.35, evidenceIds: [claimId] });
       }
+      const change = competitionSourceChange(prior ? (prior.payload as { text?: string }).text : undefined, source.text);
+      if (change.changed) store.appendEvent("challenge.source.changed", { url, channelKind: configured.kind, added: change.added, removedCount: change.removedCount, previousSource: (prior?.payload as { id?: string } | undefined)?.id });
       store.appendEvent(prior ? "challenge.source.refreshed" : "challenge.source.ingested", { url, title: source.title, claims: claims.length, channelKind: configured.kind, insightCounts: { leaderboard: insights.leaderboard.length, discussions: insights.discussions.length, signals: insights.signals.length }, previousSource: prior ? (prior.payload as { id?: string }).id : undefined });
     } catch (error) {
       store.appendEvent("challenge.source.failed", { url, error: error instanceof Error ? error.message : String(error) });
@@ -1051,13 +1147,12 @@ program.command("backup")
   .argument("[destination]", "workspace-relative SQLite backup path")
   .description("Create a consistent backup of durable research state")
   .action(async (destination: string | undefined) => {
-    const path = resolve(root, destination ?? join(".sota", "backups", `database-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`));
-    const workspacePrefix = root.endsWith("/") ? root : `${root}/`;
-    if (path === resolve(statePath) || !path.startsWith(workspacePrefix)) throw new Error("Backup destination must be inside the Evidra workspace and must not overwrite the live database.");
+    const path = workspaceBackupDestination(root, destination ?? join(".sota", "backups", `database-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`), statePath);
     const store = new ResearchStore(statePath);
-    await store.backup(path);
-    store.appendEvent("state.backup.created", { path: relative(root, path) });
-    store.close();
+    try {
+      await store.backup(path);
+      store.appendEvent("state.backup.created", { path: relative(root, path) });
+    } finally { store.close(); }
     console.log(`State backup created\n${path}`);
   });
 
@@ -1070,7 +1165,7 @@ program.command("doctor")
     { name: "workspace", status: "ok", detail: root },
     { name: "node", status: "ok", detail: process.versions.node },
   ];
-  for (const command of ["git", "uv", "ollama", "modal", "docker", "podman", "sbatch", "squeue", "sacct"]) {
+  for (const command of ["git", "rg", "uv", "ollama", "modal", "docker", "podman", "sbatch", "squeue", "sacct"]) {
     const result = await runProcess(["which", command], root, 5_000);
     const detail = result.exitCode === 0 ? result.stdout.trim() : "not found";
     checks.push(`${command.padEnd(13)}${detail}`);
@@ -1085,6 +1180,15 @@ program.command("doctor")
   const codexReady = codexResult.exitCode === 0 && !/not authenticated|not logged/i.test(codexAuth);
   checks.push(`codex auth    ${codexAuth}`);
   diagnostics.push({ name: "codex-auth", status: codexReady ? "ok" : "unavailable", detail: redactSecrets(codexAuth) });
+  const claudePath = resolveClaudeBinary();
+  const claudeResult = await runProcess(["which", claudePath], root, 5_000);
+  const claudeBinary = claudeResult.exitCode === 0 ? claudeResult.stdout.trim() : "not found";
+  checks.push(`claude       ${claudeBinary} (${claudePath})`);
+  diagnostics.push({ name: "claude", status: claudeResult.exitCode === 0 ? "ok" : "missing", detail: `${claudeBinary} (${claudePath})` });
+  const claudeAuth = claudeResult.exitCode === 0 ? claudeLoginStatus() : "not authenticated";
+  const claudeReady = claudeResult.exitCode === 0 && /^Logged in/.test(claudeAuth);
+  checks.push(`claude auth   ${claudeAuth}`);
+  diagnostics.push({ name: "claude-auth", status: claudeReady ? "ok" : "unavailable", detail: redactSecrets(claudeAuth) });
   let localModelsReady = false;
   try {
     const models = await listLocalModels();
@@ -1097,17 +1201,39 @@ program.command("doctor")
     checks.push(`ollama API    ${detail}`);
     diagnostics.push({ name: "ollama-api", status: "unavailable", detail });
   }
-  const modalAuth = process.env.MODAL_TOKEN_ID && process.env.MODAL_TOKEN_SECRET
-    ? "environment credentials"
-    : (await runProcess(["modal", "profile", "current"], root, 10_000)).exitCode === 0 ? "CLI profile selected" : "not configured";
+  let modalRuntimeReady = false;
+  let modalInspectorReady = false;
+  let modalCredentialsConfigured = false;
+  const modalPresent = diagnostics.some((check) => check.name === "modal" && check.status === "ok");
+  const modalVersion = modalPresent ? await runProcess(["modal", "--version"], root, 5_000).catch(() => undefined) : undefined;
+  modalRuntimeReady = modalVersion?.exitCode === 0;
+  const runtimeDetail = modalRuntimeReady ? redactSecrets(modalVersion!.stdout.trim()).slice(0, 300) || "CLI responds" : "CLI missing or unusable";
+  checks.push(`modal runtime ${runtimeDetail}`);
+  diagnostics.push({ name: "modal-runtime", status: modalRuntimeReady ? "ok" : "unavailable", detail: runtimeDetail });
+  if (modalRuntimeReady) {
+    const inspection = await runProcess([process.env.EVIDRA_MODAL_PYTHON ?? "python3", fileURLToPath(new URL("../modal_reconcile.py", import.meta.url)), "--check-runtime", "--check-credentials"], root, 5_000).catch(() => undefined);
+    if (inspection?.exitCode === 0 && Buffer.byteLength(inspection.stdout) <= 4096) {
+      try {
+        const capability = JSON.parse(inspection.stdout) as { ready?: unknown; credentialsConfigured?: unknown };
+        modalInspectorReady = capability.ready === true;
+        modalCredentialsConfigured = modalInspectorReady && capability.credentialsConfigured === true;
+      } catch { /* Malformed capability output is not readiness evidence. */ }
+    }
+  }
+  const inspectorDetail = modalInspectorReady ? "allocation inspector available" : "allocation inspector unavailable; configure EVIDRA_MODAL_PYTHON with a compatible Modal SDK";
+  checks.push(`modal SDK     ${inspectorDetail}`);
+  diagnostics.push({ name: "modal-inspector", status: modalInspectorReady ? "ok" : "unavailable", detail: inspectorDetail });
+  const modalAuth = modalCredentialsConfigured ? "credentials configured; authentication not verified" : "credentials unavailable or SDK inspector unusable";
   checks.push(`modal auth    ${modalAuth}`);
-  diagnostics.push({ name: "modal-auth", status: modalAuth === "not configured" ? "unavailable" : "ok", detail: modalAuth });
+  diagnostics.push({ name: "modal-auth", status: modalCredentialsConfigured ? "ok" : "unavailable", detail: modalAuth });
   if (options.json) {
     console.log(JSON.stringify({
       workspace: root,
       node: process.versions.node,
-      ready: codexReady || localModelsReady,
-      providers: { codex: codexReady, local: localModelsReady, fallback: localModelsReady },
+      ready: (codexReady || claudeReady || localModelsReady) && ["git", "rg"].every((name) => diagnostics.some((check) => check.name === name && check.status === "ok")),
+      requiredTools: Object.fromEntries(["git", "rg"].map((name) => [name, diagnostics.some((check) => check.name === name && check.status === "ok")])),
+      providers: { codex: codexReady, claude: claudeReady, local: localModelsReady, fallback: localModelsReady },
+      executors: { modal: { runtime: modalRuntimeReady, allocationInspector: modalInspectorReady, credentialsConfigured: modalCredentialsConfigured, configured: modalRuntimeReady && modalInspectorReady && modalCredentialsConfigured, authenticationVerified: false } },
       checks: diagnostics,
     }, null, 2));
   } else {
@@ -1211,10 +1337,10 @@ program.command("dashboard").alias("web")
             if (action === "start") {
               const goal = typeof body.goal === "string" ? body.goal.trim() : "";
               const budget = typeof body.budget === "string" ? body.budget.trim() : "";
-              const provider = body.provider === "local" ? "local" : body.provider === "codex" ? "codex" : undefined;
+              const provider = body.provider === "local" ? "local" : body.provider === "codex" ? "codex" : body.provider === "claude" ? "claude" : undefined;
               if (goal.length < 5 || goal.length > 4_000) { fail(400, "Goal must be between 5 and 4,000 characters."); return; }
               if (!budget || !/^\\d{1,5}(?:\\.\\d{1,2})?(?:m|h|d)$/i.test(budget)) { fail(400, "Enter a time budget such as 90m, 4h, or 2d."); return; }
-              if (!provider) { fail(400, "Select Codex or Local as the provider."); return; }
+              if (!provider) { fail(400, "Select Codex, Claude, or Local as the provider."); return; }
               const profile = typeof body.profile === "string" ? body.profile : "general";
               const profileGuidance: Record<string, string> = {
                 build: "Build / Engineering profile: prioritize a working implementation, repository inspection, tests, and reviewable artifacts.",
@@ -1224,7 +1350,7 @@ program.command("dashboard").alias("web")
                 custom: "Custom profile: follow the goal and any workspace guidance; ask for missing constraints before consequential work.",
               };
               const finalGoal = profileGuidance[profile] ? `${goal}\n\n${profileGuidance[profile]}` : goal;
-              const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : provider === "codex" ? DEFAULT_CODEX_MODEL : await resolveLocalFallbackModel("auto");
+              const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : provider === "codex" ? DEFAULT_CODEX_MODEL : provider === "claude" ? DEFAULT_CLAUDE_MODEL : await resolveLocalFallbackModel("auto");
               const stop = typeof body.stop === "string" ? body.stop.trim() : "";
               if (stop.length < 3 || stop.length > 4_000) { fail(400, "Add a measurable stopping condition."); return; }
               await checkProvider({ provider, model, cwd: selected.workspace });
@@ -1294,8 +1420,8 @@ program.command("dashboard").alias("web")
       if (requestUrl.pathname === "/api/workbench/models") {
         void (async () => {
           const provider = requestUrl.searchParams.get("provider");
-          const models = provider === "codex" ? await listCodexModels() : provider === "local" ? await listLocalModels() : [];
-          const defaultModel = provider === "codex" ? DEFAULT_CODEX_MODEL : provider === "local" ? await resolveLocalFallbackModel("auto").catch(() => "") : "";
+          const models = provider === "codex" ? await listCodexModels() : provider === "claude" ? [DEFAULT_CLAUDE_MODEL, "claude-sonnet-5-5", "claude-fable-5-1", "claude-haiku-5-5"].map((id) => ({ id, displayName: id })) : provider === "local" ? await listLocalModels() : [];
+          const defaultModel = provider === "codex" ? DEFAULT_CODEX_MODEL : provider === "claude" ? DEFAULT_CLAUDE_MODEL : provider === "local" ? await resolveLocalFallbackModel("auto").catch(() => "") : "";
           response.writeHead(200, jsonHeaders); response.end(JSON.stringify({ models: models.map(m => ({ id: m.id, displayName: m.displayName ?? m.id })), defaultModel }));
         })().catch(error => { response.writeHead(500, jsonHeaders); response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); });
         return;
@@ -1680,6 +1806,7 @@ benchmark.command("run")
   .description("Execute matched arms, score the evidence, and verify the challenger beats incumbents")
   .action(async (file: string, options: { out?: string; workspace?: string; challenger: string; incumbent?: string; parallel: string; dryRun?: boolean; retention?: string; retentionRegression: string; holdout?: string; compareProviders?: string; providerHoldout?: string }) => {
     const parsed: unknown = JSON.parse(readFileSync(resolve(file), "utf8"));
+    const adaptationRole = parseHarnessFeedbackRole((parsed as { adaptationRole?: unknown } | null)?.adaptationRole);
     const raw = parsed && typeof parsed === "object" && Array.isArray((parsed as { arms?: unknown }).arms) ? (parsed as { arms: unknown[] }).arms : undefined;
     if (!raw?.length) throw new Error("Benchmark protocol must contain a non-empty arms array.");
     const changeValue = parsed && typeof parsed === "object" ? (parsed as { change?: unknown }).change : undefined;
@@ -1703,6 +1830,7 @@ benchmark.command("run")
     if (options.dryRun) {
       console.log(JSON.stringify({
         dryRun: true,
+        adaptationRole,
         workspace: benchmarkWorkspace,
         maxParallel,
         protocolFingerprint: benchmarkProtocolFingerprint(arms),
@@ -1764,10 +1892,10 @@ benchmark.command("run")
       const maximumRegression = Number(options.retentionRegression);
       retention = evaluateHarnessRetention(priorTrials, report.trials, options.challenger, maximumRegression);
     }
-    const output = { ...report, scorecards, ...(policyScorecards ? { policyScorecards, policyComparisons } : {}), pareto, componentFailureEvidence, protocol: matched, challenger: options.challenger, comparisons, ...(providerComparison ? { providerComparison } : {}), ...(providerGeneralization ? { providerGeneralization } : {}), adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, ...(changePresence ? { changePresence } : {}), changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
+    const output = { ...report, adaptationRole, scorecards, ...(policyScorecards ? { policyScorecards, policyComparisons } : {}), pareto, componentFailureEvidence, protocol: matched, challenger: options.challenger, comparisons, ...(providerComparison ? { providerComparison } : {}), ...(providerGeneralization ? { providerGeneralization } : {}), adaptation, ...(componentAblations ? { componentAblations } : {}), ...(change ? { change, ...(changePresence ? { changePresence } : {}), changeOutcomes } : {}), ...(generalization ? { generalization } : {}), ...(retention ? { retention } : {}) };
     if (options.out) writeFileSync(resolve(options.out), `${JSON.stringify(output, null, 2)}\n`);
     const benchmarkStore = new ResearchStore(statePath);
-    if (change) {
+    if (change && adaptationRole !== "held_out") {
       const changeDecision = changeOutcomes?.some((item) => item.outcome.status === "refuted")
         ? "revert" as const
         : changeOutcomes?.length && changeOutcomes.every((item) => item.outcome.status === "confirmed") && comparisons.every((comparison) => comparison.challengerWins)
@@ -1787,6 +1915,8 @@ benchmark.command("run")
     }
     benchmarkStore.appendEvent("harness.benchmark.completed", {
       suite: "generic",
+      adaptationRole,
+      ...(adaptationRole === "feedback" ? projectHarnessFailureFeedback(report.runs) : {}),
       workspace: benchmarkWorkspace,
       maxParallel,
       protocolFingerprint: report.protocolFingerprint,
@@ -1845,6 +1975,10 @@ benchmark.command("retest")
     const retestStore = new ResearchStore(statePath);
     const queued = retestStore.queueTasks().find((task) => task.id === taskId && task.kind === "harness.retest");
     if (!queued) { retestStore.close(); throw new Error(`Harness retest task '${taskId}' was not found.`); }
+    let adaptationRole: ReturnType<typeof parseHarnessFeedbackRole>;
+    try { adaptationRole = parseHarnessFeedbackRole((queued.payload as { benchmarkEvidence?: { adaptationRole?: unknown } } | null)?.benchmarkEvidence?.adaptationRole); }
+    catch (error) { retestStore.close(); throw error; }
+    if (adaptationRole === "held_out") { retestStore.close(); throw new Error("Held-out benchmark evidence cannot drive an adaptive retest."); }
     const claimed = retestStore.claimTask(taskId, ["harness.retest"]);
     if (!claimed) { retestStore.close(); throw new Error(`Harness retest task '${taskId}' is not available; another controller may own it.`); }
     const payload = claimed.payload && typeof claimed.payload === "object" ? claimed.payload as { challenger?: unknown; benchmarkProtocol?: unknown; baselineComponents?: Array<{ path: string; checksum: string }>; benchmarkEvidence?: { protocol?: unknown; protocolFingerprint?: unknown; maxParallel?: unknown; change?: unknown } } : {};
@@ -1906,7 +2040,7 @@ benchmark.command("retest")
       const changeOutcomes = validChange
         ? comparisons.map((comparison) => ({ incumbent: comparison.incumbent, outcome: evaluateHarnessChange(validChange, { baselineScore: validChange.baselineScore, candidateScore: comparison.pairedMeanDelta === null ? undefined : (validChange.baselineScore ?? 0) + comparison.pairedMeanDelta, valid: comparison.validPairedArms > 0 && comparison.pairedLower95 !== null }) }))
         : undefined;
-      const result = { retestOf: taskId, challenger, maxParallel: Math.max(1, Math.min(32, Math.floor(maxParallel))), protocolFingerprint: report.protocolFingerprint, protocol: arms, changePresence: assessHarnessChangePresence(payload.baselineComponents, inventoryHarnessComponents(benchmarkWorkspace), targetComponentIds), scorecards, comparisons, adaptation, ...(validChange ? { change: validChange } : {}), ...(changeOutcomes ? { changeOutcomes } : {}), trials: report.trials, startedAt: report.startedAt };
+      const result = { adaptationRole, ...(adaptationRole === "feedback" ? projectHarnessFailureFeedback(report.runs) : {}), retestOf: taskId, challenger, maxParallel: Math.max(1, Math.min(32, Math.floor(maxParallel))), protocolFingerprint: report.protocolFingerprint, protocol: arms, changePresence: assessHarnessChangePresence(payload.baselineComponents, inventoryHarnessComponents(benchmarkWorkspace), targetComponentIds), scorecards, comparisons, adaptation, ...(validChange ? { change: validChange } : {}), ...(changeOutcomes ? { changeOutcomes } : {}), trials: report.trials, startedAt: report.startedAt };
       retestStore.updateTask(taskId, "completed", result);
       retestStore.appendEvent("harness.benchmark.retest.completed", result);
       console.log(`Harness retest complete · task ${taskId}\n${scorecards.map((scorecard) => `${scorecard.harness}: ${scorecard.competitiveScore.toFixed(1)} (lower95 ${scorecard.competitiveScoreLower95.toFixed(1)})`).join("\n")}`);
@@ -2513,7 +2647,7 @@ sources.command("adapt")
     const adapter = activeCompetition();
     const source = sourceEntry.payload as { title?: unknown; url?: unknown; claims?: unknown; excerpt?: unknown; contentHash?: unknown };
     const adaptationObjective = objective?.trim() || `Adapt the technique from '${typeof source.title === "string" ? source.title : id}' into testable improvements for the active workspace.`;
-    const recentEvents = store.recentEvents(20);
+    const recentEvents = store.recentEvents(20).filter(isAgentVisibleEvent);
     const researchMemory = researchMemoryContext(store, 20, adaptationObjective);
     store.appendEvent("research.memory.retrieved", { ...researchMemory.retrieval, context: "source-adaptation" });
     const sourceContext = {
@@ -2544,7 +2678,111 @@ sources.command("adapt")
   });
 program.addCommand(sources);
 
+const transfer = new Command("transfer").description("Calibrate the local proxy against real evaluations");
+transfer.command("record")
+  .description("Record one real evaluation next to the proxy breakdown of the same candidate")
+  .requiredOption("--proxy <json>", "proxy metrics as JSON, or @path to a JSON file (e.g. an evaluator detail or metrics.json)")
+  .requiredOption("--external <json>", "real scores as JSON, or @path to a JSON file")
+  .option("--label <label>", "what was evaluated (experiment id, submission id)")
+  .action((options: { proxy: string; external: string; label?: string }) => {
+    const config = activeCompetition().config.proxyTransfer;
+    if (!config) throw new Error("competition manifest has no proxyTransfer section");
+    const parse = (value: string): Record<string, number> => {
+      const raw = JSON.parse(value.startsWith("@") ? readFileSync(resolve(value.slice(1)), "utf8") : value) as Record<string, unknown>;
+      const flat = (raw.metrics && typeof raw.metrics === "object" ? raw.metrics : raw) as Record<string, unknown>;
+      return Object.fromEntries(Object.entries(flat).filter(([, entry]) => typeof entry === "number" && Number.isFinite(entry))) as Record<string, number>;
+    };
+    const observation = { at: new Date().toISOString(), ...(options.label ? { label: options.label } : {}), proxy: parse(options.proxy), external: parse(options.external) };
+    const missing = config.components.filter((component) => !(component.proxy in observation.proxy) || !(component.external in observation.external)).map((component) => `${component.proxy}/${component.external}`);
+    if (missing.length) console.warn(`Components without a pair in this observation: ${missing.join(", ")}`);
+    const path = resolve(root, config.observationsPath);
+    appendTransferObservation(path, observation);
+    const calibration = calibrateProxyTransfer(config.components, readTransferObservations(path));
+    console.log(proxyTransferGuidance(calibration));
+  });
+transfer.command("show").description("Show the current proxy-transfer calibration").action(() => {
+  const config = activeCompetition().config.proxyTransfer;
+  if (!config) throw new Error("competition manifest has no proxyTransfer section");
+  const calibration = calibrateProxyTransfer(config.components, readTransferObservations(resolve(root, config.observationsPath)));
+  console.log(calibration.observations ? proxyTransferGuidance(calibration) : "No real evaluations recorded yet.");
+});
+program.addCommand(transfer);
+
+const lessons = new Command("lessons").description("Carry a finished campaign's outcomes into the next campaign");
+lessons.command("distil")
+  .description("Write .evidra/lessons/<label>.md from the campaign record; project guidance loads it next time")
+  .option("--label <label>", "name for this campaign's lessons (default: campaign start date)")
+  .option("--out <path>", "write here instead of .evidra/lessons/<label>.md")
+  .action((options: { label?: string; out?: string }) => {
+    const config = activeCompetition().config;
+    const store = new ResearchStore(statePath);
+    try {
+      const campaign = store.campaign() as { goal?: string; startedAt?: string } | undefined;
+      const label = (options.label ?? campaign?.startedAt?.slice(0, 16).replace(/[:T]/g, "-") ?? new Date().toISOString().slice(0, 10)).replace(/[^A-Za-z0-9._-]+/g, "-");
+      const metricName = config.metric.name;
+      const baselinePayload = store.eventsByType("baseline.completed").at(-1)?.payload as { metric?: unknown; stdout?: string } | undefined;
+      const baseline = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, metricName).metrics[metricName] : undefined;
+      const numeric = (value: unknown): Record<string, number> => Object.fromEntries(Object.entries(value && typeof value === "object" ? value as Record<string, unknown> : {}).filter(([, entry]) => typeof entry === "number" && Number.isFinite(entry))) as Record<string, number>;
+      const runs = store.runs().map((run) => {
+        const payload = (run.payload ?? {}) as { metrics?: unknown; error?: unknown; trainingReceipt?: unknown; fit?: unknown };
+        return { runId: run.id, experimentId: run.experimentId, status: run.status, createdAt: run.createdAt, metrics: numeric(payload.metrics), trainingReceipt: payload.trainingReceipt ?? payload.fit, error: typeof payload.error === "string" ? payload.error : undefined };
+      });
+      const text = distilCampaignLessons({
+        label,
+        goal: campaign?.goal,
+        metric: { name: metricName, direction: config.metric.direction },
+        components: config.proxyTransfer?.components.map((component) => component.proxy) ?? config.secondaryMetrics.map((objective) => objective.name),
+        ...(typeof baseline === "number" && Number.isFinite(baseline) ? { baseline } : {}),
+        runs,
+        experiments: store.experiments().map((entry) => {
+          const payload = entry.payload as { hypothesisId?: string; change?: { configPatch?: { implementationSource?: { path?: string; sha256?: string } } } } | undefined;
+          const source = payload?.change?.configPatch?.implementationSource;
+          return { id: entry.id, hypothesisId: payload?.hypothesisId,
+            ...(source?.path && source.sha256 ? { sourceReference: `${source.path} @ ${source.sha256} (full artifacts in experiment manifest)` } : {}) };
+        }),
+        hypotheses: store.hypotheses().map((entry) => {
+          const payload = (entry.payload ?? {}) as { title?: string; formulationFamily?: string };
+          return { id: entry.id, title: payload.title, formulationFamily: payload.formulationFamily };
+        }),
+        goalProgress: store.eventsByType("research.goal_progress", 512).reverse().map((event) => ((event.payload ?? {}) as { progress?: { pivotRequired?: boolean; runs?: number } }).progress ?? {}),
+        failures: runs.flatMap((run) => run.status === "failed" && run.error ? [run.error] : []),
+      });
+      const path = resolve(root, options.out ?? join(".evidra", "lessons", `${label}.md`));
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, text);
+      console.log(`${text}\nWrote ${relative(root, path)}`);
+    } finally {
+      store.close();
+    }
+  });
+program.addCommand(lessons);
+
 const evidence = new Command("evidence").description("Inspect and verify durable research evidence");
+evidence.command("pack")
+  .description("Package trajectory, prompts, and harness for competition evidence upload")
+  .option("-o, --output <dir>", "output directory", join(".sota", "evidence"))
+  .option("--evidra-ref <ref>", "Evidra git ref to archive as the harness (for a past campaign, its lock tag)")
+  .option("--project-ref <ref>", "project git ref to archive (for a past campaign, its lock tag)")
+  .action((options: { output: string; evidraRef?: string; projectRef?: string }) => {
+    const store = new ResearchStore(statePath);
+    try {
+      const result = packEvidence({
+        store,
+        stateDirectory,
+        projectRoot: root,
+        evidraRoot: fileURLToPath(new URL("..", import.meta.url)),
+        evidraVersion: evidraVersion(),
+        competitionPath: join(root, "competition.json"),
+        output: resolve(root, options.output),
+        evidraRef: options.evidraRef,
+        projectRef: options.projectRef,
+      });
+      console.log(`Evidence package: ${result.directory}\nTranscripts ${result.transcripts} · prompts ${result.prompts}`);
+      for (const file of result.files) console.log(`  ${file.name.padEnd(28)} ${(file.bytes / 1e6).toFixed(1).padStart(8)} MB  ${file.sha256.slice(0, 16)}`);
+    } finally {
+      store.close();
+    }
+  });
 evidence.command("audit").option("--json", "emit machine-readable JSON").description("Audit claim provenance and completion blockers").action((options: { json?: boolean }) => {
   const store = new ResearchStore(statePath);
   const report = auditCurrentClaims(store);
@@ -4442,7 +4680,7 @@ routine.command("create")
   .option("--every <duration>", "interval between runs, e.g. 6h or 1d", "1d")
   .option("--budget <duration>", "campaign budget per run", "4h")
   .option("--stop <condition>", "stopping condition", "stop when the stated goal has sufficient reproducible evidence")
-  .option("--provider <provider>", "codex or local", "codex")
+  .option("--provider <provider>", "codex, claude, or local", "codex")
   .option("--model <model>", "provider model", DEFAULT_CODEX_MODEL)
   .option("--thinking <effort>", "reasoning effort", "medium")
   .option("--autonomy <level>", "safe, fast, or yolo", "safe")
@@ -4454,7 +4692,8 @@ routine.command("create")
   .option("--catch-up <policy>", "coalesce missed triggers or replay them (max 8)", "coalesce")
   .action((options: { name: string; goal: string; mode: string; every: string; budget: string; stop: string; provider: string; model: string; thinking: string; autonomy: string; limitPolicy: string; executor: string; lanes: string; maxRuns: string; onEvent?: string; catchUp: string }) => {
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Routine mode must be 'research' or 'challenge'.");
-    if (options.provider !== "codex" && options.provider !== "local") throw new Error("Routine provider must be 'codex' or 'local'.");
+    if (options.provider !== "codex" && options.provider !== "claude" && options.provider !== "local") throw new Error("Routine provider must be 'codex', 'claude', or 'local'.");
+    if (options.provider === "claude") options.model = effectiveClaudeModel(options.model);
     if (!["safe", "fast", "yolo"].includes(options.autonomy)) throw new Error("Routine autonomy must be 'safe', 'fast', or 'yolo'.");
     if (!["auto", "wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Routine limit policy must be 'auto', 'wait', 'fallback', or 'stop'.");
     if (options.catchUp !== "coalesce" && options.catchUp !== "replay") throw new Error("Routine catch-up must be 'coalesce' or 'replay'.");
@@ -4464,7 +4703,7 @@ routine.command("create")
     const maxRunsValue = Number.parseInt(options.maxRuns, 10);
     if (!Number.isInteger(maxRunsValue) || maxRunsValue < 0) throw new Error("Routine max-runs must be zero or a positive integer.");
     const store = new ResearchStore(statePath);
-    const entry = store.createRoutine({ name: options.name.trim(), mode: options.mode as "research" | "challenge", goal: options.goal.trim(), budgetMinutes: durationMinutes(options.budget), intervalSeconds: durationMinutes(options.every) * 60, stopCondition: options.stop.trim(), provider: options.provider as "codex" | "local", model: options.model, thinking: options.thinking, autonomy: options.autonomy as "safe" | "fast" | "yolo", limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", executor: options.executor as "local" | "container" | "modal" | "slurm", lanes, maxRuns: maxRunsValue === 0 ? null : maxRunsValue, triggerEvent: options.onEvent?.trim() || null, catchUpPolicy: options.catchUp as "coalesce" | "replay" });
+    const entry = store.createRoutine({ name: options.name.trim(), mode: options.mode as "research" | "challenge", goal: options.goal.trim(), budgetMinutes: durationMinutes(options.budget), intervalSeconds: durationMinutes(options.every) * 60, stopCondition: options.stop.trim(), provider: options.provider as "codex" | "claude" | "local", model: options.model, thinking: options.thinking, autonomy: options.autonomy as "safe" | "fast" | "yolo", limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", executor: options.executor as "local" | "container" | "modal" | "slurm", lanes, maxRuns: maxRunsValue === 0 ? null : maxRunsValue, triggerEvent: options.onEvent?.trim() || null, catchUpPolicy: options.catchUp as "coalesce" | "replay" });
     store.close();
     console.log(`Routine created: ${entry.id}\nNext run: ${entry.nextRunAt}\nTrigger: ${entry.triggerEvent ?? "interval only"}\nCatch-up: ${entry.catchUpPolicy}\nUse evidra routine run ${entry.id} or schedule it from cron.`);
   });
@@ -4717,11 +4956,11 @@ challengeBudget.command("tokens <count>").description("Set a paused challenge ca
 challenge.command("inspect").action(() => console.log(JSON.stringify(activeCompetition().config, null, 2)));
 challenge.command("audit").option("--accept <reason>", "explicitly accept unresolved audit findings with a reason").action((options: { accept?: string }) => {
   const adapter = activeCompetition();
-  const report = auditData(adapter.workspacePath(root));
+  const report = auditData(adapter.workspacePath(root), undefined, undefined, { excludeDirectories: [stateDirectory] });
   const fingerprint = dataAuditFingerprint(report);
   const store = new ResearchStore(statePath);
   store.appendEvent("data.audit.completed", { ...report, fingerprint });
-  if (options.accept?.trim()) store.appendEvent("data.audit.accepted", { accepted: true, fingerprint, reason: options.accept.trim(), findings: { duplicateGroups: report.duplicateGroups.length, distributionShift: report.distributionShift.length, warnings: report.warnings.length } });
+  if (options.accept?.trim()) store.appendEvent("data.audit.accepted", { accepted: true, fingerprint, reason: options.accept.trim(), findings: { duplicateGroups: report.duplicateGroups.length, distributionShift: report.distributionShift.length, warnings: report.warnings.length, notes: report.notes.length } });
   store.close();
   console.log(JSON.stringify(report, null, 2));
 });
@@ -4732,6 +4971,12 @@ challenge.command("policy").action(() => {
   const policy = createValidationPolicy(adapter.config);
   mkdirSync(stateDirectory, { recursive: true });
   console.log(`Validation policy: ${paths.policy}\nChecksum: ${writeValidationPolicy(paths.policy, policy)}\n${JSON.stringify(policy, null, 2)}`);
+});
+challenge.command("finalize").description("Build final artifacts from the campaign's best experiment (runs submission.finalizeCommand)").action(async () => {
+  const adapter = activeCompetition();
+  requireCompetitionContract(adapter);
+  if (!adapter.config.submission?.finalizeCommand?.length) throw new Error("competition.json declares no submission.finalizeCommand.");
+  await finalizeCampaign(adapter);
 });
 challenge.command("baseline").description("Run the canonical baseline").action(async () => {
   const adapter = activeCompetition();
@@ -4751,9 +4996,9 @@ challenge.command("start")
   .option("--budget <duration>", "autonomous budget, e.g. 90m, 4h, or 2d (5m is only a smoke test)", "4h")
   .option("--gpu-budget <hours>", "maximum GPU-hours for this campaign; 0 means unlimited", "0")
   .option("--stop <condition>", "campaign stopping condition", "stop after a replicated improvement or when evidence is exhausted")
-  .option("--provider <provider>", "agent provider: codex or local", "codex")
+  .option("--provider <provider>", "agent provider: codex, claude, or local", "codex")
   .option("--model <model>", "provider model", DEFAULT_CODEX_MODEL)
-  .option("--fallback-model <model>", "local Ollama model to use when Codex is exhausted or unavailable", process.env.EVIDRA_FALLBACK_MODEL ?? "auto")
+  .option("--fallback-model <model>", "local Ollama model to use when Codex/Claude is exhausted or unavailable", process.env.EVIDRA_FALLBACK_MODEL ?? "auto")
   .option("--thinking <effort>", "reasoning effort", "medium")
   .option("--lanes <count>", "maximum concurrent research lanes (non-safe teams may use bounded waves)", "3")
   .option("--lane-budget <duration>", "optional hard budget per specialist lane, e.g. 20m or 1h")
@@ -4938,9 +5183,9 @@ research
   .option("--budget <duration>", "autonomous budget, e.g. 90m, 4h, or 2d (5m is only a smoke test)", "4h")
   .option("--gpu-budget <hours>", "maximum GPU-hours for this campaign; 0 means unlimited", "0")
   .option("--stop <condition>", "campaign stopping condition", "stop when the research director has sufficient evidence for the stated goal")
-  .option("--provider <provider>", "agent provider: codex or local", "codex")
+  .option("--provider <provider>", "agent provider: codex, claude, or local", "codex")
   .option("--model <model>", "provider model", DEFAULT_CODEX_MODEL)
-  .option("--fallback-model <model>", "local Ollama model to use when Codex is exhausted or unavailable", process.env.EVIDRA_FALLBACK_MODEL ?? "auto")
+  .option("--fallback-model <model>", "local Ollama model to use when Codex/Claude is exhausted or unavailable", process.env.EVIDRA_FALLBACK_MODEL ?? "auto")
   .option("--thinking <effort>", "reasoning effort", "medium")
   .option("--lanes <count>", "maximum concurrent research lanes (non-safe teams may use bounded waves)", "3")
   .option("--lane-budget <duration>", "optional hard budget per specialist lane, e.g. 20m or 1h")
@@ -4996,7 +5241,9 @@ research
     // Keep the cost-conscious default migration, but preserve an explicitly
     // selected model when resuming (including an opt-in Astra route).
     if (options.provider === "codex" && options.model === "default") options.model = DEFAULT_CODEX_MODEL;
-    if (options.provider !== "codex" && options.provider !== "local") throw new Error("Provider must be 'codex' or 'local'.");
+    // The shared --model default is a Codex model; never send it to Claude.
+    if (options.provider === "claude") options.model = effectiveClaudeModel(options.model);
+    if (options.provider !== "codex" && options.provider !== "claude" && options.provider !== "local") throw new Error("Provider must be 'codex', 'claude', or 'local'.");
     if (options.routineId && !/^[a-zA-Z0-9_.:-]{1,160}$/.test(options.routineId)) throw new Error("Routine id must be a bounded identifier.");
     if (!["auto", "wait", "fallback", "stop"].includes(options.limitPolicy)) throw new Error("Limit policy must be 'auto', 'wait', 'fallback', or 'stop'.");
     if (options.mode !== "research" && options.mode !== "challenge") throw new Error("Mode must be 'research' or 'challenge'.");
@@ -5041,7 +5288,7 @@ research
     } else {
       selectedModel = options.model;
     }
-    let researchModelPool: Array<{ provider: "codex" | "local"; model: string }> = [{ provider: options.provider as "codex" | "local", model: selectedModel }];
+    let researchModelPool: Array<{ provider: "codex" | "claude" | "local"; model: string }> = [{ provider: options.provider as "codex" | "claude" | "local", model: selectedModel }];
     if (options.provider === "local") {
       try {
         const models = await listLocalModels();
@@ -5049,12 +5296,13 @@ research
       } catch { /* The already-validated primary model remains usable if discovery briefly fails. */ }
     }
     const laneLimit = Math.max(1, Math.min(6, Number.parseInt(options.lanes, 10) || 1));
-    const startupRoute = await resolveStartupProvider({ provider: options.provider as "codex" | "local", model: selectedModel, cwd: root, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop" }, options.limitPolicy === "auto" || options.limitPolicy === "fallback" ? options.fallbackModel : "auto");
+    const startupRoute = await resolveStartupProvider({ provider: options.provider as "codex" | "claude" | "local", model: selectedModel, cwd: root, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop" }, options.limitPolicy === "auto" || options.limitPolicy === "fallback" ? options.fallbackModel : "auto");
     if (startupRoute.fallback) {
+      const requestedProvider = options.provider;
       options.provider = startupRoute.provider;
       selectedModel = startupRoute.model;
-      researchModelPool = [{ provider: "local", model: selectedModel }];
-      console.log(`Codex startup unavailable; using local/${selectedModel} before beginning the campaign.`);
+      researchModelPool = [{ provider: startupRoute.provider, model: selectedModel }];
+      console.log(`${requestedProvider === "claude" ? "Claude" : "Codex"} startup unavailable; using ${startupRoute.provider}/${selectedModel} before beginning the campaign.`);
     }
     if (options.provider === "codex" && laneLimit > 1) {
       try {
@@ -5210,11 +5458,34 @@ research
         const policyPaths = validationPaths();
         const policyLock = readValidationPolicyLock(policyPaths.lock);
         if (policyLock?.locked && !phaseGoalEventsSince(phaseGoal, store.eventsByTypes(["validation.policy.reused"])).length) {
-          const verifiedLock = assertValidationPolicy(policyPaths.policy, policyPaths.lock);
-          const existingPolicy = ValidationPolicySchema.parse(JSON.parse(readFileSync(policyPaths.policy, "utf8")));
-          const expectedPolicy = createValidationPolicy(adapter.config);
-          if (validationPolicyContract(existingPolicy) === validationPolicyContract(expectedPolicy)) {
-            store.appendEvent("validation.policy.reused", { path: policyPaths.policy, checksum: verifiedLock.checksum, version: existingPolicy.version, datasetRevision: existingPolicy.datasetRevision, primarySplit: existingPolicy.primarySplit, metric: existingPolicy.metric, locked: true, reason: "reused the checksum-verified immutable policy because its complete validation contract matches the active task" });
+          const reconciliation = reconcileValidationPolicyLock(policyPaths, createValidationPolicy(adapter.config), (lock) => candidatesEvaluatedUnderPolicy(store, lock));
+          if (reconciliation.status === "current" && reconciliation.policy) {
+            const existingPolicy = reconciliation.policy;
+            store.appendEvent("validation.policy.reused", { path: policyPaths.policy, checksum: reconciliation.checksum, version: existingPolicy.version, datasetRevision: existingPolicy.datasetRevision, primarySplit: existingPolicy.primarySplit, metric: existingPolicy.metric, locked: true, reason: "reused the checksum-verified immutable policy because its complete validation contract matches the active task" });
+          } else if (reconciliation.status === "relocked" && reconciliation.policy) {
+            // Auditable replacement: the old and new checksums and the
+            // changed contract fields are durable, and no candidate was
+            // judged under the stale policy.
+            const audit = { reason: reconciliation.reason, previousChecksum: reconciliation.previousChecksum, checksum: reconciliation.checksum, previousVersion: reconciliation.previousVersion, version: reconciliation.version, changedFields: reconciliation.changedFields, automatic: true };
+            store.appendEvent("validation.policy.unlocked", { ...reconciliation.unlockRecord, automatic: true });
+            store.appendEvent("validation.policy.created", { path: policyPaths.policy, checksum: reconciliation.checksum, policy: reconciliation.policy, automatic: true, reason: reconciliation.reason });
+            store.appendEvent("validation.policy.locked", { ...reconciliation.lockRecord, automatic: true, reason: reconciliation.reason, previousChecksum: reconciliation.previousChecksum });
+            store.appendEvent("validation.policy.stale_lock.resolved", audit);
+            store.appendEvent("research.attention.cleared", { id: "validation-policy-stale", reason: "stale validation lock regenerated and re-locked" });
+            console.log(`Validation policy was stale (${reconciliation.changedFields.join(", ")}); no candidate was evaluated under it, so it was regenerated and re-locked (${reconciliation.previousChecksum} -> ${reconciliation.checksum}).`);
+          } else if (reconciliation.status === "operator_required") {
+            const prior = store.eventsByType("validation.policy.stale_lock.blocked", 1).at(-1)?.payload as { previousChecksum?: unknown; expectedVersion?: unknown } | undefined;
+            if (prior?.previousChecksum !== reconciliation.previousChecksum || prior?.expectedVersion !== reconciliation.version) {
+              store.appendEvent("validation.policy.stale_lock.blocked", { reason: reconciliation.reason, previousChecksum: reconciliation.previousChecksum, previousVersion: reconciliation.previousVersion, expectedVersion: reconciliation.version, changedFields: reconciliation.changedFields, evaluatedExperimentIds: reconciliation.evaluatedExperimentIds.slice(0, 50), commands: reconciliation.commands });
+              store.appendEvent("research.attention.raised", {
+                id: "validation-policy-stale",
+                severity: "critical",
+                kind: "validation-policy-stale",
+                summary: `Locked validation policy ${reconciliation.previousVersion} no longer matches the task (${reconciliation.changedFields.join(", ")}); ${reconciliation.evaluatedExperimentIds.length} candidate(s) were evaluated under it, so it was not changed automatically`,
+                next: reconciliation.commands.join(" && "),
+              });
+            }
+            console.log(`Validation policy lock is stale (${reconciliation.changedFields.join(", ")}) and ${reconciliation.evaluatedExperimentIds.length} candidate(s) were evaluated under it. Operator action required:\n${reconciliation.commands.map((command) => `  ${command}`).join("\n")}`);
           }
         }
       }
@@ -5263,7 +5534,8 @@ research
       // history used for convergence decisions in a long-running campaign.
       const searchRewardEvents = recordsForCampaign(store.eventsByType("research.search.reward"), campaign.startedAt);
       const recentEvents = mergeCampaignToolFailures(
-        campaignEvents.slice(-20),
+        // Holdout scores stay hidden from the agents so they cannot be optimized directly.
+        campaignEvents.filter(isAgentVisibleEvent).slice(-20),
         store.eventsByType("research.tool.failed", 256),
         campaign.startedAt,
       );
@@ -5275,7 +5547,7 @@ research
         .slice(-3)
         .map((event) => event.payload);
       const harnessBenchmarkEvidence = durableEvents
-        .filter((event) => event.type === "harness.benchmark.completed" || event.type === "harness.benchmark.retest.completed")
+        .filter((event) => (event.type === "harness.benchmark.completed" || event.type === "harness.benchmark.retest.completed") && (event.payload as { adaptationRole?: unknown } | null)?.adaptationRole !== "held_out")
         .slice(-3)
         .map((event) => event.payload)
         .slice(-3);
@@ -5288,7 +5560,7 @@ research
         changedComponents: change.candidateComponents.filter((candidate) => change.baselineComponents.find((baseline) => baseline.path === candidate.path && baseline.checksum !== candidate.checksum)),
       }));
       const latestHarnessBenchmarkEvent = durableEvents
-        .filter((event) => event.type === "harness.benchmark.completed" || event.type === "harness.benchmark.retest.completed")
+        .filter((event) => (event.type === "harness.benchmark.completed" || event.type === "harness.benchmark.retest.completed") && (event.payload as { adaptationRole?: unknown } | null)?.adaptationRole !== "held_out")
         .at(-1);
       const latestHarnessBenchmark = harnessBenchmarkEvidence.at(-1) as { comparisons?: unknown } | undefined;
       const benchmarkRegression = Array.isArray(latestHarnessBenchmark?.comparisons)
@@ -5333,7 +5605,7 @@ research
       });
       store.appendEvent("harness.evolution.plan", { cycle, components: harnessComponents.map((component) => ({ id: component.id, path: component.path, kind: component.kind, checksum: component.checksum })), interventions: harnessEvolutionPlan, failureProfile: harnessFailureProfile, componentFailureEvidence });
       const harnessGuidance = harnessBenchmarkEvidence.length
-        ? `Harness-evolution evidence from matched benchmark runs (diagnostic, not workspace task evidence): ${JSON.stringify(harnessBenchmarkEvidence).slice(0, 8_000)}. Prioritize these checksummed, falsifiable interventions and remeasure them under the same protocol: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}${harnessChangeHistory.length ? `\n\nPrior harness-change decisions (historical guidance, not task evidence): ${JSON.stringify(harnessChangeHistory).slice(0, 6_000)}` : ""}${harnessAdaptationAgenda ? `\n\nLocked adaptive retest agenda (must be addressed before claiming a win): ${JSON.stringify(harnessAdaptationAgenda).slice(0, 8_000)}` : ""}${queuedHarnessRetest ? `\n\nDurable retest task queued for controller execution: ${queuedHarnessRetest.id}. It is not proof; select or reject it through the normal experiment and validation gates.` : ""}`
+        ? `Harness-evolution evidence from matched benchmark runs (diagnostic, not workspace task evidence): ${formatHarnessFeedback(harnessBenchmarkEvidence)}. Prioritize these checksummed, falsifiable interventions and remeasure them under the same protocol: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}${harnessChangeHistory.length ? `\n\nPrior harness-change decisions (historical guidance, not task evidence): ${JSON.stringify(harnessChangeHistory).slice(0, 6_000)}` : ""}${harnessAdaptationAgenda ? `\n\nLocked adaptive retest agenda (must be addressed before claiming a win): ${JSON.stringify(harnessAdaptationAgenda).slice(0, 8_000)}` : ""}${queuedHarnessRetest ? `\n\nDurable retest task queued for controller execution: ${queuedHarnessRetest.id}. It is not proof; select or reject it through the normal experiment and validation gates.` : ""}`
         : `No matched harness benchmark evidence is recorded yet; preserve failure telemetry for the first comparison. The harness action space is inventory-backed; use these candidate intervention contracts when a failure is observed: ${JSON.stringify(harnessEvolutionPlan).slice(0, 8_000)}`;
       const recentTrajectories = recordsForCampaign(store.trajectories(200), campaign.startedAt).slice(0, 20);
       const agentRoleReviews = evaluateAgentRoles(recentTrajectories);
@@ -5344,7 +5616,6 @@ research
       store.appendEvent("research.agent.reviewed", { objective, reviews: agentRoleReviews, interventions: agentInterventions, coachingDirectiveIds, source: "cli" });
       if (coachingDirectiveIds.length) store.appendEvent("research.agent.coaching.applied", { directiveIds: coachingDirectiveIds, roles: agentInterventions.filter((intervention) => intervention.action === "coach").map((intervention) => intervention.role), source: "autonomous-controller" });
       if (coachingOutcomes.length) store.appendEvent("research.agent.coaching.evaluated", { objective, evidenceAt: latestTrajectoryAt, outcomes: coachingOutcomes, source: "autonomous-controller" });
-      const unreconciledTraceRecovery = campaignEvents.some((event) => event.type === "research.trace.recovered" && (!latestTrajectoryAt || event.createdAt > latestTrajectoryAt));
       const recentQuality = recentTrajectories.map((entry) => qualityFeedback(entry.quality));
       const recentRuns = recordsForCampaign(store.runs(), campaign.startedAt).slice(0, 20);
       const verificationPressure = recentRuns.some((entry) => {
@@ -5378,7 +5649,6 @@ research
         ...recentRuns.map((entry) => (entry.payload as { failureClass?: unknown }).failureClass).filter((failureClass): failureClass is string => typeof failureClass === "string" && failureClass.length > 0),
         ...nativeFailureClasses,
         ...(verificationPressure ? ["verification"] : []),
-        ...(unreconciledTraceRecovery ? ["controller_crash"] : []),
       ];
       const recoveryRoutes = campaignEvents
         .filter((event) => event.type === "experiment.recovery.route_changed")
@@ -5387,7 +5657,7 @@ research
         .map((route) => `- experiment ${String(route.experimentId ?? "unknown")}: ${String(route.routeKey ?? route.failureClass ?? "unknown")} after ${String(route.attempts ?? "?")} attempt(s). ${String(route.instruction ?? "Choose an alternate route; do not replay the same manifest.")}`)
         .join("\n");
       const routeEvidence = recordsForCampaign(store.eventsByType("research.capability_outcome"), campaign.startedAt);
-      const route = routeCapability({ objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}`, mode, provider: options.provider as "codex" | "local", model: selectedModel, autonomy, recentFailureCount: recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length, failureClasses, recentQuality, recentOutcomes: routeEvidence.map((event) => {
+      const route = routeCapability({ objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}`, mode, provider: options.provider as "codex" | "claude" | "local", model: selectedModel, autonomy, recentFailureCount: recentTrajectories.filter((entry) => (entry.quality as { overall?: string }).overall === "FAIL").length, failureClasses, recentQuality, recentOutcomes: routeEvidence.map((event) => {
         const payload = event.payload as { mode?: unknown; servedProvider?: unknown; servedModel?: unknown; outcome?: unknown; quality?: unknown };
         return { mode: typeof payload.mode === "string" ? payload.mode : undefined, provider: typeof payload.servedProvider === "string" ? payload.servedProvider : undefined, model: typeof payload.servedModel === "string" ? payload.servedModel : undefined, outcome: typeof payload.outcome === "string" ? payload.outcome : undefined, quality: typeof payload.quality === "string" ? payload.quality : undefined };
       }), budgetRemainingMinutes: Math.max(0, campaign.budgetMinutes - campaignElapsedMinutes(campaign)), requestedParallel: laneLimit });
@@ -5405,7 +5675,7 @@ research
       // Agent lanes and compute lanes are different resources. Keep local
       // and container execution conservative by default; Modal is the
       // explicit scale-out backend for independent experiment workers.
-      const executorParallelCeiling = options.executor === "modal" || options.executor === "slurm" ? 3 : 1;
+      const executorParallelCeiling = adapter.config.execution?.maxParallelExperiments ?? (options.executor === "modal" || options.executor === "slurm" ? 3 : 1);
       const experimentParallelism = Math.max(1, Math.min(effectiveLaneLimit, executorParallelCeiling));
       store.appendEvent("research.capability_route", { route, predictedTier: route.tier, servedProvider: options.provider, servedModel: selectedModel, recentQuality });
       const currentCampaignClaimIds = new Set(recordsForCampaign(store.claims(), campaign.startedAt).map((claim) => claim.id));
@@ -5448,6 +5718,36 @@ research
       const allocation = allocateNextResearch({ trajectories: recentTrajectories, phase: phaseGoal?.phase, evidenceConflicts, failureClasses, predictionAnalysis, ensembleAnalysis, forecastCalibration, distributionBeliefs });
       store.appendEvent("research.next_allocation", { allocation, objective: `${campaign.goal}. Stop condition: ${campaign.stopCondition}` });
       const priorStagnation = detectStagnation(recordsForCampaign(store.decisions(), campaign.startedAt).map((entry) => entry.payload as Awaited<ReturnType<typeof runResearchDirector>>).slice(0, 3));
+      const progressMetricName = adapter.config.metric.name;
+      const progressBaselinePayload = store.eventsByType("baseline.completed").at(-1)?.payload as { metric?: unknown; stdout?: string } | undefined;
+      // Only full evaluations are comparable: a screen that scores a subset of the evaluation (it omits a
+      // declared secondary metric) has a lower total by construction and would read as a stalled run.
+      const requiredProgressMetrics = adapter.config.secondaryMetrics.map((metric) => metric.name);
+      const progressRuns = recordsForCampaign(store.runs(), campaign.startedAt).flatMap((run) => {
+        const payload = run.payload as { exitCode?: unknown; metrics?: Record<string, unknown> };
+        const metric = Number(payload?.metrics?.[progressMetricName]);
+        const complete = requiredProgressMetrics.every((name) => Number.isFinite(Number(payload?.metrics?.[name])));
+        return payload?.exitCode === 0 && Number.isFinite(metric) && complete ? [{ createdAt: run.createdAt, metric }] : [];
+      });
+      const goalProgress = assessGoalProgress({
+        direction: adapter.config.metric.direction,
+        baseline: typeof progressBaselinePayload?.metric === "number" ? progressBaselinePayload.metric : progressBaselinePayload?.stdout ? parseMetricOutput(progressBaselinePayload.stdout, progressMetricName).metrics[progressMetricName] : undefined,
+        target: adapter.config.metric.target,
+        windowRuns: adapter.config.metric.plateauWindowRuns,
+        minGain: adapter.config.metric.minimumProgress,
+        stalledPivotCycles: stalledPivotCycles(recordsForCampaign(store.eventsByType("research.goal_progress"), campaign.startedAt), progressRuns.length),
+        runs: progressRuns,
+      });
+      store.appendEvent("research.goal_progress", { cycle, progress: goalProgress });
+      const proxyTransfer = loadProxyTransfer(adapter.config);
+      const transferIncumbent = proxyTransfer
+        ? recordsForCampaign(store.runs(), campaign.startedAt)
+          .map((run) => proxyTransfer.score(((run.payload as { metrics?: Record<string, unknown> })?.metrics) ?? {}))
+          .filter((value): value is number => value !== undefined && Number.isFinite(value))
+          .reduce<number | undefined>((best, value) => best === undefined || (adapter.config.metric.direction === "maximize" ? value > best : value < best) ? value : best, undefined)
+        : undefined;
+      if (proxyTransfer) store.appendEvent("research.proxy_transfer", { cycle, calibration: proxyTransfer.calibration, incumbentExpected: transferIncumbent ?? null });
+      if (goalProgress.pivotRequired) console.log(`Research · goal progress plateaued (best ${goalProgress.best}, target ${goalProgress.target ?? "none"}); ${goalProgress.mustRun ? "earlier pivots produced no experiment, so this cycle must run one" : "pivoting to a different method family"}.`);
       const adaptiveHarness = deriveAdaptiveHarnessPolicy({
         autonomy,
         phase: phaseGoal?.phase,
@@ -5458,6 +5758,7 @@ research
         benchmarkRegression,
         environmentDrift,
         searchStagnation: priorStagnation.stagnant,
+        metricPlateau: goalProgress.pivotRequired,
         allocationFocus: allocation.focus,
         allocationPriority: allocation.priority,
         benchmarkInterventions: [
@@ -5651,6 +5952,7 @@ research
         ? `\n\nPROJECT GUIDANCE (operator context, not evidence; never override permissions, validation gates, or provenance rules):\n${projectGuidance.text}\nGuidance hash: ${projectGuidance.contentHash}${projectGuidance.truncated ? " (truncated)" : ""}`
         : "";
       if (projectGuidance) store.appendEvent("research.project_guidance.loaded", { cycle, paths: projectGuidance.paths, contentHash: projectGuidance.contentHash, truncated: projectGuidance.truncated });
+      if (projectGuidance?.truncated && cycle === 1) console.log(`Warning · project guidance was truncated (${projectGuidance.paths.join(", ")}); shorten it so agents see all of it.`);
       const evolutionGuidance = latestEvolution
         ? `\\n\\nEVOLUTIONARY GENERATION: ${JSON.stringify(latestEvolution.payload).slice(0, 8_000)}\\nIf a crossover is justified, return one concrete offspring hypothesis with exactly the durable parentHypothesisIds from this record. Preserve each parent's falsification boundary; do not claim the offspring works before a matched evaluator run.`
         : "";
@@ -5662,7 +5964,24 @@ research
       const rubricGuidance = priorRubricGaps.length
         ? `\n\nPrior decision-rubric gaps to repair before spending compute:\n${[...new Set(priorRubricGaps)].join("\n")}`
         : "";
-      const cycleObjective = allocatedObjective + guidanceText + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance;
+      const sourceChanges: CompetitionChangeEvent[] = recordsForCampaign(store.eventsByType("challenge.source.changed"), campaign.startedAt)
+        // A change steers the cycles of the next day, then stops repeating.
+        .filter((event) => Date.now() - Date.parse(event.createdAt) <= 24 * 60 * 60_000)
+        .slice(-6)
+        .map((event) => {
+          const payload = event.payload as { url?: string; channelKind?: string; added?: string[]; removedCount?: number };
+          return { url: payload.url ?? "", channelKind: payload.channelKind ?? "other", added: payload.added ?? [], removedCount: payload.removedCount ?? 0, at: event.createdAt };
+        });
+      const changeGuidance = sourceChanges.length ? `\n\n${competitionChangeGuidance(sourceChanges)}` : "";
+      const progressGuidance = changeGuidance + (goalProgress.directive ? `\n\n${goalProgress.directive}` : "") + (proxyTransfer ? `\n\n${proxyTransferGuidance(proxyTransfer.calibration, transferIncumbent)}` : "");
+      const cadence = discoveryCadence(recordsForCampaign(store.eventsByType("research.decision.audit"), campaign.startedAt), recordsForCampaign(store.runs(), campaign.startedAt));
+      if (cadence.guidance) store.appendEvent("research.discovery.cadence", { idleCycles: cadence.idleCycles, action: "bounded-experiment-guidance", gatesUnchanged: true });
+      // Name the concrete unmet gate criteria (and operator commands) every
+      // cycle so the director and critic do not loop on generic inspection.
+      const phaseGateGuidance = phaseGoal ? formatPhaseGateGuidance(phaseGoal.phase, phaseGateSnapshot(store, phaseGoal, mode)) : "";
+      const cycleObjective = allocatedObjective + guidanceText + literatureBenchmarkGuidance + evolutionGuidance + rubricGuidance + steeringGuidance + progressGuidance + cadence.guidance + phaseGateGuidance + verificationRuntimeGuidance(adapter.config.evaluator.command)
+        + (hasPlaceholderEvaluator(adapter.config) ? `\n\n${PLACEHOLDER_EVALUATOR_GUIDANCE}` : "")
+        + (goalProgress.pivotRequired ? "\n\nPLATEAU: the champion has stopped improving. Propose structurally different families (a new representation, mechanism, or objective), not more tuning of the current one." : "");
       const researchSources = latestSourcePayloads(store.sources(), 12, cycleObjective, store);
       const researchMemory = researchMemoryContext(store, 30, cycleObjective, {
         objective: campaign.goal,
@@ -5683,26 +6002,34 @@ research
       // metadata or unrelated datasets for challenge leakage and block every
       // subsequent phase despite a valid task-scoped audit path.
       const auditRoot = adapter.workspacePath(root);
-      const manifestFingerprint = dataAuditManifestFingerprint(auditRoot);
+      const auditOptions = { excludeDirectories: [stateDirectory] };
+      const manifestFingerprint = dataAuditManifestFingerprint(auditRoot, undefined, auditOptions);
       const priorAuditEvent = store.eventsByType("data.audit.completed").at(-1);
       const priorAudit = priorAuditEvent?.payload && typeof priorAuditEvent.payload === "object"
         ? priorAuditEvent.payload as Record<string, unknown>
         : undefined;
-      const reusableAudit = priorAudit?.root === auditRoot && priorAudit.manifestFingerprint === manifestFingerprint
+      // Reports from an older audit version classified findings differently
+      // (for example, unparsed JSON as a blocking warning); recompute them.
+      const reusableAudit = priorAudit?.root === auditRoot && priorAudit.manifestFingerprint === manifestFingerprint && priorAudit.auditVersion === DATA_AUDIT_VERSION
         ? priorAudit
         : undefined;
       const dataAuditSummary = reusableAudit
         ? { ...reusableAudit, reused: true, auditEventAt: priorAuditEvent?.createdAt }
         : (() => {
-          const dataAudit = auditData(auditRoot);
+          const dataAudit = auditData(auditRoot, undefined, undefined, auditOptions);
           const summary = {
             root: dataAudit.root,
+            auditVersion: dataAudit.auditVersion,
             scannedFiles: dataAudit.scannedFiles,
             totalBytes: dataAudit.totalBytes,
             duplicateGroups: dataAudit.duplicateGroups.length,
+            distributionShift: dataAudit.distributionShift.length,
             skippedFiles: dataAudit.skippedFiles.slice(0, 200),
             uninspectedDataFiles: dataAudit.uninspectedDataFiles.slice(0, 200),
+            metadataFiles: dataAudit.metadataFiles.slice(0, 200),
+            excludedFiles: dataAudit.excludedFiles.slice(0, 200),
             warnings: dataAudit.warnings.slice(0, 20),
+            notes: dataAudit.notes.slice(0, 20),
             fingerprint: dataAuditFingerprint(dataAudit),
             manifestFingerprint,
             reused: false,
@@ -5721,7 +6048,11 @@ research
       // emitted more than 100 research/tool events. The event store is bounded
       // at a much larger durable horizon, so do not accidentally rerun a
       // 20-minute baseline just because it moved outside a short UI window.
-      const priorBaseline = mode === "challenge" ? store.eventsByType("baseline.completed").at(-1) : undefined;
+      // Only an explicit --skip-baseline may reuse a control from an earlier campaign: a new campaign can
+      // change the evaluator's boards or the starting solution, and its control must measure that.
+      const priorBaseline = mode === "challenge"
+        ? (options.skipBaseline ? store.eventsByType("baseline.completed") : recordsForCampaign(store.eventsByType("baseline.completed"), campaign.startedAt)).at(-1)
+        : undefined;
       let baseline: { command: string[]; cwd: string; exitCode: number; durationMs: number; stdout: string; stderr: string } | undefined;
       // A campaign baseline is a control, not a per-cycle experiment. Isolated
       // candidate worktrees do not mutate the competition workspace, so rerunning
@@ -5783,6 +6114,7 @@ research
       let criticReview: Awaited<ReturnType<typeof runResearchCritic>> | undefined;
       let semanticAudit: ResearchSemanticAudit | undefined;
       let phaseDomainGateMet = false;
+      let phaseGate: PhaseGoalGate | undefined;
       let laneReports: Awaited<ReturnType<typeof runResearchLanes>> = [];
       let crossPollination: ReturnType<typeof synthesizeLaneReports> | undefined;
       const tracePrefix = `research-${cycle}-${Date.now()}`;
@@ -5855,7 +6187,7 @@ research
             agentRoleReviews,
             goalId: phaseGoal?.id ?? null,
           }, {
-            provider: options.provider as "codex" | "local",
+            provider: options.provider as "codex" | "claude" | "local",
             model: selectedModel,
             modelPool: researchModelPool,
             fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined,
@@ -5916,7 +6248,7 @@ research
                 goalId: phaseGoal?.id ?? null,
               },
               {
-                provider: options.provider as "codex" | "local",
+                provider: options.provider as "codex" | "claude" | "local",
                 model: selectedModel,
                 modelPool: researchModelPool,
                 fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined,
@@ -5965,8 +6297,9 @@ research
           console.log("Research · director is cross-pollinating lane findings...");
           const verifiedStateStore = new ResearchStore(statePath);
           const verifiedState = phaseGoal ? projectVerifiedSubtaskState(verifiedStateStore.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined);
+          const experimentHistory = campaignSearchState(verifiedStateStore, adapter.config.metric);
           verifiedStateStore.close();
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, authoritativeEvidence: researchMemory.authoritativeObservations, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, laneToolResults: laneToolObservationContext(laneReports), crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness, triggerContext: campaign.triggerContext ? { eventType: campaign.triggerContext.eventType, eventCreatedAt: campaign.triggerContext.eventCreatedAt, trust: "external_wakeup_signal" } : null }, { provider: options.provider as "codex" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, taskId: cycleTaskId, goalId: phaseGoal?.id ?? null, parentTaskId: cycleTaskId, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, onToolBudgetExhausted: (details) => {
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, ...experimentHistory, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, authoritativeEvidence: researchMemory.authoritativeObservations, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, laneToolResults: laneToolObservationContext(laneReports), crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness, goalProgress, triggerContext: campaign.triggerContext ? { eventType: campaign.triggerContext.eventType, eventCreatedAt: campaign.triggerContext.eventCreatedAt, trust: "external_wakeup_signal" } : null }, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, taskId: cycleTaskId, goalId: phaseGoal?.id ?? null, parentTaskId: cycleTaskId, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, onToolBudgetExhausted: (details) => {
             const exhaustedStore = new ResearchStore(statePath);
             exhaustedStore.appendEvent("research.director.tool_budget.exhausted", { cycle, goalId: phaseGoal?.id ?? null, ...details });
             exhaustedStore.close();
@@ -5990,68 +6323,73 @@ research
             phaseStore.appendEvent("research.decision.phase_normalized", { cycle, requestedPhase, activePhase: phaseGoal.phase, reason: "controller owns phase transitions" });
             phaseStore.close();
           }
-          campaign = recordCampaignCheckpoint(campaign, mode, cycle, "research-critic");
-          criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
-            authoritativeEvidence: researchMemory.authoritativeObservations,
-            provider: options.provider as "codex" | "local",
-            model: selectedModel,
-            modelPool: researchModelPool,
-            fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined,
-            limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop",
-            reasoningEffort: options.thinking,
-            timeoutMs: agentTimeoutMs,
-            cwd: root,
-            storePath: statePath,
-            campaignStartedAt: campaign.startedAt,
-            roleTokenBudgets: campaign.runtime.roleTokenBudgets,
-            maxParallel: 1,
-            taskId: cycleTaskId,
-            goalId: phaseGoal?.id ?? null,
-            parentTaskId: cycleTaskId,
-            autonomy,
-            executeTool: researchToolExecutor(adapter, autonomy),
-            onActivity: toolTrace.onActivity,
-            onAssistant: toolTrace.onAssistant,
-            onUsage: recordAgentUsage,
-          });
-          assertAgentTokenBudget();
-          semanticAudit = await runResearchSemanticAuditor(cycleObjective, decision, {
-            observation,
-            authoritativeEvidence: researchMemory.authoritativeObservations,
-            phaseGoal,
-            controllerToolObservations: semanticAuditTraceEvidence(toolTrace.events),
-            laneReports: laneToolObservationContext(laneReports),
-            critic: criticReview,
-          }, {
-            provider: options.provider as "codex" | "local",
-            model: selectedModel,
-            modelPool: researchModelPool,
-                fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined,
-            limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop",
-            reasoningEffort: options.thinking,
-            timeoutMs: agentTimeoutMs,
-            cwd: root,
-            storePath: statePath,
-            campaignStartedAt: campaign.startedAt,
-            roleTokenBudgets: campaign.runtime.roleTokenBudgets,
-            maxParallel: 1,
-            taskId: cycleTaskId,
-            goalId: phaseGoal?.id ?? null,
-            parentTaskId: cycleTaskId,
-            autonomy,
-            executeTool: researchToolExecutor(adapter, autonomy),
-            onActivity: toolTrace.onActivity,
-            onAssistant: toolTrace.onAssistant,
-            onUsage: recordAgentUsage,
-          }, phaseCompletionCriteriaForAudit(phaseGoal, decision.goalStatus));
-          assertAgentTokenBudget();
-          if (semanticAudit.verdict !== "pass") {
-            decision = { ...decision, phase: phaseGoal?.phase ?? decision.phase, decision: "inspect", goalStatus: "active", nextAction: `${decision.nextAction} (semantic audit: ${[...semanticAudit.findings, ...semanticAudit.requiredChecks].join(", ")})` };
-            const auditStore = new ResearchStore(statePath);
-            auditStore.appendEvent("research.semantic_audit.gated", { cycle, verdict: semanticAudit.verdict, findings: semanticAudit.findings, requiredChecks: semanticAudit.requiredChecks });
-            auditStore.close();
+          // Attempts are cheap and the evaluator judges them; review gates claims. The critic and
+          // semantic auditor therefore run only when the director claims completion or stops.
+          const claimsCompletion = decision.goalStatus === "met" || decision.decision === "stop";
+          if (claimsCompletion) {
+            campaign = recordCampaignCheckpoint(campaign, mode, cycle, "research-critic");
+            criticReview = await runResearchCritic(cycleObjective, decision, laneReports, {
+              authoritativeEvidence: researchMemory.authoritativeObservations,
+              provider: options.provider as "codex" | "claude" | "local",
+              model: selectedModel,
+              modelPool: researchModelPool,
+              fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined,
+              limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop",
+              reasoningEffort: options.thinking,
+              timeoutMs: agentTimeoutMs,
+              cwd: root,
+              storePath: statePath,
+              campaignStartedAt: campaign.startedAt,
+              roleTokenBudgets: campaign.runtime.roleTokenBudgets,
+              maxParallel: 1,
+              taskId: cycleTaskId,
+              goalId: phaseGoal?.id ?? null,
+              parentTaskId: cycleTaskId,
+              autonomy,
+              executeTool: researchToolExecutor(adapter, autonomy),
+              onActivity: toolTrace.onActivity,
+              onAssistant: toolTrace.onAssistant,
+              onUsage: recordAgentUsage,
+            });
+            assertAgentTokenBudget();
+            semanticAudit = await runResearchSemanticAuditor(cycleObjective, decision, {
+              observation,
+              authoritativeEvidence: researchMemory.authoritativeObservations,
+              phaseGoal,
+              controllerToolObservations: semanticAuditTraceEvidence(toolTrace.events),
+              laneReports: laneToolObservationContext(laneReports),
+              critic: criticReview,
+            }, {
+              provider: options.provider as "codex" | "claude" | "local",
+              model: selectedModel,
+              modelPool: researchModelPool,
+                  fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined,
+              limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop",
+              reasoningEffort: options.thinking,
+              timeoutMs: agentTimeoutMs,
+              cwd: root,
+              storePath: statePath,
+              campaignStartedAt: campaign.startedAt,
+              roleTokenBudgets: campaign.runtime.roleTokenBudgets,
+              maxParallel: 1,
+              taskId: cycleTaskId,
+              goalId: phaseGoal?.id ?? null,
+              parentTaskId: cycleTaskId,
+              autonomy,
+              executeTool: researchToolExecutor(adapter, autonomy),
+              onActivity: toolTrace.onActivity,
+              onAssistant: toolTrace.onAssistant,
+              onUsage: recordAgentUsage,
+            }, phaseCompletionCriteriaForAudit(phaseGoal, decision.goalStatus));
+            assertAgentTokenBudget();
+            if (semanticAudit.verdict !== "pass") {
+              decision = { ...decision, phase: phaseGoal?.phase ?? decision.phase, decision: decision.decision === "stop" ? "inspect" : decision.decision, goalStatus: "active", nextAction: `${decision.nextAction} (semantic audit: ${[...semanticAudit.findings, ...semanticAudit.requiredChecks].join(", ")})` };
+              const auditStore = new ResearchStore(statePath);
+              auditStore.appendEvent("research.semantic_audit.gated", { cycle, verdict: semanticAudit.verdict, findings: semanticAudit.findings, requiredChecks: semanticAudit.requiredChecks });
+              auditStore.close();
+            }
           }
-          if (shouldPeerReview) {
+          if (shouldPeerReview && criticReview) {
             const collaborationStore = new ResearchStore(statePath);
             const useful = criticReview.verdict !== "proceed" || criticReview.requiredChecks.length > 0 || crossPollination.tensions.length > 0;
             collaborationStore.appendEvent("research.collaboration.outcome", {
@@ -6154,12 +6492,10 @@ research
         }
       }
       let decisionStore = new ResearchStore(statePath);
-      // In autonomous modes, a single concrete proposal plus a non-rejecting
-      // critic is enough to enter the controller's bounded execution path.
-      // Without this transition a director can repeatedly emit `propose`
-      // forever even though it has already supplied the exact hypothesis the
-      // controller needs. Safe mode deliberately remains approval-gated.
-      if (autonomyPolicy(autonomy).canRunIsolatedExperiments && criticReview?.verdict !== "reject" && decision.decision === "propose" && !decision.selectedHypothesis && decision.hypotheses.length === 1) {
+      // In autonomous modes a single concrete proposal is enough to run: the
+      // evaluator, not another review, decides whether it worked. Safe mode
+      // deliberately remains approval-gated.
+      if (autonomyPolicy(autonomy).canRunIsolatedExperiments && decision.decision === "propose" && !decision.selectedHypothesis && decision.hypotheses.length === 1) {
         const selected = decision.hypotheses[0];
         decision = {
           ...decision,
@@ -6167,58 +6503,14 @@ research
           selectedHypothesis: selected.title,
           nextAction: `Execute the single concrete hypothesis in an isolated worktree: ${selected.title}.`,
         };
-        decisionStore.appendEvent("research.autonomous.execution_promoted", { reason: "single concrete proposal with non-rejecting critic", hypothesis: selected.title, autonomy });
+        decisionStore.appendEvent("research.autonomous.execution_promoted", { reason: "single concrete proposal", hypothesis: selected.title, autonomy });
       }
-      const exploratoryPromotion = promoteExplicitExploratoryRun(decision, criticReview, autonomyPolicy(autonomy).canRunIsolatedExperiments);
-      if (exploratoryPromotion.promoted) {
-        decision = exploratoryPromotion.decision;
-        decisionStore.appendEvent("research.autonomous.execution_promoted", { reason: "critic explicitly permits bounded exploration and the director selected a falsifiable exploratory run", hypothesis: decision.selectedHypothesis, autonomy });
-      }
-      const experimentsForSteering = decisionStore.experiments();
-      const experimentsWithRuns = new Set(decisionStore.runs().map((run) => run.experimentId));
-      const scheduledHypothesisIds = new Set(experimentsForSteering.flatMap((entry) => {
-        const payload = entry.payload && typeof entry.payload === "object" ? entry.payload as { hypothesisId?: unknown; status?: unknown } : {};
-        // Permit an explicitly steered retry when implementation failed before
-        // any evaluator run existed; the operator may have changed the
-        // recovery route. Never re-run a hypothesis that already produced a
-        // run record, and never duplicate proposed/running work.
-        if (payload.status === "failed" && !experimentsWithRuns.has(entry.id)) return [];
-        return typeof payload.hypothesisId === "string" ? [payload.hypothesisId] : [];
-      }));
-      const steeredExploration = promoteOperatorSteeredExploration(
-        decision,
-        criticReview,
-        autonomyPolicy(autonomy).canRunIsolatedExperiments,
-        operatorSteeringMessages,
-        recordsForCampaign(decisionStore.hypotheses(), campaign.startedAt),
-        scheduledHypothesisIds,
-      );
-      if (steeredExploration.promoted) {
-        decision = steeredExploration.decision;
-        decisionStore.appendEvent("research.autonomous.execution_promoted", {
-          reason: "explicit operator steering authorized a falsifiable exploratory experiment despite unresolved validation-only gates",
-          hypothesis: decision.selectedHypothesis,
-          hypothesisId: steeredExploration.hypothesisId,
-          unresolvedCriticVerdict: criticReview?.verdict ?? "missing",
-          autonomy,
-          promotionAndSubmissionRemainBlocked: true,
-        });
-      }
-      const requestedExecutionBeforeCritic = decision.decision === "run" && Boolean(decision.selectedHypothesis);
-      const autonomousValidationRun = autonomyPolicy(autonomy).canRunIsolatedExperiments
-        && requestedExecutionBeforeCritic
-        && criticReview?.verdict === "revise";
+      // The critic only reviews completion claims, so it can veto a claim but never an attempt.
       const criticGate = applyCriticGate(decision, criticReview);
-      // A revise verdict often means “run the missing bounded check,” not
-      // “never execute.” In autonomous modes, permit that isolated validation
-      // run while preserving the critic objections in durable events. Reject
-      // remains a veto, and SAFE mode remains approval-gated.
-      const criticBlocks = criticGate.blocked && !autonomousValidationRun;
+      const criticBlocks = criticGate.blocked;
       if (criticBlocks) {
         decisionStore.appendEvent("research.critic.gate", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks });
         decision = criticGate.decision;
-      } else if (autonomousValidationRun) {
-        decisionStore.appendEvent("research.critic.validation_deferred", { verdict: criticReview?.verdict, confidence: criticReview?.confidence, objections: criticReview?.objections, requiredChecks: criticReview?.requiredChecks, action: "bounded isolated validation run" });
       }
       const decisionRubric = assessResearchDecisionRubric(decision, {
         baselineAvailable: Boolean(observation.baseline?.exitCode === 0),
@@ -6257,6 +6549,7 @@ research
           selectedHypothesisFalsifiable: Boolean(decision.selectedHypothesis && decision.hypotheses.some((hypothesis) => hypothesis.title === decision.selectedHypothesis && hypothesis.falsificationTest.trim().length > 0)),
         });
         phaseDomainGateMet = gate.met;
+        phaseGate = gate;
         const domainAudit = auditPhaseGoalGate(phaseGoal, gate, phaseEvents.map((event) => event.type));
         decisionStore.recordSubtaskAudit(phaseGoalCycleAudit(phaseGoal, domainAudit, semanticAudit?.criteria ?? []));
         if (decision.goalStatus === "met" && !gate.met) {
@@ -6271,6 +6564,15 @@ research
       });
       decisionStore.appendEvent("research.decision.audit", { ...decisionAudit, phase: phaseGoal?.phase ?? null, decision: decision.decision });
       decision = downgradeUnauditedDecision(decision, decisionAudit, phaseGoal?.phase);
+      // One attempt in three goes to a new or young method family, enforced here rather than left to the prompt.
+      const explorationState = campaignSearchState(decisionStore, adapter.config.metric);
+      const selectedFamily = normalizeFamily(decision.hypotheses.find((hypothesis) => hypothesis.title === decision.selectedHypothesis)?.formulationFamily);
+      const selectedIsMature = explorationState.families.some((summary) => summary.family === selectedFamily && !summary.young);
+      const explorer = explorationState.explorationTurn && decision.decision === "run" && selectedIsMature ? explorationHypothesis(decision.hypotheses, explorationState.families) : undefined;
+      if (explorer) {
+        decisionStore.appendEvent("research.exploration.enforced", { cycle, replaced: decision.selectedHypothesis, selected: explorer.title, family: normalizeFamily(explorer.formulationFamily) });
+        decision = { ...decision, selectedHypothesis: explorer.title, nextAction: `Exploration turn: run '${explorer.title}' from a new or young method family.` };
+      }
       const materialized = materializeResearchDecision(decisionStore, decision);
       const hypothesisQuality = decision.hypotheses.map((hypothesis) => assessHypothesisQuality({
         title: hypothesis.title,
@@ -6292,6 +6594,10 @@ research
         return [{ operator: payload.operator, actualMinutes: payload.durationSeconds / 60, status: payload.valid === true ? "completed" : "failed", context: { executor: typeof (payload as { executor?: unknown }).executor === "string" ? (payload as { executor: string }).executor : undefined, gpu: typeof (payload as { gpu?: unknown }).gpu === "string" ? (payload as { gpu: string }).gpu : undefined, provider: typeof (payload as { provider?: unknown }).provider === "string" ? (payload as { provider: string }).provider : undefined, model: typeof (payload as { model?: unknown }).model === "string" ? (payload as { model: string }).model : undefined } }];
       });
       const falsificationByHypothesisId = new Map(researchMemory.falsificationAgenda.map((item) => [item.hypothesisId, item]));
+      const incompleteVerificationReasons = decision.hypotheses.map(incompleteVerificationProposal);
+      for (const [index, reason] of incompleteVerificationReasons.entries()) {
+        if (reason) decisionStore.appendEvent("research.portfolio.candidate_deferred", { cycle, hypothesisId: materialized.hypothesisIds[index], title: decision.hypotheses[index]?.title, reason });
+      }
       const portfolioPlan = planPortfolio(decision.hypotheses.map((hypothesis, index) => ({
         id: materialized.hypothesisIds[index] ?? `hypothesis-${index}`,
         title: hypothesis.title,
@@ -6308,13 +6614,16 @@ research
         expectedOutcome: hypothesis.expectedOutcome,
         expectedValue: hypothesis.outcomeType === "metric" ? hypothesis.expectedMetricDelta.median : 0,
         costMinutes: Math.max(1, hypothesis.computeCostGpuHours * 60),
-        novelty: hypothesis.evidence.length === 0 ? 1 : 0.4,
+        novelty: architectureNovelty(hypothesis.architectureChange),
         informationValue: hypothesis.outcomeType !== "metric" ? 1 : Math.min(1, Math.max(0, (hypothesis.expectedMetricDelta.high - hypothesis.expectedMetricDelta.low) / (Math.abs(hypothesis.expectedMetricDelta.high) + Math.abs(hypothesis.expectedMetricDelta.low) + 0.01))),
         risk: hypothesis.implementationRisk === "high" ? 1 : hypothesis.implementationRisk === "medium" ? 0.5 : 0.1,
         family: hypothesis.formulationFamily,
+        architectureChange: hypothesis.architectureChange,
         quality: hypothesisQuality[index]?.score,
-      })), {
+      })).filter((_, index) => !incompleteVerificationReasons[index]), {
         maxCandidates: autonomy === "yolo" ? 3 : autonomy === "fast" ? 2 : 1,
+        preferredCandidateId: materialized.hypothesisIds[decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis)],
+        exploreArchitecture: goalProgress.pivotRequired,
         maxParallel: experimentParallelism,
         budgetMinutes: portfolioBudget,
         reserveMinutes: Math.min(5, portfolioBudget * 0.1),
@@ -6331,6 +6640,7 @@ research
         successiveHalving: portfolioPlan.halving,
         evolution: portfolioPlan.evolution,
         costEstimates: portfolioPlan.costEstimates,
+        architectureExploration: portfolioPlan.architectureExploration,
         policy: "bounded-best-of-k",
       });
       // A director may return several hypotheses without selecting one. In an
@@ -6382,7 +6692,7 @@ research
         console.log(`Autonomous experiment held by ${autonomy.toUpperCase()} permissions${proposalId ? `; proposal ${proposalId} is ready for explicit approval. Continuing research on other directions.` : ". Continuing evidence gathering."}`);
       }
       const selectedDecisionIndex = decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis);
-      const selectedDecisionCandidate = selectedDecisionIndex >= 0 ? portfolioPlan.selected.find((candidate) => candidate.id === materialized.hypothesisIds[selectedDecisionIndex]) ?? {
+      const selectedDecisionCandidate = selectedDecisionIndex >= 0 && !incompleteVerificationReasons[selectedDecisionIndex] ? portfolioPlan.selected.find((candidate) => candidate.id === materialized.hypothesisIds[selectedDecisionIndex]) ?? {
         id: materialized.hypothesisIds[selectedDecisionIndex],
         title: decision.hypotheses[selectedDecisionIndex].title,
         operator: decision.searchOperator,
@@ -6651,7 +6961,7 @@ research
             decisionStore.close();
             let run: { exitCode: number; stdout: string; stderr: string };
             try {
-              await implementCampaignHypothesis(root, experimentId, selectedHypothesis, manifest, { provider: options.provider as "codex" | "local", model: selectedModel, thinking: options.thinking, fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", protectedCommands: [adapter.config.evaluator.command], workspaceRelativePath: relative(root, adapter.workspacePath(root)), autonomy: autonomy as AutonomyLevel });
+              await implementCampaignHypothesis(root, experimentId, selectedHypothesis, manifest, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, thinking: options.thinking, fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", protectedCommands: [adapter.config.evaluator.command], workspaceRelativePath: relative(root, adapter.workspacePath(root)), autonomy: autonomy as AutonomyLevel });
               if (candidateHalvingEnabled) {
                 run = await runCampaignExperiment(root, experimentId, "reduced", campaignRemainingMs(campaign));
                 const screenStore = new ResearchStore(statePath);
@@ -6745,8 +7055,8 @@ research
         ...(crossPollination ? [{ id: `${trajectoryStamp}-cross-pollination`, kind: "process" as const, payload: { status: "completed", laneCount: crossPollination.laneCount, completedCount: crossPollination.completedCount, agreementPairs: crossPollination.agreementPairs, independentEvidenceCount: crossPollination.independentEvidenceCount, needsAdversarialReview: crossPollination.needsAdversarialReview } }] : []),
         ...laneReports.filter((lane) => lane.status === "failed").map((lane, index) => ({ id: `${trajectoryStamp}-lane-${index}`, kind: "process" as const, payload: { status: "failed", error: lane.error ?? `${lane.role} failed` } })),
         { id: `${trajectoryStamp}-evaluator`, kind: "evaluator", payload: {
-          evidenceConsistent: criticReview?.verdict === "proceed",
-          criticVerdict: criticReview?.verdict ?? "missing",
+          evidenceConsistent: !criticReview || criticReview.verdict === "proceed",
+          criticVerdict: criticReview?.verdict ?? "not_required",
           // A failed inspection route must not be silently converted into an
           // execution decision. Record this explicitly for harness scoring.
           executionAlignment: toolTrace.events.some((event) => event.kind === "tool_result")
@@ -6781,6 +7091,12 @@ research
         openFalsifications: researchMemory.falsificationAgenda.filter((item) => item.status === "untested" || item.status === "inconclusive").length,
       });
       decisionStore.appendEvent("research.stop_policy.assessed", { cycle, ...stopPolicy });
+      // A second stagnant window would pause. If the only unmet criteria are
+      // non-integrity operator acknowledgements and the director has a
+      // concrete falsifiable hypothesis, advance and keep the acknowledgement
+      // visible instead of burning the campaign on a pause.
+      const pauseForStagnation = stagnation.stagnant && campaignEvents.some((event) => event.type === "research.stagnation.recovery_started");
+      const gateDeferral = pauseForStagnation && phaseGoal && phaseGate && !phaseDomainGateMet ? phaseGateDeferral(phaseGate, decision) : undefined;
       if (phaseGoal) {
         const now = new Date().toISOString();
         const goals = phaseGoalsForMode(decisionStore.phaseGoals().map((entry) => PhaseGoalSchema.parse(entry.payload)), mode, campaignGoalSetId);
@@ -6790,10 +7106,22 @@ research
           // across controller restart and protects against stale in-memory
           // decisions claiming a phase was met.
           const durableAudit = decisionStore.latestSubtaskAudit(phaseGoal.id);
-          const met = phaseGoalCanAdvance(phaseDomainGateMet, durableAudit);
+          const deferred = gateDeferral?.advance === true;
+          const met = phaseGoalCanAdvance(phaseDomainGateMet, durableAudit) || deferred;
+          if (deferred && gateDeferral) {
+            decisionStore.appendEvent("research.phase_gate.deferred", { phase: phaseGoal.phase, reason: gateDeferral.reason, deferredCriteria: gateDeferral.deferred, selectedHypothesis: decision.selectedHypothesis ?? null, cycle });
+            decisionStore.appendEvent("research.attention.raised", {
+              id: `phase-gate-deferred:${phaseGoal.phase}`,
+              severity: "warning",
+              kind: "phase-gate-deferred",
+              summary: `${phaseGoal.phase} advanced with deferred operator acknowledgement: ${gateDeferral.deferred.map((item) => item.criterion).join(", ")}`,
+              next: [...new Set(gateDeferral.deferred.flatMap((item) => item.commands))].join("  |  ") || "/status",
+            });
+          }
           if (decision.goalStatus === "met" && !met) decisionStore.appendEvent("research.phase_transition.rejected", { phase: phaseGoal.phase, reason: "missing successful domain gate or durable subtask audit", domainGateMet: phaseDomainGateMet, audit: durableAudit?.payload ?? null });
           const nextStatus = met ? "met" : decision.goalStatus === "blocked" ? "blocked" : "active";
           decisionStore.savePhaseGoal({ id: phaseGoal.id, phase: phaseGoal.phase, status: nextStatus, payload: { ...goals[index], status: nextStatus, attempts: phaseGoal.attempts + 1, updatedAt: now } });
+          if (met) decisionStore.appendEvent("research.attention.cleared", { id: `stagnation:${phaseGoal.phase}`, reason: `${phaseGoal.phase} phase advanced` });
           if (met && goals[index + 1]) {
             const next = goals[index + 1];
             decisionStore.savePhaseGoal({ id: next.id, phase: next.phase, status: "active", payload: { ...next, status: "active", updatedAt: now } });
@@ -6810,12 +7138,24 @@ research
       // Only a second unchanged window may pause the campaign; otherwise a
       // locally stuck director can terminate before trying another formulation
       // family, evaluator route, or search operator.
-      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || (stagnation.stagnant && stagnationRecoveryStarted) || stopPolicy.action !== "continue" || elapsedMinutes >= campaign.budgetMinutes;
+      const stagnationPause = stagnation.stagnant && stagnationRecoveryStarted && gateDeferral?.advance !== true;
+      const terminal = decision.decision === "stop" || decision.goalStatus === "blocked" || stagnationPause || stopPolicy.action !== "continue" || elapsedMinutes >= campaign.budgetMinutes;
+      const unmetGate = phaseGate && !phaseDomainGateMet && gateDeferral?.advance !== true ? phaseGate : undefined;
+      const stagnationMessage = formatStagnationPause(stagnation.cycles, phaseGoal?.phase, unmetGate);
       if (terminal) {
-        if (decision.goalStatus === "blocked" || (stagnation.stagnant && stagnationRecoveryStarted) || stopPolicy.action === "pause") Object.assign(campaign, pauseCampaign(campaign));
+        if (decision.goalStatus === "blocked" || stagnationPause || stopPolicy.action === "pause") Object.assign(campaign, pauseCampaign(campaign));
         else if (elapsedMinutes >= campaign.budgetMinutes && decision.decision !== "stop" && stopPolicy.action !== "stop") Object.assign(campaign, pauseCampaignForBudget(campaign));
         else campaign.status = "completed";
-        if (stagnation.stagnant) decisionStore.appendEvent("research.stagnation.detected", { cycles: stagnation.cycles, signature: stagnation.signature, action: "pause_for_review" });
+        if (stagnation.stagnant) {
+          decisionStore.appendEvent("research.stagnation.detected", { cycles: stagnation.cycles, signature: stagnation.signature, action: "pause_for_review", phase: phaseGoal?.phase ?? null, unmetCriteria: unmetGate?.unmet ?? [], message: stagnationMessage });
+          if (stagnationPause) decisionStore.appendEvent("research.attention.raised", {
+            id: `stagnation:${phaseGoal?.phase ?? "campaign"}`,
+            severity: "critical",
+            kind: "stagnation",
+            summary: unmetGate ? `Campaign paused on the ${phaseGoal?.phase} phase gate; unmet: ${unmetGate.unmet.map((item) => item.criterion).join(", ")}` : `Campaign paused after ${stagnation.cycles} unchanged decisions; review the bottleneck`,
+            next: unmetGate ? [...new Set(unmetGate.unmet.flatMap((item) => item.commands))].join("  |  ") || "/status" : "/status",
+          });
+        }
         if (stopPolicy.action !== "continue") decisionStore.appendEvent("research.stop_policy.triggered", { cycle, action: stopPolicy.action, reason: stopPolicy.reason, samples: stopPolicy.samples, meanRewardPerMinute: stopPolicy.meanRewardPerMinute });
         decisionStore.saveCampaign(campaign);
       } else if (stagnation.stagnant) {
@@ -6831,13 +7171,89 @@ research
       finishCycleTask("completed", { terminal, decision: decision.decision, goalStatus: decision.goalStatus });
       decisionStore.close();
       console.log(formatResearchDecision(decision));
-      if (stagnation.stagnant && terminal) console.log(`\nCampaign paused after ${stagnation.cycles} unchanged active decisions; review the bottleneck before resuming.`);
+      if (gateDeferral?.advance) console.log(`\nPhase gate deferred · ${gateDeferral.reason}. Pending operator action: ${[...new Set(gateDeferral.deferred.flatMap((item) => item.commands))].join("; ")}`);
+      if (stagnation.stagnant && terminal) console.log(`\n${stagnationMessage}`);
       else if (stagnation.stagnant) console.log(`\nSearch stagnation detected · forcing a diverse research cycle (${stagnation.cycles} repeated decisions).`);
       if (stopPolicy.action !== "continue") console.log(`\nCampaign ${stopPolicy.action}: ${stopPolicy.reason}.`);
       if (criticReview) console.log(`\nCritic: ${criticReview.verdict} · confidence ${criticReview.confidence.toFixed(2)}\n${criticReview.summary}${criticReview.objections.length ? `\nObjections:\n${criticReview.objections.map((item) => `- ${item}`).join("\n")}` : ""}`);
       if (terminal) break;
     } while (true);
+    if (mode === "challenge") await finalizeCampaign(adapter);
   });
+
+function experimentEnvironmentFor(store: ResearchStore, experimentId: string): Record<string, string> {
+  const entry = store.experiments().find((candidate) => candidate.id === experimentId);
+  const parsed = entry ? ExperimentManifestSchema.safeParse(entry.payload) : undefined;
+  return parsed?.success ? { ...(parsed.data.resources.environment ?? {}) } : {};
+}
+
+/** The manifest's proxy-transfer calibration from recorded real evaluations, if configured and observed. */
+function loadProxyTransfer(config: ReturnType<typeof activeCompetition>["config"]): { calibration: ProxyTransferCalibration; score: (metrics: Record<string, unknown>) => number | undefined } | undefined {
+  const transfer = config.proxyTransfer;
+  if (!transfer) return undefined;
+  const calibration = calibrateProxyTransfer(transfer.components, readTransferObservations(resolve(root, transfer.observationsPath)));
+  if (!calibration.observations) return undefined;
+  // Board screens score only some components; the rest are unchanged from the baseline.
+  const store = new ResearchStore(statePath);
+  const baselinePayload = store.eventsByType("baseline.completed").at(-1)?.payload as { stdout?: string } | undefined;
+  store.close();
+  const baselineMetrics = baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, config.metric.name).metrics : {};
+  return { calibration, score: (metrics) => expectedExternalScore(transfer.components, calibration, metrics, baselineMetrics) };
+}
+
+/** Build final artifacts from the campaign's own best experiment, without a person in the loop. */
+async function finalizeCampaign(adapter: ReturnType<typeof activeCompetition>): Promise<void> {
+  const command = adapter.config.submission?.finalizeCommand;
+  if (!command?.length) return;
+  const store = new ResearchStore(statePath);
+  try {
+    const metricName = adapter.config.metric.name;
+    const baselinePayload = store.eventsByType("baseline.completed").at(-1)?.payload as { metric?: unknown; stdout?: string } | undefined;
+    const baselineMetric = typeof baselinePayload?.metric === "number" ? baselinePayload.metric : baselinePayload?.stdout ? parseMetricOutput(baselinePayload.stdout, metricName).metrics[metricName] : undefined;
+    // Re-score the leading candidates with the current evaluator before choosing: recorded scores can
+    // be stale (the evaluator or its validity gates may have changed during the campaign) or noisy.
+    const direction = adapter.config.metric.direction;
+    // With real-evaluation feedback, rank and choose by the transfer-adjusted expected real score
+    // rather than the raw proxy, so components whose proxy gains do not transfer cannot win.
+    const transfer = loadProxyTransfer(adapter.config);
+    const scoreOf = (stdout: string): number | undefined => {
+      const metrics = parseMetricOutput(stdout, metricName).metrics;
+      return transfer ? transfer.score(metrics) : metrics[metricName];
+    };
+    const baselineScore = transfer ? (baselinePayload?.stdout ? scoreOf(baselinePayload.stdout) : undefined) : baselineMetric;
+    if (transfer) store.appendEvent("campaign.finalize.transfer_calibration", { calibration: transfer.calibration, baselineExpected: baselineScore ?? null });
+    const ranked = rankFinalCandidates(store, metricName, direction, baselineScore, adapter.config.submission?.finalizeRescoreTop ?? 3, transfer?.score);
+    let candidate: FinalCandidate | undefined;
+    for (const entry of ranked) {
+      const cwd = join(entry.worktreePath, relative(root, adapter.workspacePath(root)));
+      const environment = safeWorkerEnvironment({ ...(adapter.config.execution?.environment ?? {}), ...experimentEnvironmentFor(store, entry.experimentId), HOME: prepareWorkerHome(entry.worktreePath) });
+      console.log(`\nRe-scoring final candidate ${entry.experimentId} (recorded ${metricName} ${entry.metric})...`);
+      const rescore = await runProcess(adapter.config.evaluator.command, cwd, adapter.config.evaluatorTimeoutMinutes * 60_000, streamProcessOutput, undefined, environment).catch(() => undefined);
+      const fresh = rescore && rescore.exitCode === 0 ? scoreOf(rescore.stdout) : undefined;
+      store.appendEvent("campaign.finalize.rescored", { experimentId: entry.experimentId, recorded: entry.metric, fresh: Number.isFinite(fresh) ? fresh : null, exitCode: rescore?.exitCode ?? null });
+      if (fresh === undefined || !Number.isFinite(fresh)) continue;
+      if (baselineScore !== undefined && !entry.accepted && !(direction === "maximize" ? fresh > baselineScore : fresh < baselineScore)) continue;
+      if (!candidate || (direction === "maximize" ? fresh > candidate.metric : fresh < candidate.metric)) candidate = { ...entry, metric: fresh };
+    }
+    if (!candidate) {
+      store.appendEvent("campaign.finalize.skipped", { reason: "no completed experiment beat the baseline", baselineMetric: baselineScore ?? null });
+      console.log("\nFinalize skipped: no completed experiment beat the baseline.");
+      return;
+    }
+    console.log(`\nFinalizing from ${candidate.experimentId} (${metricName} ${candidate.metric}${candidate.accepted ? ", validated" : ", best unvalidated"})...`);
+    const record = await runCampaignFinalize({
+      store, stateDirectory, root, workspaceRoot: adapter.workspacePath(root), candidate, command,
+      timeoutMs: (adapter.config.submission?.finalizeTimeoutMinutes ?? 120) * 60_000,
+      // Rebuild with exactly the environment the chosen experiment was evaluated under (arms and
+      // ablations are often configured through it), not just the manifest defaults.
+      environment: safeWorkerEnvironment({ ...(adapter.config.execution?.environment ?? {}), ...experimentEnvironmentFor(store, candidate.experimentId), HOME: prepareWorkerHome(candidate.worktreePath) }),
+      run: (cmd, cwd, timeoutMs, environment) => runProcess(cmd, cwd, timeoutMs, streamProcessOutput, undefined, environment),
+    });
+    console.log(record.exitCode === 0 ? `Finalize completed · ${join(stateDirectory, "final", "final.json")}` : `Finalize failed (exit ${record.exitCode}) · ${record.stderrTail.slice(-400)}`);
+  } finally {
+    store.close();
+  }
+}
 
 research.command("policy")
   .description("Show empirical search-operator evidence from autonomous cycles")
@@ -6858,7 +7274,12 @@ research.command("policy")
 research.command("propose")
   .argument("[objective]", "research objective", "Inspect the current workspace and propose three falsifiable, evidence-driven hypotheses.")
   .option("--reuse-recorded-baseline", "reuse the latest successful canonical baseline observation")
-  .action(async (objective: string, options: { reuseRecordedBaseline?: boolean }) => {
+  .option("--provider <provider>", "agent provider: codex, claude, or local", "codex")
+  .option("--model <model>", "provider model", DEFAULT_CODEX_MODEL)
+  .option("--thinking <effort>", "reasoning effort", "medium")
+  .action(async (objective: string, options: { reuseRecordedBaseline?: boolean; provider: string; model: string; thinking: string }) => {
+    const provider = options.provider;
+    if (!isAgentProvider(provider)) throw new Error("Choose provider codex, claude, or local.");
     const reuseRecordedBaseline = options.reuseRecordedBaseline ?? false;
     const store = new ResearchStore(statePath);
     const project = store.project();
@@ -6906,7 +7327,7 @@ research.command("propose")
     }
     store.appendEvent("research.observation", observation);
     const observationId = recordWorkspaceObservation(store, observation);
-    const recentEvents = store.recentEvents(20);
+    const recentEvents = store.recentEvents(20).filter(isAgentVisibleEvent);
     const researchMemory = researchMemoryContext(store, 30, objective, { objective, taskType: "general research", context: "research" });
     store.appendEvent("research.memory.retrieved", { ...researchMemory.retrieval, context: "one-shot-research" });
     const harnessChangeHistory = store.harnessChanges().slice(-8).map((change) => ({
@@ -6932,7 +7353,7 @@ research.command("propose")
       researchMemory,
       authoritativeEvidence: researchMemory.authoritativeObservations,
       harnessChangeHistory,
-    }, { provider: "codex", model: DEFAULT_CODEX_MODEL, reasoningEffort: "medium", fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
+    }, { provider, model: options.model, reasoningEffort: options.thinking, fallbackLocalModel: "qwen3.6:27b", cwd: root, executeTool: researchToolExecutor(adapter) });
     const decisionStore = new ResearchStore(statePath);
     decision = enforceGoalTermination(decision, { currentPhase: phaseGoal?.phase });
     const claimAudit = auditCurrentClaims(decisionStore);
@@ -7011,7 +7432,20 @@ program.command("baseline")
 
 const validation = new Command("validation").description("Manage the immutable validation policy");
 const validationPaths = () => ({ policy: join(stateDirectory, "validation-policy.json"), lock: join(stateDirectory, "validation-policy.lock.json") });
-const validationPolicyContract = (policy: ReturnType<typeof ValidationPolicySchema.parse>) => JSON.stringify({ version: policy.version, datasetRevision: policy.datasetRevision, primarySplit: policy.primarySplit, secondarySplits: policy.secondarySplits, folds: policy.folds, seeds: policy.seeds, metric: policy.metric, secondaryMetrics: policy.secondaryMetrics, acceptance: policy.acceptance });
+/** Candidate experiments that ran, or were evaluated, while this exact policy lock was in force. */
+function candidatesEvaluatedUnderPolicy(store: ResearchStore, lock: { checksum: string; lockedAt: string }): string[] {
+  const lockedAt = Date.parse(lock.lockedAt);
+  const since = (createdAt: string): boolean => !Number.isFinite(lockedAt) || Date.parse(createdAt) >= lockedAt;
+  const ids: string[] = [];
+  for (const event of store.eventsByTypes(["validation.policy.verified", "experiment.stage.full_validation.completed"])) {
+    if (!since(event.createdAt)) continue;
+    const payload = event.payload && typeof event.payload === "object" ? event.payload as { experimentId?: unknown; checksum?: unknown } : {};
+    if (typeof payload.checksum === "string" && payload.checksum !== lock.checksum) continue;
+    ids.push(typeof payload.experimentId === "string" ? payload.experimentId : "unknown-experiment");
+  }
+  for (const run of store.runs()) if (since(run.createdAt)) ids.push(run.experimentId);
+  return ids;
+}
 validation.command("inspect").action(() => {
   const paths = validationPaths();
   const lock = readValidationPolicyLock(paths.lock);
@@ -7045,7 +7479,10 @@ validation.command("reuse").description("Record reuse of a checksum-verified loc
   const adapter = activeCompetition();
   const policy = ValidationPolicySchema.parse(JSON.parse(readFileSync(paths.policy, "utf8")));
   const expected = createValidationPolicy(adapter.config);
-  if (validationPolicyContract(policy) !== validationPolicyContract(expected)) throw new Error("The locked policy does not match the active task's dataset, split, metric, or acceptance contract; do not reuse it.");
+  if (validationPolicyContract(policy) !== validationPolicyContract(expected)) {
+    const changed = (["version", "datasetRevision", "primarySplit", "secondarySplits", "folds", "seeds", "metric", "secondaryMetrics", "acceptance"] as const).filter((field) => JSON.stringify(policy[field]) !== JSON.stringify(expected[field]));
+    throw new Error(`The locked policy does not match the active task's dataset, split, metric, or acceptance contract (changed: ${changed.join(", ")}); do not reuse it. To replace it deliberately:\n${STALE_VALIDATION_LOCK_COMMANDS.map((command) => `  ${command}`).join("\n")}`);
+  }
   const store = new ResearchStore(statePath);
   store.appendEvent("validation.policy.reused", { path: paths.policy, checksum: lock.checksum, version: policy.version, datasetRevision: policy.datasetRevision, primarySplit: policy.primarySplit, metric: policy.metric, locked: true, reason: "checksum-verified immutable policy exactly matches the active task contract" });
   store.close();
@@ -7118,6 +7555,39 @@ experiment.command("gate")
     store.close();
     console.log(`Experiment ${experimentId} gates\n  leakage audit: ${gates.leakageAuditPassed ? "approved" : "pending"}\n  reviewer: ${gates.reviewerApproved ? "approved" : "pending"}`);
   });
+experiment.command("reconcile")
+  .argument("<id>", "experiment identifier")
+  .description("Release a remote quarantine only when every allocation has durable termination evidence")
+  .option("--cancel-container", "remove unresolved owned Docker workers and their anonymous volumes before reconciliation")
+  .option("--cancel-modal", "stop a uniquely owned ephemeral Modal app before verifying termination")
+  .action(async (id: string, options: { cancelContainer?: boolean; cancelModal?: boolean }) => {
+    const result = await reconcileRemoteExperiment(statePath, root, id, { cancelContainer: options.cancelContainer, cancelModal: options.cancelModal });
+    if (!result.released) throw new Error(`Experiment ${id} has no complete terminal allocation evidence; quarantine remains in place.`);
+    console.log(`Experiment ${id}: remote termination reconciled; no measurements were imported.`);
+  });
+experiment.command("implement")
+  .argument("<id>", "experiment identifier")
+  .description("Implement a proposed experiment in its isolated worktree without running its evaluator")
+  .requiredOption("--model <model>", "explicit implementation model")
+  .option("--provider <provider>", "codex, claude, or local", "codex")
+  .option("--thinking <level>", "implementation reasoning effort", "high")
+  .action(async (id: string, options: { model: string; provider: string; thinking: string }) => {
+    if (!["codex", "claude", "local"].includes(options.provider)) throw new Error("Implementation provider must be codex, claude, or local.");
+    const store = new ResearchStore(statePath);
+    const entry = store.experiments().find(candidate => candidate.id === id);
+    if (!entry) { store.close(); throw new Error(`Experiment not found: ${id}`); }
+    const manifest = ExperimentManifestSchema.parse(entry.payload);
+    const hypothesis = store.hypotheses().find(candidate => candidate.id === manifest.hypothesisId)?.payload;
+    store.close();
+    const adapter = activeCompetition();
+    await implementCampaignHypothesis(root, id, hypothesis, manifest, {
+      provider: options.provider as "codex" | "claude" | "local", model: options.model,
+      thinking: options.thinking, limitPolicy: "stop",
+      protectedCommands: [adapter.config.evaluator.command],
+      workspaceRelativePath: relative(root, adapter.workspacePath(root)),
+    });
+    console.log(`Experiment ${id} implementation staged; evaluator has not run.`);
+  });
 experiment.command("run")
   .argument("<id>", "experiment identifier")
   .option("--reduced-only", "stop after the reduced validation gate and persist its metric")
@@ -7129,6 +7599,9 @@ experiment.command("run")
     const entry = store.experiments().find((candidate) => candidate.id === id);
     if (!entry) { store.close(); throw new Error(`Experiment ${id} is not registered. Run: evidra experiment propose`); }
     const entryPayload = entry.payload as Record<string, unknown>;
+    const allocation = store.remoteExecutionState(id);
+    if (allocation.recorded && !allocation.confirmed) { store.close(); throw new Error(`Experiment ${id} has unconfirmed remote allocations; reconcile them before replay.`); }
+    if (entryPayload.remoteReconciliationRequired === true) { store.close(); throw new Error(`Experiment ${id} requires remote reconciliation before replay.`); }
     const replay = experimentReplayDecision(entryPayload.status);
     if (!replay.allowed) { store.close(); throw new Error(replay.reason); }
     if (options.skipReduced && (entryPayload.status !== "screened" || typeof entryPayload.reducedRunId !== "string")) {
@@ -7142,8 +7615,8 @@ experiment.command("run")
     const declaredSecondaryMetrics = manifest.evaluation.metrics.slice(1);
     const validationPathsForRun = validationPaths();
     if (readValidationPolicyLock(validationPathsForRun.lock)?.locked) {
-      assertValidationPolicy(validationPathsForRun.policy, validationPathsForRun.lock);
-      store.appendEvent("validation.policy.verified", { experimentId: id, lockPath: validationPathsForRun.lock });
+      const verifiedLock = assertValidationPolicy(validationPathsForRun.policy, validationPathsForRun.lock);
+      store.appendEvent("validation.policy.verified", { experimentId: id, lockPath: validationPathsForRun.lock, checksum: verifiedLock.checksum });
     }
     let executionPlan: ExecutionStage[] = Array.isArray((entry.payload as { executionPlan?: unknown }).executionPlan)
       ? (entry.payload as { executionPlan: ExecutionStage[] }).executionPlan
@@ -7165,7 +7638,25 @@ experiment.command("run")
         throw new Error(`Experiment ${id} blocked by the campaign GPU budget: ${budgetDecision.reason}. Increase --gpu-budget or choose a CPU/reduced-cost route.`);
       }
     }
-    const implementationEvent = store.eventsByType("experiment.implementation.completed").reverse().find((event) => (event.payload as { experimentId?: unknown } | undefined)?.experimentId === id);
+    // A replication has no implementation of its own: it must re-evaluate its
+    // parent's pinned code, never a clean HEAD checkout that silently drops the
+    // candidate change and "replicates" the baseline instead.
+    // Direct CLI proposal/run must honor the same source pins as autonomous
+    // execution. A fresh HEAD worktree is not the declared verify-only subject.
+    const existingImplementationEvents = store.eventsByType("experiment.implementation.completed");
+    const alreadyImplemented = existingImplementationEvents.some((event) => {
+      const experimentId = (event.payload as { experimentId?: unknown }).experimentId;
+      return experimentId === id || (Boolean(manifest.parent) && experimentId === manifest.parent);
+    });
+    if (manifest.implementationMode === "verify" && !alreadyImplemented) {
+      await implementCampaignHypothesis(root, id, hypothesis?.payload, manifest, {
+        provider: "codex", model: "", thinking: "low",
+        workspaceRelativePath: relative(root, adapter.workspacePath(root)),
+      });
+    }
+    const implementationEvents = store.eventsByType("experiment.implementation.completed").reverse();
+    const implementationFor = (experimentId: string | undefined) => experimentId ? implementationEvents.find((event) => (event.payload as { experimentId?: unknown } | undefined)?.experimentId === experimentId) : undefined;
+    const implementationEvent = implementationFor(id) ?? (manifest.parent ? implementationFor(manifest.parent) : undefined);
     let pinnedWorktree: string | undefined;
     if (implementationEvent) {
       const payload = implementationEvent.payload as Partial<ImplementationSnapshot>;
@@ -7210,6 +7701,9 @@ experiment.command("run")
     });
     const command = verificationPlan.primaryCommand ?? experimentCommandFor(adapter, hypothesis?.payload);
     const contract = validateExecutionContract(manifest, experimentCwd, command);
+    const missingVerifierScripts = missingVerificationScripts(experimentCwd, verificationPlan.commands);
+    contract.reasons.push(...missingVerifierScripts);
+    contract.valid = contract.valid && missingVerifierScripts.length === 0;
     const contractStore = new ResearchStore(statePath);
     contractStore.appendEvent(contract.valid ? "experiment.stage.feasibility.completed" : "experiment.stage.feasibility.failed", { experimentId: id, reasons: contract.reasons, command, cwd: experimentCwd });
     contractStore.close();
@@ -7222,7 +7716,7 @@ experiment.command("run")
     }
     const candidateEstimator = (manifest.change.configPatch as { estimatorPath?: unknown }).estimatorPath;
     const isCandidateEvaluation = typeof candidateEstimator === "string" && candidateEstimator !== adapter.config.evaluator.estimatorPath;
-    const executor = executorFor(manifest.resources.executor, root);
+    const executor = executorFor(manifest.resources.executor, root, (event) => recordRemoteExecution(statePath, event));
     const smokeCommand = !verificationPlan.standalone && adapter.config.execution?.smokeCommand
       ? commandForCandidate(adapter.config.execution.smokeCommand, hypothesis?.payload)
       : undefined;
@@ -7566,10 +8060,10 @@ experiment.command("run")
           cwd: baselinePayload?.cwd,
         };
         const comparison = compareRuns(baselineRun, RunResultSchema.parse(recorded), metricName, primaryMetricDirection === "minimize");
-        const acceptedExperimentIds = new Set(resultStore.eventsByType("experiment.validation.assessed")
-          .filter((event) => Boolean((event.payload as { acceptance?: { accepted?: unknown } }).acceptance?.accepted))
-          .map((event) => (event.payload as { experimentId?: unknown }).experimentId)
-          .filter((experimentId): experimentId is string => typeof experimentId === "string" && experimentId !== id));
+        // The search ratchet climbs on every completed run that beat the champion, as autoresearch
+        // keeps each improving commit. Validation acceptance gates claims and submissions, not search.
+        const campaignStartedAt = activeCampaignStart(resultStore);
+        const acceptedExperimentIds = new Set(championExperimentIds(resultStore, campaignStartedAt).filter((experimentId) => experimentId !== id));
         const historicalRuns = resultStore.experiments().flatMap((candidate) => {
           if (!acceptedExperimentIds.has(candidate.id)) return [];
           const candidateManifest = ExperimentManifestSchema.safeParse(candidate.payload);
@@ -7588,6 +8082,26 @@ experiment.command("run")
         const ratchetBaselineRun = historicalRuns.find((entry) => entry.id === ratchet.sourceId)?.run ?? baselineRun;
         const ratchetComparison = ratchet.sourceId === baselineRun.runId ? comparison : compareRuns(ratchetBaselineRun, RunResultSchema.parse(recorded), metricName, primaryMetricDirection === "minimize");
         resultStore.appendEvent("experiment.ratchet.checked", { experimentId: id, originalBaseline: baselineMetric, reference: ratchet, referenceRunId: ratchet.sourceId, referenceMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, comparison: ratchetComparison });
+        if (ratchetComparison.direction === "improved") {
+          const holdoutCommand = adapter.config.evaluator.holdoutCommand;
+          let holdoutPassed = true;
+          if (holdoutCommand) {
+            let reference = holdoutReference(resultStore, campaignStartedAt);
+            if (reference === undefined) {
+              reference = await holdoutMetricFor(adapter.workspacePath(root), holdoutCommand, prepareExperimentEnvironment(manifest, adapter.workspacePath(root)), metricName, adapter.config.evaluatorTimeoutMinutes);
+              resultStore.appendEvent("experiment.holdout.completed", { experimentId: "original", metric: reference ?? null, kept: reference !== undefined });
+            }
+            const candidateHoldout = await holdoutMetricFor(experimentCwd, commandForCandidate(holdoutCommand, hypothesis?.payload), experimentEnvironment, metricName, adapter.config.evaluatorTimeoutMinutes);
+            holdoutPassed = holdoutAllows(candidateHoldout, reference, primaryMetricDirection);
+            resultStore.appendEvent("experiment.holdout.completed", { experimentId: id, metric: candidateHoldout ?? null, reference: reference ?? null, kept: holdoutPassed });
+          }
+          if (holdoutPassed) {
+            resultStore.appendEvent("experiment.champion.updated", { experimentId: id, runId: result.runId, metric: recorded.metrics[metricName], previousRunId: ratchet.sourceId, previousMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, hypothesisId: manifest.hypothesisId });
+            console.log(`New champion: ${metricName} ${ratchetBaselineRun.metrics[metricName] ?? baselineMetric} → ${recorded.metrics[metricName]}; later experiments start from this implementation.`);
+          } else {
+            console.log(`${metricName} improved but the hidden holdout did not; not kept (likely overfitting the development split).`);
+          }
+        }
         const operator = manifest.searchOperator ?? "ucb_portfolio";
         resultStore.appendEvent("experiment.comparison.completed", { experimentId: id, baselineSource: baselineEvent?.createdAt ?? "baseline", comparison, searchOperator: operator });
         const gates = resultStore.experimentGates(id);

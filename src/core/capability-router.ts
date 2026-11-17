@@ -5,7 +5,7 @@ export type CapabilityTier = "C0" | "C1" | "C2" | "C3";
 export interface CapabilityRouteInput {
   objective: string;
   mode: "research" | "challenge";
-  provider: "codex" | "local";
+  provider: "codex" | "claude" | "local";
   model?: string;
   autonomy: AutonomyLevel;
   recentFailureCount?: number;

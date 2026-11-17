@@ -1,0 +1,74 @@
+{
+  "at": "2026-10-12T10:02:28.771Z",
+  "before": {
+    "state": {
+      "recorded": true,
+      "confirmed": false,
+      "submissionIds": []
+    },
+    "measurements": 0
+  },
+  "recovered": [
+    "peer"
+  ],
+  "reconciliation": {
+    "released": true,
+    "queried": 1
+  },
+  "after": {
+    "state": {
+      "recorded": true,
+      "confirmed": true,
+      "submissionIds": [
+        "df6f55a7-3c36-4b0a-804f-8d85b63e07f3"
+      ]
+    },
+    "payload": {
+      "id": "peer",
+      "resources": {
+        "executor": "modal",
+        "timeoutMinutes": 2
+      },
+      "evaluation": {
+        "requiredArtifacts": [
+          "result.json"
+        ]
+      },
+      "status": "failed",
+      "failure": "Controller exited; worker termination is unconfirmed. Remote reconciliation is required before replay.",
+      "recoveredAt": "2026-10-12T10:02:25.429Z",
+      "stale": true,
+      "recoveryAttempted": false,
+      "remoteReconciliationRequired": false,
+      "remoteOutcomeStatus": "blocked",
+      "remoteReconciledAt": "2026-10-12T10:02:28.765Z"
+    },
+    "measurements": 0,
+    "eventChain": "valid"
+  },
+  "peerCleanupRequests": 0,
+  "proof": [
+    {
+      "type": "run.remote.terminal",
+      "payload": {
+        "experimentId": "peer",
+        "submissionId": "df6f55a7-3c36-4b0a-804f-8d85b63e07f3",
+        "allocationName": "evidra-df6f55a7-3c36-4b0a-804f-8d85b63e07f3",
+        "callId": "fc-01M4QRX34TRCB92C4X5635EVV6",
+        "state": "COMPLETED",
+        "exitCode": 0,
+        "completionEvidence": "sdk-result",
+        "appId": "ap-Zi81G7eSWFKyuvTE0qsdQl",
+        "appState": "STOPPED",
+        "runningTasks": 0,
+        "at": "2026-10-12T10:02:28.761Z",
+        "executor": "modal",
+        "protocol": "modal-call-v1",
+        "phase": "terminal"
+      },
+      "createdAt": "2026-10-12T10:02:28.762Z",
+      "eventHash": "37fd4afb7a7406ccb715af571adc5745b5dabaebf47b5b4e6a3e84b0efda0658"
+    }
+  ],
+  "scope": "Restored consistent backup from a live CPU probe; stale recovery quarantined the unresolved peer, then read-only SDK stopped-app evidence released it with failed status and no imported measurements. No campaign takeover, artifacts restore or reservation-retention claim."
+}

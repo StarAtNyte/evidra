@@ -576,6 +576,14 @@ long strings, and records dropped/truncated sections in `contextBudget`. This
 prevents long-lived campaigns from turning accumulated memory into uncontrolled
 prompt growth while preserving provenance about what the model actually saw.
 
+The serialized context ceiling now includes JSON escaping and bounded audit
+metadata, and provider prompts use that same compact JSON. Current steering,
+phase state, and recent tool failures take precedence over older material;
+shortened tool evidence retains its outcome and trust metadata. See the
+[production readiness audit](../production-readiness.md) for the component
+mapping to the user's harness-design paper and the remaining token-budget,
+transcript-policy, backend, and external-evaluation gates.
+
 The same principle now applies below the benchmark layer: recent executor
 failure classes are fed directly into the next allocation. An invalid metric or
 corrupt artifact prioritizes verifier repair, a missing-data failure prioritizes
@@ -717,3 +725,18 @@ failed/rejected directions are retained as negative evidence rather than being
 silently repeated unchanged. The agenda is provider- and domain-neutral, so a
 falsification test can describe a metric, artifact, behavior, proof, or system
 check.
+
+### Harness learning from execution feedback
+
+[Zhang et al., Harness Learning Enables Generalizable Test-Time Adaptation](https://arxiv.org/pdf/2609.35738)
+trains a proposer to revise executable harnesses around a frozen solver.
+Held-out questions are excluded from adaptation; iterative gains do not establish
+matched-compute superiority, and multistep training is not consistently better.
+
+For Evidra, the next experiment should give bounded failure traces and revision
+history to the existing change-contract loop. Compare a fixed harness,
+independent proposals and sequential revisions under equal total cost. Preserve
+permissions, evaluators and budgets outside the editable surface. Audit whether
+new tools actually affect answers. Existing adaptation/retest and transfer
+checks provide foundations; trained proposers and validated adaptation gains
+remain unimplemented or unproven.

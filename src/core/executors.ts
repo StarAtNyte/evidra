@@ -1,9 +1,37 @@
-import { runProcess, type ProcessControl } from "./process.js";
+import { boundProcessOutput, processFailureResult, ProcessStartError, runProcess, type ProcessControl } from "./process.js";
 import { parseLearningCurve } from "./early-stopping.js";
 import { redactStructured } from "./redaction.js";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { constants, openSync, closeSync, fstatSync, readSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ExperimentExecutorKind, ExperimentManifest, ProcessResult, RunResult } from "./types.js";
+import { createHash, randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+
+export interface RemoteExecutionEvent {
+  executor: "slurm" | "container" | "modal";
+  experimentId: string;
+  submissionId: string;
+  phase: "submitting" | "allocated" | "submitted" | "terminal";
+  at: string;
+  jobId?: string;
+  allocationName?: string;
+  cluster?: string;
+  state?: string;
+  exitCode?: number;
+  runtime?: "docker" | "podman";
+  containerId?: string;
+  daemonId?: string;
+  completionEvidence?: "client-envelope" | "sdk-result" | "sdk-allocation" | "spawn-error";
+  spawnErrorCode?: string;
+  protocol?: "modal-call-v1";
+  callId?: string;
+  appId?: string;
+  appName?: string;
+  appState?: "STOPPED";
+  runningTasks?: number;
+}
+export type RemoteExecutionObserver = (event: RemoteExecutionEvent) => void;
 
 export interface ExperimentExecutor {
   readonly kind: ExperimentExecutorKind;
@@ -76,11 +104,13 @@ export function prepareExperimentEnvironment(manifest: ExperimentManifest, cwd: 
     },
     configPatch: manifest.change?.configPatch ?? {},
   });
-  writeFileSync(configPath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+  const serializedConfig = `${JSON.stringify(payload, null, 2)}\n`;
+  writeFileSync(configPath, serializedConfig, { mode: 0o600 });
   return {
     ...safeWorkerEnvironment({ ...(manifest.resources.environment ?? {}), ...overrides, HOME: workerHome }),
     EVIDRA_EXPERIMENT_ID: manifest.id,
     EVIDRA_EXPERIMENT_CONFIG: configPath,
+    EVIDRA_EXPERIMENT_CONFIG_SHA256: createHash("sha256").update(serializedConfig).digest("hex"),
     EVIDRA_DATASET_VERSION: datasetVersion,
     EVIDRA_SPLIT_VERSION: splitVersion,
     EVIDRA_MATRIX_REQUIRED: manifest.evaluation?.matrixRequired ? "1" : "0",
@@ -169,21 +199,26 @@ export function parseEvaluationMatrix(stdout: string, metricName: string): Evalu
 
 /** Parse the final JSON emitted by modal_app.py without trusting progress logs. */
 export function parseModalWorkerResult(output: string): ModalWorkerResult | undefined {
-  for (const line of output.trim().split("\n").reverse()) {
-    try {
-      const candidate = JSON.parse(line) as Record<string, unknown>;
-      if (!candidate || typeof candidate !== "object" || typeof candidate.exitCode !== "number" || !Number.isInteger(candidate.exitCode) || candidate.exitCode < 0 || candidate.exitCode > 255) continue;
-      const artifacts = candidate.artifacts ?? {};
-      if (typeof candidate.stdout !== "string" || typeof candidate.stderr !== "string" || typeof artifacts !== "object" || Array.isArray(artifacts)) continue;
-      const normalized: Record<string, string> = {};
-      for (const [name, encoded] of Object.entries(artifacts)) {
-        if (typeof encoded !== "string" || encoded.length > 96 * 1024 * 1024 || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) return undefined;
-        normalized[name] = encoded;
-      }
-      return { exitCode: candidate.exitCode, stdout: candidate.stdout, stderr: candidate.stderr, artifacts: normalized };
-    } catch { /* Modal progress output is not the worker result. */ }
+  let result: ModalWorkerResult | undefined;
+  for (const line of output.trim().split("\n")) {
+    let candidate: Record<string, unknown>;
+    try { candidate = JSON.parse(line) as Record<string, unknown>; }
+    catch { continue; /* Modal progress output is not the worker result. */ }
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate) || !Object.hasOwn(candidate, "exitCode")) continue;
+    // Never fall back to an earlier success after malformed or duplicate
+    // completion evidence. The worker emits exactly one terminal envelope.
+    if (result || typeof candidate.exitCode !== "number" || !Number.isInteger(candidate.exitCode) || candidate.exitCode < 0 || candidate.exitCode > 255) return undefined;
+    const artifacts = candidate.artifacts === undefined ? {} : candidate.artifacts;
+    if (typeof candidate.stdout !== "string" || typeof candidate.stderr !== "string" || !artifacts || typeof artifacts !== "object" || Array.isArray(artifacts)) return undefined;
+    const normalized: Record<string, string> = {};
+    for (const [name, encoded] of Object.entries(artifacts)) {
+      if (typeof encoded !== "string" || encoded.length > 96 * 1024 * 1024 || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) return undefined;
+      if (Buffer.from(encoded, "base64").toString("base64") !== encoded) return undefined;
+      normalized[name] = encoded;
+    }
+    result = { exitCode: candidate.exitCode, stdout: candidate.stdout, stderr: candidate.stderr, artifacts: normalized };
   }
-  return undefined;
+  return result;
 }
 
 function safeArtifactPath(root: string, name: string): string | undefined {
@@ -400,7 +435,7 @@ export function validateRunMetric(result: RunResult, metricName: string): RunRes
 export class LocalExecutor implements ExperimentExecutor {
   readonly kind = "local" as const;
 
-  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = manifest.evaluation?.metrics?.[0]?.name ?? "score", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
     const experimentEnvironment = prepareExperimentEnvironment(manifest, cwd, environment);
     try {
       return toRunResult(manifest, await runProcess(command, cwd, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, experimentEnvironment, manifest.resources.earlyStopping), metricName);
@@ -411,24 +446,35 @@ export class LocalExecutor implements ExperimentExecutor {
   }
 }
 
-export function containerCommand(runtime: "docker" | "podman", image: string, cwd: string, command: string[], environment: Record<string, string> = {}): string[] {
+export function containerCommand(runtime: "docker" | "podman", image: string, cwd: string, command: string[], environment: Record<string, string> = {}, identity?: { name: string; cidFile: string }): string[] {
+  if (!command.length || command.some((part) => typeof part !== "string" || part.includes("\0")) || !command[0].trim() || command[0].startsWith("-")) throw new Error("Container commands require a non-empty executable and valid argv strings.");
   if (!/^[A-Za-z0-9][A-Za-z0-9._/@:-]*$/.test(image)) throw new Error("Container image must be a plain image reference, not a runtime option or shell expression.");
   const args = [runtime, "run", "--rm", "--init", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "512", "--network", "none", "--tmpfs", "/tmp:rw,nosuid,nodev", "--volume", `${cwd}:/workspace:rw`, "--workdir", "/workspace"];
+  if (identity) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(identity.name) || !isAbsolute(identity.cidFile)) throw new Error("Container identity requires a plain name and absolute receipt path.");
+    args.splice(args.indexOf("--rm"), 1);
+    args.push("--name", identity.name, "--cidfile", identity.cidFile);
+    args.push("--label", `org.evidra.allocation=${identity.name}`);
+  }
   if (typeof process.getuid === "function" && typeof process.getgid === "function") args.push("--user", `${process.getuid()}:${process.getgid()}`);
   for (const [key, value] of Object.entries(environment)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || /[\r\n]/.test(value)) throw new Error("Invalid container environment entry.");
     args.push("--env", `${key}=${value}`);
   }
-  return [...args, image, ...command];
+  // Images supply dependencies, not alternate startup code or background work.
+  return [...args, "--no-healthcheck", "--entrypoint", command[0], image, ...command.slice(1)];
 }
 
 export class ContainerExecutor implements ExperimentExecutor {
   readonly kind = "container" as const;
 
-  constructor(private readonly workspaceRoot?: string) {}
+  constructor(private readonly workspaceRoot?: string, private readonly onRemoteExecution?: RemoteExecutionObserver) {}
 
-  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
-    const experimentEnvironment = prepareExperimentEnvironment(manifest, cwd, environment);
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = manifest.evaluation?.metrics?.[0]?.name ?? "score", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
+    prepareExperimentEnvironment(manifest, cwd, environment);
+    // Runtime clients need controller-side endpoint/auth configuration. Only
+    // explicit --env entries above cross into the worker container.
+    const runtimeEnvironment = { ...process.env };
     const requestedRuntime = process.env.EVIDRA_CONTAINER_RUNTIME;
     const candidates: Array<"docker" | "podman"> = requestedRuntime === "podman" ? ["podman"] : requestedRuntime === "docker" ? ["docker"] : requestedRuntime ? [] : ["docker", "podman"];
     const launchRoot = resolve(this.workspaceRoot ?? cwd);
@@ -443,18 +489,61 @@ export class ContainerExecutor implements ExperimentExecutor {
     if (!runtime) {
       return toRunResult(manifest, { command, cwd, exitCode: 127, durationMs: 0, stdout: "", stderr: "No Docker or Podman runtime was found. Install one or select the local executor." }, metricName);
     }
+    let daemonId: string | undefined;
+    if (runtime === "docker") {
+      try {
+        const info = await runProcess([runtime, "info", "--format", "{{.ID}}"], launchRoot, 10_000, undefined, undefined, runtimeEnvironment);
+        if (info.exitCode === 0 && /^[A-Za-z0-9][A-Za-z0-9:-]{15,127}$/.test(info.stdout.trim())) daemonId = info.stdout.trim();
+      } catch { /* Refuse launch when the daemon identity cannot be established. */ }
+      if (!daemonId) return toRunResult(manifest, { command, cwd, exitCode: 127, durationMs: 0, stdout: "", stderr: "Docker daemon identity is unavailable; container launch refused." }, metricName);
+    }
+    const receiptRoot = mkdtempSync(join(tmpdir(), "evidra-container-"));
+    const submissionId = randomUUID();
+    const identity = { name: `evidra-${submissionId}`, cidFile: join(receiptRoot, "container-id") };
+    const observe = (phase: RemoteExecutionEvent["phase"], details: Partial<RemoteExecutionEvent> = {}): void => {
+      this.onRemoteExecution?.({ ...details, executor: "container", experimentId: manifest.id, submissionId, allocationName: identity.name, runtime, ...(daemonId ? { daemonId } : {}), phase, at: new Date().toISOString() });
+    };
+    // An interrupted runtime client can leave a daemon-owned worker running.
+    try { observe("submitting"); }
+    catch (error) { rmSync(receiptRoot, { recursive: true, force: true }); throw error; }
+    const started = Date.now();
     try {
-      const result = await runProcess(containerCommand(runtime, image, resolve(cwd), command, {
+      let result: ProcessResult;
+      try { result = await runProcess(containerCommand(runtime, image, resolve(cwd), command, {
         EVIDRA_EXPERIMENT_ID: manifest.id,
         EVIDRA_EXPERIMENT_CONFIG: "/workspace/.sota/experiment-config.json",
         EVIDRA_DATASET_VERSION: manifest.datasetVersion ?? "unknown",
         EVIDRA_SPLIT_VERSION: manifest.splitVersion ?? "unknown",
         EVIDRA_MATRIX_REQUIRED: manifest.evaluation?.matrixRequired ? "1" : "0",
-      }), launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, experimentEnvironment, manifest.resources.earlyStopping);
-      return toRunResult(manifest, { ...result, command, cwd }, metricName);
+      }, identity), launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, runtimeEnvironment, manifest.resources.earlyStopping); }
+      catch (error) { result = processFailureResult(command, cwd, error); }
+      const receipt = boundedFile(receiptRoot, "container-id").trim();
+      const containerId = /^[a-f0-9]{64}$/.test(receipt) ? receipt : undefined;
+      let receiptError: unknown;
+      if (containerId) {
+        try { observe("submitted", { containerId }); }
+        catch (error) { receiptError = error instanceof Error ? error : new Error(String(error)); }
+      }
+      const control = async (argv: string[]): Promise<ProcessResult> => {
+        try { return await runProcess(argv, launchRoot, 10_000, undefined, undefined, runtimeEnvironment); }
+        catch (error) { return processFailureResult(argv, launchRoot, error); }
+      };
+      const removed = await control([runtime, "rm", "--force", "--volumes", containerId ?? identity.name]);
+      const inspected = await control([runtime, "ps", "--all", "--no-trunc", "--filter", containerId ? `id=${containerId}` : `name=${identity.name}`, "--format", "{{.ID}}"]);
+      const daemonAfter = daemonId ? await control([runtime, "info", "--format", "{{.ID}}"]): undefined;
+      const confirmed = containerId !== undefined && inspected.exitCode === 0 && !inspected.stdout.trim() && (!daemonId || daemonAfter?.exitCode === 0 && daemonAfter.stdout.trim() === daemonId);
+      if (confirmed && !receiptError) observe("terminal", { containerId, state: "REMOVED", exitCode: 0 });
+      const stderr = boundProcessOutput([result.stderr,
+        confirmed ? `Container ${containerId}: removed and verified absent.` : "",
+        removed.exitCode !== 0 ? `Container removal request exited ${removed.exitCode}: ${removed.stderr}` : "",
+        !confirmed ? `Container termination is unconfirmed (${runtime}, ${containerId ?? identity.name}); reconcile before replay. ${inspected.stderr}` : "",
+        receiptError ? `Container receipt durability failed: ${String(receiptError)}` : "",
+      ].filter(Boolean).join("\n"));
+      const outcome = toRunResult(manifest, { ...result, command, cwd, durationMs: Date.now() - started, stderr, exitCode: !confirmed && result.exitCode === 0 ? 1 : result.exitCode }, metricName);
+      return confirmed && !receiptError ? outcome : { ...outcome, status: "failed", failureClass: "unknown", exitCode: outcome.exitCode === 0 ? 1 : outcome.exitCode };
     } catch (error) {
-      return toRunResult(manifest, { command, cwd, exitCode: 126, durationMs: 0, stdout: "", stderr: error instanceof Error ? error.message : String(error) }, metricName);
-    }
+      return { ...toRunResult(manifest, { command, cwd, exitCode: 126, durationMs: Date.now() - started, stdout: "", stderr: `Container termination is unconfirmed (${identity.name}): ${error instanceof Error ? error.message : String(error)}` }, metricName), failureClass: "unknown" };
+    } finally { rmSync(receiptRoot, { recursive: true, force: true }); }
   }
 }
 
@@ -466,33 +555,67 @@ function shellQuote(value: string): string {
 export function slurmCommand(jobName: string, cwd: string, command: string[], stdoutPath: string, stderrPath: string, timeoutMinutes: number, gpu?: string): string[] {
   if (!command.length || command.some((part) => typeof part !== "string")) throw new Error("Slurm commands must contain a non-empty argv array.");
   const safeJobName = jobName.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 80);
-  const args = ["sbatch", "--parsable", "--job-name", safeJobName || "evidra", "--chdir", resolve(cwd), "--output", resolve(stdoutPath), "--error", resolve(stderrPath), "--time", String(Math.max(1, Math.ceil(timeoutMinutes)))];
+  const args = ["sbatch", "--parsable", "--no-requeue", "--job-name", safeJobName || "evidra", "--chdir", resolve(cwd), "--output", resolve(stdoutPath), "--error", resolve(stderrPath), "--time", String(Math.max(1, Math.ceil(timeoutMinutes)))];
   if (gpu) args.push("--gres", `gpu:${gpu}`);
   args.push("--wrap", `exec ${command.map(shellQuote).join(" ")}`);
   return args;
 }
 
-function boundedFile(path: string): string {
+function boundedFile(root: string, name: string): string {
+  let descriptor: number | undefined;
   try {
-    const value = readFileSync(path, "utf8");
-    if (Buffer.byteLength(value, "utf8") <= 16 * 1024 * 1024) return value;
-    return `${value.slice(0, 8 * 1024 * 1024)}\n...[output truncated by Evidra]...\n${value.slice(-8 * 1024 * 1024)}`;
+    const path = safeArtifactPath(root, name);
+    if (!path) return "";
+    const before = lstatSync(path);
+    if (!before.isFile()) return "";
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const current = fstatSync(descriptor);
+    if (!current.isFile() || before.dev !== current.dev || before.ino !== current.ino) return "";
+    const limit = 16 * 1024 * 1024;
+    const read = (position: number, length: number): Buffer => {
+      const bytes = Buffer.alloc(length);
+      let used = 0;
+      while (used < length) {
+        const received = readSync(descriptor!, bytes, used, length - used, position + used);
+        if (!received) break;
+        used += received;
+      }
+      return bytes.subarray(0, used);
+    };
+    if (current.size <= limit) return boundProcessOutput(read(0, current.size).toString("utf8"));
+    const half = Math.floor(limit / 2) - 128;
+    const head = read(0, half + 3);
+    const tail = read(current.size - half - 3, half + 3);
+    let headEnd = Math.min(half, head.length);
+    let tailStart = Math.min(3, tail.length);
+    while (headEnd > 0 && (head[headEnd] & 0xc0) === 0x80) headEnd -= 1;
+    while (tailStart < tail.length && (tail[tailStart] & 0xc0) === 0x80) tailStart += 1;
+    return boundProcessOutput(head.subarray(0, headEnd).toString("utf8") + "\n...[output truncated by Evidra]...\n" + tail.subarray(tailStart).toString("utf8"));
   } catch { return ""; }
+  finally { if (descriptor !== undefined) closeSync(descriptor); }
 }
 
-function slurmExitCode(value: string): number {
-  const normalized = value.trim().toUpperCase();
-  if (normalized.startsWith("COMPLETED")) return 0;
-  if (normalized.startsWith("CANCELLED") || normalized.startsWith("TIMEOUT")) return 130;
-  return 1;
+/** Match the allocation itself; a completed batch step is not job completion. */
+export function parseSlurmAccounting(output: string, jobId: string, allocationName?: string): { state: string; exitCode: number; terminal: boolean } {
+  const rows = output.split(/\r?\n/).map((line) => line.trim().split("|")).filter((row) => row[0]?.trim() === jobId && (allocationName === undefined || row[3]?.trim() === allocationName));
+  if (rows.length !== 1) return { state: "UNKNOWN", exitCode: 1, terminal: false };
+  const state = rows[0][1]?.trim().toUpperCase().split(/\s+/)[0] ?? "UNKNOWN";
+  const code = rows[0][2]?.trim().match(/^(\d+):(\d+)$/);
+  const terminal = ["COMPLETED", "CANCELLED", "TIMEOUT", "FAILED", "OUT_OF_MEMORY", "NODE_FAIL", "PREEMPTED", "BOOT_FAIL", "DEADLINE", "REVOKED"].includes(state);
+  if (!terminal || !code) return { state, exitCode: 1, terminal: false };
+  const status = Number(code[1]);
+  const signal = Number(code[2]);
+  const exitCode = state === "TIMEOUT" ? 124 : state === "CANCELLED" ? 130
+    : signal > 0 ? 128 + Math.min(127, signal) : status > 0 ? Math.min(255, status) : state === "COMPLETED" ? 0 : 1;
+  return { state, exitCode, terminal };
 }
 
 export class SlurmExecutor implements ExperimentExecutor {
   readonly kind = "slurm" as const;
 
-  constructor(private readonly workspaceRoot?: string) {}
+  constructor(private readonly workspaceRoot?: string, private readonly onRemoteExecution?: RemoteExecutionObserver) {}
 
-  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = manifest.evaluation?.metrics?.[0]?.name ?? "score", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
     const launchRoot = resolve(this.workspaceRoot ?? cwd);
     const available = await runProcess(["which", "sbatch"], launchRoot, 5_000);
     if (available.exitCode !== 0) return toRunResult(manifest, { command, cwd, exitCode: 127, durationMs: 0, stdout: "", stderr: "No Slurm sbatch runtime was found. Install Slurm client tools or select another executor." }, metricName, true);
@@ -502,83 +625,232 @@ export class SlurmExecutor implements ExperimentExecutor {
     const suffix = `${manifest.id.replace(/[^A-Za-z0-9_.-]/g, "-").slice(0, 48)}-${Date.now()}`;
     const stdoutPath = join(logRoot, `${suffix}.out`);
     const stderrPath = join(logRoot, `${suffix}.err`);
-    const submit = slurmCommand(manifest.id, cwd, command, stdoutPath, stderrPath, manifest.resources.timeoutMinutes, manifest.resources.gpu);
+    const submissionId = randomUUID();
+    const allocationName = `evidra-${submissionId}`;
+    const submit = slurmCommand(allocationName, cwd, command, stdoutPath, stderrPath, manifest.resources.timeoutMinutes, manifest.resources.gpu);
     const started = Date.now();
+    const observe = (phase: RemoteExecutionEvent["phase"], details: Partial<RemoteExecutionEvent> = {}): void => {
+      this.onRemoteExecution?.({ ...details, executor: "slurm", experimentId: manifest.id, submissionId, allocationName, phase, at: new Date().toISOString() });
+    };
+    // Persist intent before any RPC: controller loss during sbatch may leave
+    // an accepted allocation even when no receipt reaches the client.
+    observe("submitting");
     let submission: ProcessResult;
     try {
-      submission = await runProcess(submit, launchRoot, 30_000, undefined, onProcess, experimentEnvironment, manifest.resources.earlyStopping);
+      submission = await runProcess(submit, launchRoot, Math.max(1, Math.min(30_000, manifest.resources.timeoutMinutes * 60_000)), undefined, onProcess, experimentEnvironment);
     } catch (error) {
-      return toRunResult(manifest, { command, cwd: launchRoot, exitCode: 127, durationMs: Date.now() - started, stdout: "", stderr: error instanceof Error ? error.message : String(error) }, metricName, true);
+      return { ...toRunResult(manifest, { command, cwd: launchRoot, exitCode: 127, durationMs: Date.now() - started, stdout: "", stderr: `${error instanceof Error ? error.message : String(error)}\nSlurm submission outcome is unconfirmed; reconcile the allocation before relaunching.` }, metricName, true), failureClass: "unknown" };
     }
-    if (submission.exitCode !== 0) return toRunResult(manifest, { ...submission, command, cwd }, metricName, true);
-    const jobId = submission.stdout.trim().split(/[;\s]/)[0];
-    if (!/^\d+$/.test(jobId)) return toRunResult(manifest, { command, cwd, exitCode: 65, durationMs: Date.now() - started, stdout: submission.stdout, stderr: "Slurm returned no numeric job id." }, metricName, true);
-
-    let cancelled = false;
-    let activeControl: ProcessControl | undefined;
-    const cancel = async (): Promise<void> => {
-      if (cancelled) return;
-      cancelled = true;
-      await runProcess(["scancel", jobId], launchRoot, 10_000).catch(() => undefined);
+    if (submission.exitCode !== 0) {
+      const ambiguous = submission.exitCode === 124 || submission.exitCode === 130 || /^\d+(?:;|\s|$)/.test(submission.stdout.trim());
+      const failed = toRunResult(manifest, { ...submission, command, cwd, stderr: submission.stderr + (ambiguous ? "\nSlurm submission outcome is unconfirmed; reconcile the allocation before relaunching." : "") }, metricName, true);
+      return ambiguous ? { ...failed, failureClass: "unknown" } : failed;
+    }
+    const receipt = submission.stdout.trim().match(/^(\d+)(?:;([A-Za-z0-9][A-Za-z0-9_.-]*))?$/);
+    if (!receipt) return { ...toRunResult(manifest, { command, cwd, exitCode: 65, durationMs: Date.now() - started, stdout: submission.stdout, stderr: "Slurm submission receipt is ambiguous; reconcile the remote allocation before relaunching." }, metricName, true), failureClass: "unknown" };
+    const jobId = receipt[1];
+    const clusterArgs = receipt[2] ? ["--clusters", receipt[2]] : [];
+    const remoteCommand = async (argv: string[], timeoutMs: number, exposeControl = false): Promise<ProcessResult> => {
+      try { return await runProcess(argv, launchRoot, timeoutMs, undefined, exposeControl ? (control) => { activeControl = control; } : undefined); }
+      catch (error) { return processFailureResult(argv, launchRoot, error); }
+      finally { if (exposeControl) activeControl = undefined; }
     };
-    onProcess?.({
-      pause: () => activeControl?.pause(),
-      resume: () => activeControl?.resume(),
-      terminate: () => { void cancel(); activeControl?.terminate(); },
-      get paused() { return activeControl?.paused ?? false; },
-    });
+    let cancelled = false;
+    let interrupted = false;
+    let timedOut = false;
+    let monitoringError = "";
+    let activeControl: ProcessControl | undefined;
+    let cancellation: Promise<ProcessResult> | undefined;
+    const cancel = (): Promise<ProcessResult> => {
+      cancelled = true;
+      // All callers join one in-flight request. Fire-and-forget UI termination
+      // must not race the final accounting query or hide scancel failure.
+      return cancellation ??= remoteCommand(["scancel", ...clusterArgs, jobId], 10_000);
+    };
+    try {
+      observe("submitted", { jobId, ...(receipt[2] ? { cluster: receipt[2] } : {}) });
+      onProcess?.({
+        pause: () => activeControl?.pause(),
+        resume: () => activeControl?.resume(),
+        terminate: () => { interrupted = true; void cancel(); activeControl?.terminate(); },
+        get paused() { return activeControl?.paused ?? false; },
+      });
+    } catch (error) {
+      monitoringError = error instanceof Error ? error.message : String(error);
+      await cancel();
+    }
 
     const deadline = started + manifest.resources.timeoutMinutes * 60_000;
-    let interrupted = false;
     while (!cancelled && Date.now() < deadline) {
-      const status = await runProcess(["squeue", "--noheader", "--jobs", jobId, "--format=%T"], launchRoot, 10_000, undefined, (control) => { activeControl = control; });
-      if (status.exitCode === 130) { interrupted = true; await cancel(); break; }
+      const status = await remoteCommand(["squeue", ...clusterArgs, "--noheader", "--jobs", jobId, "--format=%T"], Math.max(1, Math.min(10_000, deadline - Date.now())), true);
+      if (status.exitCode !== 0) {
+        interrupted ||= status.exitCode === 130;
+        timedOut ||= status.exitCode === 124 && Date.now() >= deadline;
+        monitoringError = `Slurm queue query failed for job ${jobId}: ${status.stderr || `exit ${status.exitCode}`}`;
+        await cancel();
+        break;
+      }
       if (!status.stdout.trim()) break;
-      await new Promise((resolveSleep) => setTimeout(resolveSleep, 2_000));
+      await new Promise((resolveSleep) => setTimeout(resolveSleep, Math.min(2_000, Math.max(0, deadline - Date.now()))));
     }
-    if (!cancelled && Date.now() >= deadline) { await cancel(); }
-    if (cancelled) interrupted = true;
-    const accounting = await runProcess(["sacct", "--noheader", "--parsable2", "--jobs", jobId, "--format=State,ExitCode"], launchRoot, 15_000);
-    const state = accounting.stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? (interrupted ? "CANCELLED" : "UNKNOWN");
-    const output = boundedFile(stdoutPath);
-    const error = boundedFile(stderrPath);
-    const exitCode = interrupted ? 130 : slurmExitCode(state);
-    return toRunResult(manifest, { command, cwd, exitCode, durationMs: Date.now() - started, stdout: output || submission.stdout, stderr: error || submission.stderr }, metricName, true);
+    if (!cancelled && Date.now() >= deadline) { timedOut = true; await cancel(); }
+    const cancellationResult = cancellation ? await cancellation : undefined;
+    const accounting = await remoteCommand(["sacct", ...clusterArgs, "--noheader", "--parsable2", "--allocations", "--duplicates", "--starttime", "1970-01-01", "--jobs", jobId, "--format=JobIDRaw,State%40,ExitCode,JobName%80"], 15_000);
+    const remote = parseSlurmAccounting(accounting.stdout, jobId, allocationName);
+    const unconfirmed = accounting.exitCode !== 0 || !remote.terminal;
+    if (!unconfirmed) {
+      try { observe("terminal", { jobId, ...(receipt[2] ? { cluster: receipt[2] } : {}), state: remote.state, exitCode: remote.exitCode }); }
+      catch (error) { monitoringError = `Remote accounting could not be persisted: ${error instanceof Error ? error.message : String(error)}`; }
+    }
+    const output = boundedFile(cwd, relative(cwd, stdoutPath));
+    const error = boundedFile(cwd, relative(cwd, stderrPath));
+    const exitCode = timedOut ? 124 : interrupted ? 130 : monitoringError || unconfirmed ? 1 : remote.exitCode;
+    const stderr = boundProcessOutput([error, submission.stderr, monitoringError, accounting.stderr,
+      cancellationResult && cancellationResult.exitCode !== 0 ? `Slurm cancellation request failed for job ${jobId}: ${cancellationResult.stderr || `exit ${cancellationResult.exitCode}`}` : "",
+      `Slurm job ${jobId}${receipt[2] ? ` on ${receipt[2]}` : ""}: ${remote.state}`,
+      timedOut ? "Timed out." : "",
+      interrupted ? "Interrupted by Evidra." : "",
+      unconfirmed ? "Remote completion/cancellation is unconfirmed; reconcile this allocation before relaunching." : "",
+    ].filter(Boolean).join("\n"));
+    const result = toRunResult(manifest, { command, cwd, exitCode, durationMs: Date.now() - started, stdout: output || submission.stdout, stderr }, metricName, true);
+    if (unconfirmed || interrupted || monitoringError && !timedOut) return { ...result, failureClass: "unknown" };
+    if (timedOut || remote.state === "TIMEOUT") return { ...result, failureClass: "timeout" };
+    if (remote.state === "CANCELLED") return { ...result, failureClass: "unknown" };
+    if (remote.state === "OUT_OF_MEMORY") return { ...result, failureClass: "memory_exhausted" };
+    if (result.failureClass === "transient_cloud" && !["NODE_FAIL", "BOOT_FAIL", "PREEMPTED"].includes(remote.state)) return { ...result, failureClass: "unknown" };
+    return result;
+
   }
 }
 
 export class ModalExecutor implements ExperimentExecutor {
   readonly kind = "modal" as const;
 
-  constructor(private readonly workspaceRoot?: string) {}
+  constructor(private readonly workspaceRoot?: string, private readonly onRemoteExecution?: RemoteExecutionObserver) {}
 
-  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = "final_layer_mse", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
-    const experimentEnvironment = { ...prepareExperimentEnvironment(manifest, cwd), ...environment };
+  async run(manifest: ExperimentManifest, cwd: string, command: string[], onProcess?: (control: ProcessControl) => void, metricName = manifest.evaluation?.metrics?.[0]?.name ?? "score", environment?: NodeJS.ProcessEnv): Promise<RunResult> {
+    const experimentEnvironment = prepareExperimentEnvironment(manifest, cwd, environment);
     // Modal CLI profiles (created by `modal token set`) are valid credentials
     // too; do not require secrets to be duplicated into Evidra's environment.
     const launchRoot = resolve(this.workspaceRoot ?? cwd);
     const experimentWorkspace = resolve(cwd);
-    const modalEntrypoint = process.env.EVIDRA_MODAL_ENTRYPOINT ?? "modal_app.py::run";
+    const modalEntrypoint = process.env.EVIDRA_MODAL_ENTRYPOINT ?? `${fileURLToPath(new URL("../../modal_app.py", import.meta.url))}::run`;
     const timeoutSeconds = Math.max(60, Math.round(manifest.resources.timeoutMinutes * 60));
     const commandJson = JSON.stringify(command);
+    let preflight: ProcessResult;
+    try {
+      preflight = await runProcess(["modal", "--version"], launchRoot, Math.min(10_000, manifest.resources.timeoutMinutes * 60_000), undefined, onProcess);
+    } catch (error) {
+      preflight = processFailureResult(["modal", "--version"], launchRoot, error);
+    }
+    if (preflight.exitCode !== 0) {
+      const exitCode = [124, 130].includes(preflight.exitCode) ? preflight.exitCode : 127;
+      return { ...toRunResult(manifest, { ...preflight, command, cwd, durationMs: 0, exitCode, stdout: "", stderr: boundProcessOutput([preflight.stderr, "Modal runtime preflight failed; no remote launch was attempted."].filter(Boolean).join("\n")) }, metricName, true), stdout: preflight.stdout, artifacts: {}, failureClass: exitCode === 124 ? "timeout" : exitCode === 130 ? "unknown" : "dependency" };
+    }
+    // Allocation inspection must be usable before any remote work is launched.
+    const inspectionCommand = [process.env.EVIDRA_MODAL_PYTHON ?? "python3", fileURLToPath(new URL("../../modal_reconcile.py", import.meta.url)), "--check-runtime"];
+    let inspection: ProcessResult;
+    try {
+      inspection = await runProcess(inspectionCommand, launchRoot, Math.min(10_000, manifest.resources.timeoutMinutes * 60_000), undefined, onProcess);
+    } catch (error) {
+      inspection = processFailureResult(inspectionCommand, launchRoot, error);
+    }
+    let inspectionReady = false;
+    if (inspection.exitCode === 0 && Buffer.byteLength(inspection.stdout) <= 4096) {
+      try { inspectionReady = JSON.parse(inspection.stdout).ready === true; } catch { /* Invalid capability responses cannot authorize a launch. */ }
+    }
+    if (!inspectionReady) {
+      const exitCode = [124, 130].includes(inspection.exitCode) ? inspection.exitCode : 127;
+      return { ...toRunResult(manifest, { command, cwd, exitCode, durationMs: 0, stdout: "", stderr: "Modal allocation inspection preflight failed; no remote launch was attempted. Configure EVIDRA_MODAL_PYTHON with a compatible Modal SDK." }, metricName, true), artifacts: {}, failureClass: exitCode === 124 ? "timeout" : exitCode === 130 ? "unknown" : "dependency" };
+    }
     // The worker image must contain the isolated worktree. Mounting the repo
     // root would omit `.sota/worktrees` and silently execute the wrong source.
-    const args = ["modal", "run", modalEntrypoint, "--command-json", commandJson, "--cwd", ".", "--artifacts-json", JSON.stringify(manifest.evaluation?.requiredArtifacts ?? []), "--timeout-seconds", String(timeoutSeconds)];
+    const submissionId = randomUUID();
+    const args = ["modal", "run", modalEntrypoint, "--command-json", commandJson, "--cwd", ".", "--artifacts-json", JSON.stringify(manifest.evaluation?.requiredArtifacts ?? []), "--timeout-seconds", String(timeoutSeconds), "--submission-id", submissionId, "--config-sha256", experimentEnvironment.EVIDRA_EXPERIMENT_CONFIG_SHA256!];
+    const observe = (phase: RemoteExecutionEvent["phase"], details: Partial<RemoteExecutionEvent> = {}): void => {
+      this.onRemoteExecution?.({ ...details, executor: "modal", protocol: "modal-call-v1", experimentId: manifest.id, submissionId, allocationName: `evidra-${submissionId}`, appName: `evidra-${submissionId}`, phase, at: new Date().toISOString() });
+    };
+    // Persist before launch: losing the client cannot prove the remote worker
+    // stopped, even when the local process exits or never returns a receipt.
+    observe("submitting");
+    let callId: string | undefined;
+    let appId: string | undefined;
+    let appAllocated = false;
+    let notStarted = false;
+    let spawnErrorCode: string | undefined;
+    let pendingLine = "";
+    let oversizedLine = false;
+    const receive = (stream: "stdout" | "stderr", chunk: string): void => {
+      if (stream !== "stdout") return;
+      const parts = chunk.split("\n");
+      for (let index = 0; index < parts.length; index += 1) {
+        const part = parts[index];
+        if (!oversizedLine) {
+          if (pendingLine.length + part.length > 4096) { pendingLine = ""; oversizedLine = true; }
+          else pendingLine += part;
+        }
+        if (index === parts.length - 1) continue;
+        if (!oversizedLine && pendingLine.startsWith("[evidra-app] ")) {
+          const allocation = JSON.parse(pendingLine.slice("[evidra-app] ".length)) as { submissionId?: unknown; appId?: unknown };
+          if (allocation.submissionId !== submissionId || typeof allocation.appId !== "string" || !/^ap-[A-Za-z0-9]{1,128}$/.test(allocation.appId) || appAllocated || callId) throw new Error("Modal application allocation is malformed, mismatched, duplicated, or reordered.");
+          observe("allocated", { appId: allocation.appId });
+          appId = allocation.appId;
+          appAllocated = true;
+        }
+        if (!oversizedLine && pendingLine.startsWith("[evidra-call] ")) {
+          const receipt = JSON.parse(pendingLine.slice("[evidra-call] ".length)) as { submissionId?: unknown; callId?: unknown; appId?: unknown };
+          if (receipt.submissionId !== submissionId || typeof receipt.callId !== "string" || !/^fc-[A-Za-z0-9]{1,128}$/.test(receipt.callId) || callId) throw new Error("Modal call receipt is malformed, mismatched, or duplicated.");
+          if (receipt.appId !== undefined && (typeof receipt.appId !== "string" || !/^ap-[A-Za-z0-9]{1,128}$/.test(receipt.appId))) throw new Error("Modal application receipt is malformed.");
+          if (appAllocated && receipt.appId !== appId) throw new Error("Modal call receipt does not match its recorded application allocation.");
+          appId = receipt.appId as string | undefined;
+          observe("submitted", { callId: receipt.callId, ...(appId ? { appId } : {}) });
+          callId = receipt.callId;
+        }
+        pendingLine = "";
+        oversizedLine = false;
+      }
+    };
     let result: ProcessResult;
     try {
-      result = await runProcess(args, launchRoot, manifest.resources.timeoutMinutes * 60_000, undefined, onProcess, {
+      result = await runProcess(args, launchRoot, manifest.resources.timeoutMinutes * 60_000, receive, onProcess, {
         ...process.env,
         EVIDRA_MODAL_WORKSPACE: experimentWorkspace,
+        EVIDRA_MODAL_SUBMISSION_ID: submissionId,
         ...(manifest.resources.gpu ? { EVIDRA_MODAL_GPU: manifest.resources.gpu } : {}),
         EVIDRA_MODAL_TIMEOUT_SECONDS: String(timeoutSeconds),
         EVIDRA_EXPERIMENT_ID: manifest.id,
       }, manifest.resources.earlyStopping);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (!callId && error instanceof ProcessStartError && ["ENOENT", "EACCES", "ENOEXEC", "ENOTDIR", "EMFILE", "ENFILE", "E2BIG"].includes(error.code ?? "")) {
+        observe("terminal", { state: "NOT_STARTED", exitCode: 127, completionEvidence: "spawn-error", spawnErrorCode: error.code });
+        notStarted = true;
+        spawnErrorCode = error.code;
+      }
       result = { command: args, cwd: launchRoot, exitCode: 127, durationMs: 0, stdout: "", stderr: message };
     }
     const payload = parseModalWorkerResult(result.stdout);
-    if (!payload) return toRunResult(manifest, { ...result, command, cwd }, metricName, true);
+    // A printed envelope cannot override the controller's timeout/interruption
+    // or prove remote completion when the runtime client failed.
+    if (result.exitCode !== 0 || !payload || !callId) {
+      return { ...toRunResult(manifest, { ...result, command, cwd, exitCode: result.exitCode === 0 ? 65 : result.exitCode, stdout: "", stderr: boundProcessOutput([result.stderr, notStarted ? "Modal client did not start; no remote launch was attempted." : "Modal worker completion is unconfirmed; reconcile before replay."].filter(Boolean).join("\n")) }, metricName, true), stdout: result.stdout, artifacts: {}, failureClass: notStarted && ["ENOENT", "EACCES", "ENOEXEC", "ENOTDIR"].includes(spawnErrorCode ?? "") ? "dependency" : "unknown" };
+    }
+    // Successful CLI exit still needs authoritative application quiescence.
+    // A crashed client can leave warm containers alive after call completion.
+    const allocationStarted = Date.now();
+    try {
+      const remaining = Math.min(15_000, manifest.resources.timeoutMinutes * 60_000 - result.durationMs);
+      if (remaining <= 0) throw new Error("Allocation verification deadline exhausted");
+      const allocation = await runProcess([process.env.EVIDRA_MODAL_PYTHON ?? "python3", fileURLToPath(new URL("../../modal_reconcile.py", import.meta.url)), callId, "--wait-stopped-seconds", "10"], launchRoot, remaining, undefined, onProcess);
+      if (allocation.exitCode !== 0 || Buffer.byteLength(allocation.stdout) > 4096) throw new Error("Allocation query failed");
+      const proof = JSON.parse(allocation.stdout) as { callId?: unknown; state?: unknown; exitCode?: unknown; appId?: unknown; appState?: unknown; runningTasks?: unknown };
+      if (proof.callId !== callId || proof.state !== "COMPLETED" || proof.exitCode !== payload.exitCode || typeof proof.appId !== "string" || !/^ap-[A-Za-z0-9]{1,128}$/.test(proof.appId) || appId !== undefined && appId !== proof.appId || proof.appState !== "STOPPED" || proof.runningTasks !== 0) throw new Error("Allocation termination is unconfirmed");
+      observe("terminal", { callId, appId: proof.appId, appState: "STOPPED", runningTasks: 0, completionEvidence: "client-envelope", state: "COMPLETED", exitCode: payload.exitCode });
+    } catch {
+      result.durationMs += Date.now() - allocationStarted;
+      return { ...toRunResult(manifest, { ...result, command, cwd, exitCode: 65, stdout: "", stderr: boundProcessOutput([result.stderr, "Modal application termination is unconfirmed; compute and replay remain fenced. Reconcile before replay."].filter(Boolean).join("\n")) }, metricName, true), stdout: result.stdout, artifacts: {}, failureClass: "unknown" };
+    }
+    result.durationMs += Date.now() - allocationStarted;
     const allowedArtifacts = new Set(manifest.evaluation?.requiredArtifacts ?? []);
     for (const [name, encoded] of Object.entries(payload.artifacts ?? {})) {
       if (!allowedArtifacts.has(name)) continue;
@@ -593,9 +865,9 @@ export class ModalExecutor implements ExperimentExecutor {
   }
 }
 
-export function executorFor(kind: ExperimentManifest["resources"]["executor"], workspaceRoot?: string): ExperimentExecutor {
-  if (kind === "modal") return new ModalExecutor(workspaceRoot);
-  if (kind === "container") return new ContainerExecutor(workspaceRoot);
-  if (kind === "slurm") return new SlurmExecutor(workspaceRoot);
+export function executorFor(kind: ExperimentManifest["resources"]["executor"], workspaceRoot?: string, onRemoteExecution?: RemoteExecutionObserver): ExperimentExecutor {
+  if (kind === "modal") return new ModalExecutor(workspaceRoot, onRemoteExecution);
+  if (kind === "container") return new ContainerExecutor(workspaceRoot, onRemoteExecution);
+  if (kind === "slurm") return new SlurmExecutor(workspaceRoot, onRemoteExecution);
   return new LocalExecutor();
 }

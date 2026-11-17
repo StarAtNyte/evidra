@@ -1,0 +1,149 @@
+{
+  "verifiedAt": "2026-10-11T12:05:38.746Z",
+  "nodeVersion": "v24.21.0",
+  "dockerVersion": "29.8.1",
+  "sourceSHA256": {
+    "executors": "1e1469854d42cc3cb9fe159c51c194947e97b7c8e97e9896c298a91bd0334a41",
+    "store": "d553cc7f2ca431e6ee1e0c589f915efe635de7de0341149429378e7c483a5835",
+    "remote-reconciliation": "ac8cf79105631a2d5f1e2e6f9880fb41969474986037764571f2e47d5691821d"
+  },
+  "cliCommand": [
+    "/home/nitiz/.nvm/versions/node/v24.21.0/bin/node",
+    "/home/nitiz/Projects/Self/Harness/evidra/dist/cli.js",
+    "experiment",
+    "reconcile",
+    "live-crash",
+    "--cancel-container"
+  ],
+  "cliSourceSHA256": "168131fc2ac65642c3f119245310fda094f0aef60f839c530ef901af61edd2f5",
+  "image": "postgres:16-alpine",
+  "command": [
+    "/bin/sh",
+    "-c",
+    "sleep 120; echo accuracy=0.9"
+  ],
+  "controllerSignal": "SIGKILL",
+  "runningSnapshotBeforeCrash": [
+    "93c75f3fdf6f73db0a42fca24eb34279d0ed0273ae6e40df5634f9f93577ded0",
+    "/evidra-5d2b1261-7e44-46d0-afb2-7246227b777a",
+    true,
+    [
+      {
+        "Destination": "/workspace",
+        "Mode": "rw",
+        "Propagation": "rprivate",
+        "RW": true,
+        "Source": "/tmp/evidra-live-crash-cPGf9h",
+        "Type": "bind"
+      },
+      {
+        "Destination": "/var/lib/postgresql/data",
+        "Driver": "local",
+        "Mode": "",
+        "Name": "683c712a01494960a2525a8ecaca3ac358c2fa5b3c89fc2696c6d1762d2d915c",
+        "Propagation": "",
+        "RW": true,
+        "Source": "/var/lib/docker/volumes/683c712a01494960a2525a8ecaca3ac358c2fa5b3c89fc2696c6d1762d2d915c/_data",
+        "Type": "volume"
+      }
+    ]
+  ],
+  "reservedGpuHoursAfterCrash": 2,
+  "initialRecovery": {
+    "released": false,
+    "queried": 2
+  },
+  "recovery": {
+    "cliExitCode": 0,
+    "cliStdout": "Experiment live-crash: remote termination reconciled; measurement remains unvalidated."
+  },
+  "ledger": [
+    {
+      "type": "run.remote.submitting",
+      "payload": {
+        "executor": "container",
+        "experimentId": "live-crash",
+        "submissionId": "5d2b1261-7e44-46d0-afb2-7246227b777a",
+        "allocationName": "evidra-5d2b1261-7e44-46d0-afb2-7246227b777a",
+        "runtime": "docker",
+        "daemonId": "67ee11a9-8cbb-4e4a-9288-8b9dca8bd292",
+        "phase": "submitting",
+        "at": "2026-10-11T12:05:36.625Z"
+      }
+    },
+    {
+      "type": "run.remote.submitted",
+      "payload": {
+        "experimentId": "live-crash",
+        "submissionId": "5d2b1261-7e44-46d0-afb2-7246227b777a",
+        "allocationName": "evidra-5d2b1261-7e44-46d0-afb2-7246227b777a",
+        "runtime": "docker",
+        "daemonId": "67ee11a9-8cbb-4e4a-9288-8b9dca8bd292",
+        "containerId": "93c75f3fdf6f73db0a42fca24eb34279d0ed0273ae6e40df5634f9f93577ded0",
+        "at": "2026-10-11T12:05:38.280Z",
+        "recovered": true,
+        "executor": "container",
+        "phase": "submitted"
+      }
+    },
+    {
+      "type": "run.remote.terminal",
+      "payload": {
+        "experimentId": "live-crash",
+        "submissionId": "5d2b1261-7e44-46d0-afb2-7246227b777a",
+        "allocationName": "evidra-5d2b1261-7e44-46d0-afb2-7246227b777a",
+        "runtime": "docker",
+        "daemonId": "67ee11a9-8cbb-4e4a-9288-8b9dca8bd292",
+        "containerId": "93c75f3fdf6f73db0a42fca24eb34279d0ed0273ae6e40df5634f9f93577ded0",
+        "at": "2026-10-11T12:05:38.645Z",
+        "state": "REMOVED",
+        "exitCode": 0,
+        "executor": "container",
+        "phase": "terminal"
+      }
+    }
+  ],
+  "independentlyVerifiedContainerAbsent": true,
+  "anonymousVolumesVerifiedRemoved": [
+    "683c712a01494960a2525a8ecaca3ac358c2fa5b3c89fc2696c6d1762d2d915c"
+  ],
+  "cleanupRequests": [
+    {
+      "experimentId": "live-crash",
+      "submissionId": "5d2b1261-7e44-46d0-afb2-7246227b777a",
+      "allocationName": "evidra-5d2b1261-7e44-46d0-afb2-7246227b777a",
+      "runtime": "docker",
+      "daemonId": "67ee11a9-8cbb-4e4a-9288-8b9dca8bd292",
+      "containerId": "93c75f3fdf6f73db0a42fca24eb34279d0ed0273ae6e40df5634f9f93577ded0",
+      "at": "2026-10-11T12:05:38.280Z",
+      "requestId": "63c66f37-e995-41da-8aba-9fd9bb6d16f5",
+      "command": [
+        "docker",
+        "rm",
+        "--force",
+        "--volumes",
+        "93c75f3fdf6f73db0a42fca24eb34279d0ed0273ae6e40df5634f9f93577ded0"
+      ]
+    }
+  ],
+  "cleanupObservations": [
+    {
+      "experimentId": "live-crash",
+      "submissionId": "5d2b1261-7e44-46d0-afb2-7246227b777a",
+      "allocationName": "evidra-5d2b1261-7e44-46d0-afb2-7246227b777a",
+      "runtime": "docker",
+      "daemonId": "67ee11a9-8cbb-4e4a-9288-8b9dca8bd292",
+      "containerId": "93c75f3fdf6f73db0a42fca24eb34279d0ed0273ae6e40df5634f9f93577ded0",
+      "at": "2026-10-11T12:05:38.552Z",
+      "requestId": "63c66f37-e995-41da-8aba-9fd9bb6d16f5",
+      "exitCode": 0,
+      "verifiedAbsent": true
+    }
+  ],
+  "reservedGpuHoursAfterRecovery": 0,
+  "measurementStatus": "failed",
+  "runRecords": 0,
+  "eventChain": "valid",
+  "scope": "Live Docker controller SIGKILL while worker running, missing-receipt adoption, explicit cancellation, exact container and anonymous-volume removal. Default read-only reconciliation retained quarantine. No Podman or cross-host certification.",
+  "probeCleanupVerified": true
+}

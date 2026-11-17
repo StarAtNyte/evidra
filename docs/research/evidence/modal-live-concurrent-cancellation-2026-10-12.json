@@ -1,0 +1,271 @@
+{
+  "at": "2026-10-12T06:10:37.262Z",
+  "modalVersion": "1.6.1",
+  "gpuRequested": false,
+  "targetReceipt": {
+    "callId": "fc-01M4QBPR8DP2JCR6KM6BWYXPQR",
+    "appId": "ap-xDTKc0SFLf3FEcLzOGytsK",
+    "executor": "modal",
+    "protocol": "modal-call-v1",
+    "experimentId": "target",
+    "submissionId": "5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+    "allocationName": "evidra-5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+    "appName": "evidra-5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+    "phase": "submitted",
+    "at": "2026-10-12T06:09:54.613Z"
+  },
+  "peerReceipt": {
+    "callId": "fc-01M4QBPSTTQTKCRHZR3SK30ZP4",
+    "appId": "ap-LoImbJINtj2YsmvoRQ5r3X",
+    "executor": "modal",
+    "protocol": "modal-call-v1",
+    "experimentId": "peer",
+    "submissionId": "a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+    "allocationName": "evidra-a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+    "appName": "evidra-a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+    "phase": "submitted",
+    "at": "2026-10-12T06:09:56.232Z"
+  },
+  "targetResult": {
+    "runId": "target-1791785398248",
+    "status": "failed",
+    "exitCode": 1,
+    "durationSeconds": 8.409,
+    "metrics": {},
+    "metricsByFold": {},
+    "learningCurve": [],
+    "subgroupDeltas": [],
+    "artifacts": {},
+    "stdout": "[client diagnostics omitted]",
+    "stderr": "Modal worker completion is unconfirmed; reconcile before replay.",
+    "command": [
+      "python",
+      "probe.py"
+    ],
+    "cwd": "/tmp/evidra-modal-concurrent-J1GP6x/target",
+    "failureClass": "unknown"
+  },
+  "peerResult": {
+    "runId": "peer-1791785437260",
+    "status": "completed",
+    "exitCode": 0,
+    "durationSeconds": 47.426,
+    "metrics": {
+      "accuracy": 1
+    },
+    "metricsByFold": {},
+    "learningCurve": [],
+    "subgroupDeltas": [],
+    "artifacts": {
+      "result.json": "/tmp/evidra-modal-concurrent-J1GP6x/peer/result.json"
+    },
+    "stdout": "accuracy=1.0\n",
+    "stderr": "",
+    "command": [
+      "python",
+      "probe.py"
+    ],
+    "cwd": "/tmp/evidra-modal-concurrent-J1GP6x/peer"
+  },
+  "events": [
+    {
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "peer",
+      "submissionId": "a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+      "allocationName": "evidra-a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+      "appName": "evidra-a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+      "phase": "submitting",
+      "at": "2026-10-12T06:09:49.827Z"
+    },
+    {
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "target",
+      "submissionId": "5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+      "allocationName": "evidra-5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+      "appName": "evidra-5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+      "phase": "submitting",
+      "at": "2026-10-12T06:09:49.833Z"
+    },
+    {
+      "callId": "fc-01M4QBPR8DP2JCR6KM6BWYXPQR",
+      "appId": "ap-xDTKc0SFLf3FEcLzOGytsK",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "target",
+      "submissionId": "5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+      "allocationName": "evidra-5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+      "appName": "evidra-5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+      "phase": "submitted",
+      "at": "2026-10-12T06:09:54.613Z"
+    },
+    {
+      "callId": "fc-01M4QBPSTTQTKCRHZR3SK30ZP4",
+      "appId": "ap-LoImbJINtj2YsmvoRQ5r3X",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "peer",
+      "submissionId": "a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+      "allocationName": "evidra-a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+      "appName": "evidra-a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+      "phase": "submitted",
+      "at": "2026-10-12T06:09:56.232Z"
+    },
+    {
+      "callId": "fc-01M4QBPSTTQTKCRHZR3SK30ZP4",
+      "appId": "ap-LoImbJINtj2YsmvoRQ5r3X",
+      "appState": "STOPPED",
+      "runningTasks": 0,
+      "completionEvidence": "client-envelope",
+      "state": "COMPLETED",
+      "exitCode": 0,
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "peer",
+      "submissionId": "a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+      "allocationName": "evidra-a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+      "appName": "evidra-a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+      "phase": "terminal",
+      "at": "2026-10-12T06:10:37.255Z"
+    }
+  ],
+  "cleanup": [
+    {
+      "type": "run.remote.cleanup.requested",
+      "payload": {
+        "executor": "modal",
+        "experimentId": "target",
+        "submissionId": "5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+        "callId": "fc-01M4QBPR8DP2JCR6KM6BWYXPQR",
+        "appId": "ap-xDTKc0SFLf3FEcLzOGytsK",
+        "appName": "evidra-5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+        "requestId": "653c0e59-4bf1-4d65-8003-07746fce9a35",
+        "at": "2026-10-12T06:09:58.270Z"
+      },
+      "createdAt": "2026-10-12T06:09:58.270Z",
+      "eventHash": "b3764431434a60ce3691a1f80f12185704e2e5cf7458570036780d9cae2eaf13"
+    },
+    {
+      "type": "run.remote.cleanup.observed",
+      "payload": {
+        "executor": "modal",
+        "experimentId": "target",
+        "submissionId": "5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+        "callId": "fc-01M4QBPR8DP2JCR6KM6BWYXPQR",
+        "appId": "ap-xDTKc0SFLf3FEcLzOGytsK",
+        "requestId": "653c0e59-4bf1-4d65-8003-07746fce9a35",
+        "exitCode": 1,
+        "verifiedStopped": false,
+        "diagnostic": "Traceback (most recent call last):\n  File \"/home/nitiz/Projects/Self/Harness/evidra/modal_reconcile.py\", line 128, in <module>\n    print(json.dumps(inspect_call(args.call_id, args.wait_stopped_seconds, args.stop_owned_app, args.expected_app_name)))\n                     ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/nitiz/Projects/Self/Harness/evidra/modal_reconcile.py\", line 88, in inspect_call\n    result = call.get(timeout=0)\n  File \"/tmp/evidra-modal-mount-sdk/lib/python3.14/site-packages/modal/_object.py\", line 49, in wrapped\n    return await method(self, *args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/evidra-modal-mount-sdk/lib/python3.14/site-packages/modal/_functions.py\", line 2405, in get\n    return await self._invocation().poll_function(timeout=timeout, index=index)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/evidra-modal-mount-sdk/lib/python3.14/site-packages/modal/_functions.py\", line 348, in poll_function\n    return await _process_result(\n           ^^^^^^^^^^^^^^^^^^^^^^\n        response.outputs[0].result, response.outputs[0].data_format, self.stub, self.client\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/tmp/evidra-modal-mount-sdk/lib/python3.14/site-packages/modal/_utils/function_utils.py\", line 574, in _process_result\n    raise RemoteError(result.exception)\nmodal.exception.RemoteError\n",
+        "at": "2026-10-12T06:10:10.872Z"
+      },
+      "createdAt": "2026-10-12T06:10:10.872Z",
+      "eventHash": "8ef47b57a21d1cdc95b306282da8d471fd7cc26becd607309b852b84813fe0ab"
+    },
+    {
+      "type": "run.remote.cleanup.requested",
+      "payload": {
+        "executor": "modal",
+        "experimentId": "target",
+        "submissionId": "5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+        "callId": "fc-01M4QBPR8DP2JCR6KM6BWYXPQR",
+        "appId": "ap-xDTKc0SFLf3FEcLzOGytsK",
+        "appName": "evidra-5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+        "requestId": "0a6d97c8-c96d-4479-8d8f-3d14064e1937",
+        "at": "2026-10-12T06:10:11.892Z"
+      },
+      "createdAt": "2026-10-12T06:10:11.892Z",
+      "eventHash": "550fff452fe508a0398de13fd913bdc6b2aba1ad6f4e446f5b18e620b0ec835a"
+    },
+    {
+      "type": "run.remote.cleanup.observed",
+      "payload": {
+        "executor": "modal",
+        "experimentId": "target",
+        "submissionId": "5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+        "callId": "fc-01M4QBPR8DP2JCR6KM6BWYXPQR",
+        "appId": "ap-xDTKc0SFLf3FEcLzOGytsK",
+        "requestId": "0a6d97c8-c96d-4479-8d8f-3d14064e1937",
+        "exitCode": 0,
+        "verifiedStopped": true,
+        "at": "2026-10-12T06:10:16.798Z"
+      },
+      "createdAt": "2026-10-12T06:10:16.799Z",
+      "eventHash": "ed610906ef50869bbdc01dcf89ad28c3ba08d8f9ce82000b19baeeb2197c7e35"
+    }
+  ],
+  "scope": "Two simultaneous CPU executions in one controller store. Distinct tagged app identities; target client SIGKILL and owned-app cancellation preserved peer normal completion, metric and artifact. No peer cleanup requested. This validates isolation between two apps, not multiple inputs in a shared app or GPU cancellation.",
+  "cancellationAttempts": [
+    {
+      "released": false,
+      "queried": 1
+    },
+    {
+      "released": true,
+      "queried": 1
+    }
+  ],
+  "finalDurableState": {
+    "target": {
+      "recorded": true,
+      "confirmed": true,
+      "submissionIds": [
+        "5102d627-c14f-4fd9-8e6f-bdcbcd50f424"
+      ]
+    },
+    "peer": {
+      "recorded": true,
+      "confirmed": true,
+      "submissionIds": [
+        "a99c8c3a-0bc8-4a63-afb8-84933377a65d"
+      ]
+    },
+    "measurementsImported": 0
+  },
+  "terminationEvents": [
+    {
+      "type": "run.remote.terminal",
+      "payload": {
+        "experimentId": "target",
+        "submissionId": "5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+        "allocationName": "evidra-5102d627-c14f-4fd9-8e6f-bdcbcd50f424",
+        "callId": "fc-01M4QBPR8DP2JCR6KM6BWYXPQR",
+        "state": "ALLOCATION_STOPPED",
+        "exitCode": 125,
+        "completionEvidence": "sdk-allocation",
+        "appId": "ap-xDTKc0SFLf3FEcLzOGytsK",
+        "appState": "STOPPED",
+        "runningTasks": 0,
+        "at": "2026-10-12T06:10:16.799Z",
+        "executor": "modal",
+        "protocol": "modal-call-v1",
+        "phase": "terminal"
+      },
+      "createdAt": "2026-10-12T06:10:16.801Z",
+      "eventHash": "ba7f10eadf1e6dcde3f42d9cd2ce1b2de3a1ffcb2710d604ed9c5c81be6cdee6"
+    },
+    {
+      "type": "run.remote.terminal",
+      "payload": {
+        "callId": "fc-01M4QBPSTTQTKCRHZR3SK30ZP4",
+        "appId": "ap-LoImbJINtj2YsmvoRQ5r3X",
+        "appState": "STOPPED",
+        "runningTasks": 0,
+        "completionEvidence": "client-envelope",
+        "state": "COMPLETED",
+        "exitCode": 0,
+        "executor": "modal",
+        "protocol": "modal-call-v1",
+        "experimentId": "peer",
+        "submissionId": "a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+        "allocationName": "evidra-a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+        "appName": "evidra-a99c8c3a-0bc8-4a63-afb8-84933377a65d",
+        "phase": "terminal",
+        "at": "2026-10-12T06:10:37.255Z"
+      },
+      "createdAt": "2026-10-12T06:10:37.255Z",
+      "eventHash": "27579d3a92eb4a47e54803cef86180ba6dc0891c1d3c6e564eae378ace0bad37"
+    }
+  ]
+}

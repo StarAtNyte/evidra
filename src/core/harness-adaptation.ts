@@ -1,3 +1,4 @@
+import { parseHarnessFeedbackRole } from "./harness-feedback.js";
 import { createHash } from "node:crypto";
 import type { HarnessComparison, HarnessScorecard, HarnessTrial } from "./harness-scorecard.js";
 
@@ -86,6 +87,7 @@ export function validateHarnessRetestProtocol(
  */
 export function materializeHarnessRetestTask(plan: HarnessAdaptationPlan, benchmarkRevision: string, benchmarkEvidence?: unknown): HarnessRetestTask | undefined {
   if (plan.claimStatus === "win_proven" || plan.interventions.length === 0 || !benchmarkRevision.trim()) return undefined;
+  if (parseHarnessFeedbackRole((benchmarkEvidence as { adaptationRole?: unknown } | undefined)?.adaptationRole) === "held_out") return undefined;
   const revision = createHash("sha256").update(benchmarkRevision).digest("hex").slice(0, 16);
   const highestPriority = plan.interventions[0]?.priority;
   const benchmarkProtocol = benchmarkEvidence && typeof benchmarkEvidence === "object" && Array.isArray((benchmarkEvidence as { protocol?: unknown }).protocol)

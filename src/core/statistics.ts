@@ -79,7 +79,7 @@ export function pairedPermutationPValue(baseline: number[], candidate: number[],
   return (favorable + 1) / (total + 1);
 }
 
-export function compareRuns(baseline: RunResult, candidate: RunResult, metric = "final_layer_mse", lowerIsBetter = true): RunComparison {
+export function compareRuns(baseline: RunResult, candidate: RunResult, metric: string, lowerIsBetter = true): RunComparison {
   const base = baseline.metrics[metric] ?? null;
   const next = candidate.metrics[metric] ?? null;
   if (base === null || next === null) {

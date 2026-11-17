@@ -1,4 +1,22 @@
 import { ResearchStore } from "./store.js";
+import type { RemoteExecutionEvent } from "./executors.js";
+
+/** Allocation evidence is mandatory durability, unlike best-effort liveness. */
+export function recordRemoteExecution(storePath: string, event: RemoteExecutionEvent): void {
+  const store = new ResearchStore(storePath);
+  try {
+    if (event.executor === "modal" && event.phase === "terminal" && event.protocol === "modal-call-v1" && event.callId !== undefined && event.allocationName !== undefined && event.state !== undefined && event.exitCode !== undefined && (event.completionEvidence === "client-envelope" || event.completionEvidence === "sdk-result" || event.completionEvidence === "sdk-allocation")) {
+      if (!store.recordModalTerminalEvidence({ ...event, callId: event.callId, allocationName: event.allocationName, state: event.state, exitCode: event.exitCode, completionEvidence: event.completionEvidence })) throw new Error("Modal terminal proof conflicts with recorded evidence.");
+    } else if (event.executor === "container" && event.phase === "submitted" && event.runtime !== undefined && event.containerId !== undefined && event.allocationName !== undefined) {
+      if (!store.recordContainerReceiptEvidence({ ...event, runtime: event.runtime, containerId: event.containerId, allocationName: event.allocationName })) throw new Error("Container receipt conflicts with recorded evidence.");
+    } else if (event.executor === "container" && event.phase === "terminal" && event.runtime !== undefined && event.containerId !== undefined && event.allocationName !== undefined && event.state !== undefined && event.exitCode !== undefined) {
+      if (!store.recordContainerTerminalEvidence({ ...event, runtime: event.runtime, containerId: event.containerId, allocationName: event.allocationName, state: event.state, exitCode: event.exitCode })) throw new Error("Container terminal proof conflicts with recorded evidence.");
+    } else if (event.executor === "slurm" && event.phase === "terminal" && event.jobId !== undefined && event.allocationName !== undefined && event.state !== undefined && event.exitCode !== undefined) {
+      if (!store.recordRemoteTerminalEvidence({ ...event, jobId: event.jobId, allocationName: event.allocationName, state: event.state, exitCode: event.exitCode })) throw new Error("Remote terminal accounting conflicts with recorded evidence.");
+    } else store.appendEvent(`run.remote.${event.phase}`, event);
+  }
+  finally { store.close(); }
+}
 
 export interface ExecutionHeartbeatOptions {
   storePath: string;

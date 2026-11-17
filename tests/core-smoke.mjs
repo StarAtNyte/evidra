@@ -1,3 +1,5 @@
+import { boundedLocalResponseText, LOCAL_REQUEST_MAX_BYTES, LOCAL_RESPONSE_MAX_BYTES, LOCAL_ERROR_MAX_BYTES } from "../dist/agents/local-http.js";
+import { reconcileRemoteExperiment, reconcileSlurmExperiment } from "../dist/core/remote-reconciliation.js";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,8 +7,8 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { sha256File } from "../dist/core/evidence.js";
-import { deflateSync } from "node:zlib";
-import { execFileSync } from "node:child_process";
+import { deflateSync, gzipSync } from "node:zlib";
+import { execFileSync, spawnSync } from "node:child_process";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { compareMetricSeries, compareRuns, pairedPermutationPValue } from "../dist/core/statistics.js";
@@ -26,22 +28,22 @@ import { prepareSubmission, submissionValidationScores, validateSubmissionBundle
 import { canonicalSourceUrl, DEFAULT_SOURCE_REFRESH_MS, SOURCE_DNS_TIMEOUT_MS, SOURCE_REQUEST_TIMEOUT_MS, SOURCE_SEARCH_MIN_RELEVANCE_SCORE, SOURCE_SEARCH_RANKING_VERSION, extractPdfText, parseArxivSearchResults, parseCrossrefSearchResults, parseRepositorySearchResults, parseSourceSearchResults, parseWebSearchResults, rankSourceSearchResults, researchSearchQueries, retrieveSource, sourceClaimRecords, sourceClaims, sourceEvidenceClass, sourceEvidenceQuality, sourceFrontier, sourceIsFresh, sourceSearchCacheIsCurrent, sourceSearchNeedsRefinement } from "../dist/core/sources.js";
 import { createBlendCandidate, diversityReport, greedyBlend, loadPredictionVector, safePredictionPath, validateBlendCandidate } from "../dist/core/ensemble.js";
 import { CompetitionConfigSchema, ExperimentManifestSchema } from "../dist/core/types.js";
-import { competitionResearchClaimType, competitionResearchSources, competitionSourceRefreshMs } from "../dist/core/competition-sources.js";
+import { competitionChangeGuidance, competitionResearchClaimType, competitionResearchSources, competitionSourceChange, competitionSourceRefreshMs } from "../dist/core/competition-sources.js";
 import { extractCompetitionInsights } from "../dist/core/competition-insights.js";
 import { dashboardHtml, dashboardSnapshot } from "../dist/core/dashboard.js";
 import { workbenchHtml } from "../dist/core/dashboard-web.js";
-import { processFailureResult, runProcess } from "../dist/core/process.js";
+import { boundProcessOutput, processFailureResult, ProcessStartError, runProcess } from "../dist/core/process.js";
 import { competitionIdForMode, competitionManifestForInitialization, declaredEvaluatorCommand, loadCompetitionAdapter } from "../dist/competitions/adapters.js";
 import { whestbenchConfig } from "../dist/competitions/whestbench.js";
-import { createValidationPolicy, splitStrategy } from "../dist/core/validation-policy.js";
+import { createValidationPolicy, splitStrategy, writeValidationPolicy } from "../dist/core/validation-policy.js";
 import { autonomyPolicy, guardAutonomousCommand, guardCommand, guardReadOnlyInspection, guardWorkspaceCommand } from "../dist/core/permissions.js";
 import { QueueWorker } from "../dist/core/queue-worker.js";
 import { queueRecoveryAction } from "../dist/core/queue-recovery.js";
 import { executeResearchTool, normalizeResearchToolResult, availableResearchTools, RESEARCH_TOOLS, selectResearchTools, toolFailureTrust, untrustedContentWarnings, workspaceSearchFallbackTerms } from "../dist/core/tools.js";
 import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "../dist/core/external-tools.js";
 import { normalizeResearchDecisionPayload, normalizeResearchToolCall, researchDirectorAvailableTools, runResearchDirector } from "../dist/agents/research-director.js";
-import { CodexExecAgent, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
-import { LocalExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, slurmCommand, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
+import { CodexExecAgent, checkProvider, listLocalModels, codexAgentMessageText, codexEventErrorMessage, codexItemProgress, codexResearchModelPool, loginCodex, normalizeCodexModels, normalizeCodexUsage, progressLine, waitForInterrupt } from "../dist/agents/codex-exec.js";
+import { LocalExecutor, ContainerExecutor, ModalExecutor, classifyProcessFailure, containerCommand, mergeEvaluatorResult, parseEvaluationMatrix, parseMetricOutput, parseModalWorkerResult, safeWorkerEnvironment, SlurmExecutor, parseSlurmAccounting, slurmCommand, validateRunMetric, validateRunMetrics } from "../dist/core/executors.js";
 import { computeMetric, metricDefinition } from "../dist/core/metrics.js";
 import { rankReplayPolicies, simulateReplay, validateReplayWorld } from "../dist/core/replay-simulator.js";
 import { experienceReplayWorld } from "../dist/core/experience.js";
@@ -50,10 +52,10 @@ import { classifyResearchSetupInput } from "../dist/core/research-setup.js";
 import { captureEnvironment } from "../dist/core/environment.js";
 import { ensureWorktree } from "../dist/core/worktree.js";
 import { hasExperimentInputStagingCapacity, stageExperimentInputs } from "../dist/core/experiment-inputs.js";
-import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatResearchStagePlan, mergePhaseGoalAudits, phaseCompletionCriteriaForAudit, phaseGoalCanAdvance, phaseGoalCycleAudit, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForCurrentSet, phaseGoalsForMode, researchStageForPhase, researchStageProgress, RESEARCH_STAGE_PLAN } from "../dist/core/phase-goals.js";
+import { activePhaseGoal, auditPhaseGoal, auditPhaseGoalGate, definePhaseGoals, evaluatePhaseGoalEvidence, formatPhaseGateGuidance, formatResearchStagePlan, formatStagnationPause, phaseGateDeferral, mergePhaseGoalAudits, phaseCompletionCriteriaForAudit, phaseGoalCanAdvance, phaseGoalCycleAudit, phaseGoalSubtaskContract, PHASE_GOAL_EVENT_TYPES, phaseGoalEventsSince, phaseGoalRecordsSince, phaseGoalSetId, phaseGoalsForCurrentSet, phaseGoalsForMode, researchStageForPhase, researchStageProgress, RESEARCH_STAGE_PLAN } from "../dist/core/phase-goals.js";
 import { assertSubtaskContract, auditSubtask, projectVerifiedSubtaskState, subtaskAuditFingerprint, subtaskStateFromAudit, validateSubtaskContract } from "../dist/core/subtask-state.js";
 import { alignResearchDecisionPhase, auditResearchDecision, downgradeUnauditedDecision } from "../dist/core/decision-auditor.js";
-import { captureImplementationSnapshot, captureVerificationSourcePin, implementationChanged, implementationEditRetryPrompt, implementationRetryPrompt, resolveImplementationPaths, seedImplementationArtifacts, seedImplementationSource, seedVerificationImplementation, verifyImplementationSnapshot } from "../dist/core/implementation-guard.js";
+import { preserveInterruptedImplementation, captureImplementationSnapshot, captureVerificationSourcePin, implementationChanged, implementationEditRetryPrompt, implementationRetryPrompt, resolveImplementationPaths, seedImplementationArtifacts, seedImplementationSource, seedVerificationImplementation, verifyImplementationSnapshot } from "../dist/core/implementation-guard.js";
 import { externalSubmissionId, parseSubmissionScore, pollSubmissionScore, responseSubmissionId, submissionConfigForWorktree, submitApprovedBundle } from "../dist/core/submission-adapters.js";
 import { externalScoreEvidenceContext, hashExternalArtifact } from "../dist/core/submission-feedback.js";
 import { findWorkspaceRoot } from "../dist/core/workspace.js";
@@ -62,7 +64,8 @@ import { researchLaneConcurrency, semanticAuditNeedsFreshInspection, RESEARCH_SC
 import { workspaceReadPathsFromSearchResult } from "../dist/agents/research-lanes.js";
 import { createExperimentManifest, createReplicationManifest, manifestSummary } from "../dist/core/experiment-manifest.js";
 import { distributionObservationsFromFeedback, distributionObservationsFromSubmissions, estimateDistributionBeliefs } from "../dist/core/distribution-beliefs.js";
-import { auditData, dataAuditFingerprint, dataAuditManifestFingerprint } from "../dist/core/data-audit.js";
+import { auditData, DATA_AUDIT_VERSION, dataAuditFingerprint, dataAuditManifestFingerprint } from "../dist/core/data-audit.js";
+import { reconcileValidationPolicyLock } from "../dist/core/validation-reconcile.js";
 import { discoverAutoLabTasks, parseAutoLabDiscovery } from "../dist/core/autolab.js";
 import { advanceExecutionStage, createExecutionPlan, nextExecutionStage, trivialSuccessCommand, validateExecutionContract } from "../dist/core/execution-stages.js";
 import { persistExecutionStageResult, runReducedValidation } from "../dist/core/stage-executor.js";
@@ -81,13 +84,15 @@ import { playbookFromMethod, verifiedPlaybooksFromEvents } from "../dist/core/pl
 import { failedDirectionsFromExperiments } from "../dist/core/failure-memory.js";
 import { applyUnifiedDiff, extractUnifiedDiff } from "../dist/core/experiment-patches.js";
 import { detectStagnation, decisionSignature } from "../dist/core/stagnation.js";
+import { assessGoalProgress, stalledPivotCycles } from "../dist/core/progress.js";
+import { deriveAdaptiveHarnessPolicy as deriveAdaptivePolicyForPlateau } from "../dist/core/adaptive-harness.js";
 import { compareClaims } from "../dist/core/claim-consistency.js";
 import { materializeResearchDecision } from "../dist/core/research-graph.js";
 import { evaluateSubmissionPolicy } from "../dist/core/submission-policy.js";
 import { activeCampaignTaskIds, bindCampaignRuntime, campaignElapsedMinutes, campaignRemainingMs, campaignRuntimeFingerprint, campaignRuntimeMatchesExceptAutonomy, extendCampaignBudget, nextCampaignCycle, parseRoleTokenBudgets, pauseCampaign, pauseCampaignForBudget, readCampaignCheckpoint, readDurableCampaignRuntime, recoverCompletedBudgetPause, recoverFalseBudgetExhaustion, researchTurnTimeoutMs, resolveCampaignMode, resumeCampaign, serializeRoleTokenBudgets, withCampaignCheckpoint } from "../dist/core/campaign.js";
 import { readCampaignRuntime } from "../dist/core/campaign.js";
 import { campaignEvidenceConflictCounts, mergeCampaignToolFailures, recordsForCampaign, recordsForGoalSet } from "../dist/core/campaign-scope.js";
-import { applyCriticGate, formatOpenCriticConstraintGuidance, latestOpenCriticConstraint, promoteExplicitExploratoryRun, promoteOperatorSteeredExploration } from "../dist/core/critic-gate.js";
+import { applyCriticGate, formatOpenCriticConstraintGuidance, latestOpenCriticConstraint } from "../dist/core/critic-gate.js";
 import { recordBaselineEvidence, recordBaselineReuse } from "../dist/core/baseline.js";
 import { auditExperiment, auditExperimentSubtask, externalScoreObservedForExperiment, independentReplicationObserved, refreshAuditWithExternalScore, refreshExperimentAudit, validateEvaluationMatrix } from "../dist/core/validation.js";
 import { alternateResearchLaneRoute, assignResearchLaneRoutes, boundedPeerBoard, boundLaneToolResult, compactResearchQuery, createLaneToolExecutor, explicitWorkspaceReadPaths, laneHandoffBoard, lanePrompt, laneToolCalls, laneToolObservationContext, normalizeResearchReview, normalizeResearchSemanticAudit, ResearchLaneReportSchema, ResearchSemanticAuditSchema, researchLaneSessionScope, researchLaneTeamSize, researchLiteratureQueries, researchToolObservationAnchor, roleMemoryFromTrajectories, runResearchLanes, selectResearchLaneRoles, workspaceReadCallsFromSearchResult } from "../dist/agents/research-lanes.js";
@@ -97,7 +102,7 @@ import { agentBudgetLedger, campaignAgentTokens, campaignRoleAgentTokens, roleBu
 import { validateCompetitionContract } from "../dist/core/competition-contract.js";
 import { candidateChangePath } from "../dist/core/hypothesis-path.js";
 import { assessForecast, summarizeForecastAssessments } from "../dist/core/forecast-calibration.js";
-import { withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
+import { recordRemoteExecution, withExecutionHeartbeat } from "../dist/core/execution-heartbeat.js";
 import { compareHarnesses, compareProviderRoutes, compareSearchPolicies, estimatePassAtK, evaluateHarnessComponentAblations, evaluateHarnessGeneralization, evaluateHarnessRetention, evaluateProviderGeneralization, harnessParetoFrontier, parseHarnessTrial, passAtKCurve, scoreHarnessTrials, scoreSearchPolicies, validateBenchmarkProtocol } from "../dist/core/harness-scorecard.js";
 import { evaluateScientificTaskRun, runScientificTask, ScientificTaskRunSchema, ScientificTaskSchema } from "../dist/core/scientific-tasks.js";
 import { runSafetyBenchmark } from "../dist/core/safety-bench.js";
@@ -107,7 +112,7 @@ import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTas
 import { evaluateGpuBudget, observedGpuHours } from "../dist/core/compute-budget.js";
 import { collaborationUtility } from "../dist/core/adaptive-harness.js";
 import { assessCodeHealth, assessCodeHealthTrend, snapshotCodeHealth } from "../dist/core/code-health.js";
-import { selectRatchetReference } from "../dist/core/ratchet.js";
+import { championExperimentIds, championImplementation, experimentLog, holdoutAllows, holdoutReference, isAgentVisibleEvent, selectRatchetReference } from "../dist/core/ratchet.js";
 
 test("failed autonomous screening persists a retryable failed experiment instead of stranding it running", () => {
   const failed = failedAutonomousExperimentPayload({ id: "exp-1", status: "running", manifest: { immutable: true } }, {
@@ -213,11 +218,11 @@ import { assertValidationPolicy, lockValidationPolicy, readValidationPolicyLock,
 import { researchFailureRecord } from "../dist/core/research-failure.js";
 import { codexIsLoggedInAsync, createIsolatedCodexWorkspace, DEFAULT_CODEX_MODEL, effectiveCodexModel, effectiveCodexSandbox, isProviderFallbackEligible, isProviderUsageLimit, listCodexModels, MAX_PROVIDER_RESET_WAIT_MS, providerRetryAfterMs, queueCodexMessage, researchSandboxMode, resolveCodexBinary, resolveCodexModel, shouldUseLocalFallback } from "../dist/agents/codex-exec.js";
 import { analyzeHarnessComponentFailures, assessHarnessChangePresence, evaluateHarnessChange, inventoryHarnessComponents, parseHarnessChangeContract, planHarnessInterventions } from "../dist/core/harness-evolution.js";
-import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, parseLearningCurve } from "../dist/core/early-stopping.js";
+import { assessEarlyStopping, deriveReferenceCurve, EarlyStoppingMonitor, MAX_PROGRESS_LINE_CHARS, parseLearningCurve } from "../dist/core/early-stopping.js";
 import { assessStopPolicy, betaPosteriorTail } from "../dist/core/stop-policy.js";
 import { classifyVerifier, verifierKind } from "../dist/core/formal-verification.js";
 import { detectRouteDrift } from "../dist/core/drift-detection.js";
-import { boundResearchContext } from "../dist/core/context-budget.js";
+import { boundResearchContext, serializeResearchContext } from "../dist/core/context-budget.js";
 import { workspaceObservationEvidence } from "../dist/core/observation-evidence.js";
 
 test("runtime version is sourced from package metadata", () => {
@@ -235,6 +240,85 @@ test("research context packing preserves priority and records truncation", () =>
   assert.ok(packed.report.usedChars <= packed.report.maxChars + 100);
   assert.ok(packed.report.truncated.length > 0 || packed.report.dropped.length > 0);
   assert.ok(packed.context.contextBudget);
+});
+
+test("context budgets count escaped JSON and the serialized audit report", () => {
+  const packed = boundResearchContext({
+    observation: { output: '\u0000"\\'.repeat(4_000) },
+    phaseGoal: { phase: "validation", objective: "preserve the evaluation contract" },
+  }, 4_000);
+  assert.ok(JSON.stringify(packed.context).length <= 4_000);
+  assert.equal(packed.report.usedChars, JSON.stringify(packed.context).length);
+  assert.equal(packed.context.phaseGoal.objective, "preserve the evaluation contract");
+});
+
+test("context diagnostics remain bounded when many long section names are dropped", () => {
+  const input = { phaseGoal: { phase: "validation" } };
+  for (let index = 0; index < 500; index += 1) input[`history-${index}-${"x".repeat(150)}`] = "old evidence ".repeat(100);
+  const packed = boundResearchContext(input, 4_000);
+  assert.ok(JSON.stringify(packed.context).length <= 4_000);
+  assert.equal(packed.report.usedChars, JSON.stringify(packed.context).length);
+  assert.ok(packed.report.dropped.length > 100, "the controller retains complete diagnostics");
+  assert.equal(packed.context.contextBudget.droppedCount, packed.report.dropped.length);
+});
+
+test("invalid context ceilings use the finite default instead of disabling bounds", () => {
+  for (const ceiling of [NaN, Infinity, -Infinity]) {
+    const packed = boundResearchContext({ observation: "x".repeat(100_000) }, ceiling);
+    assert.equal(packed.report.maxChars, 48_000);
+    assert.ok(JSON.stringify(packed.context).length <= 48_000);
+  }
+});
+
+test("current operator steering survives bulky observations and historical memory", () => {
+  const steering = ["Stop expanding the search. Verify the candidate against the locked evaluator."];
+  const packed = boundResearchContext({
+    operatorSteering: steering,
+    toolInstruction: "A tool failed. Change the route; do not repeat the failed action.",
+    observation: { output: "inventory ".repeat(10_000) },
+    phaseGoal: { phase: "validation", objective: "verify candidate" },
+    researchMemory: { claims: ["history ".repeat(10_000)] },
+  }, 4_000);
+  assert.deepEqual(packed.context.operatorSteering, steering);
+  assert.match(packed.context.toolInstruction, /Change the route/);
+  assert.equal(packed.context.phaseGoal.objective, "verify candidate");
+  assert.ok(JSON.stringify(packed.context).length <= 4_000);
+});
+
+test("context packing keeps recent failure status and marks shortened tool evidence", () => {
+  const latest = { output: { text: "decisive failure detail ".repeat(1_000), truncated: false }, ok: false, name: "workspace.read", trust: "untrusted_content" };
+  const packed = boundResearchContext({ toolResults: [
+    ...Array.from({ length: 100 }, (_, index) => ({ name: `old-${index}`, output: "old chatter ".repeat(100) })),
+    latest,
+  ] }, 4_000);
+  const observed = packed.context.toolResults.at(-1);
+  assert.equal(observed.name, "workspace.read");
+  assert.equal(observed.ok, false);
+  assert.equal(observed.trust, "untrusted_content");
+  assert.equal(observed.output.truncated, true);
+  assert.match(observed.output.text, /decisive failure detail/);
+  assert.equal(latest.output.truncated, false, "packing must not mutate durable evidence");
+  assert.ok(JSON.stringify(packed.context).length <= 4_000);
+});
+
+test("context packing accounts for nested punctuation and prototype-shaped section names", () => {
+  const input = JSON.parse('{"__proto__":{"status":"untrusted"},"constructor":"workspace-data","toString":"workspace-data"}');
+  const packed = boundResearchContext(input, 4_000);
+  assert.equal(Object.getPrototypeOf(packed.context), Object.prototype);
+  assert.equal(Object.hasOwn(packed.context, "__proto__"), true);
+  assert.equal(packed.context.toString, "workspace-data");
+  for (const character of ['"', '\\', '\u0000', '🧪', '\n']) {
+    for (const budget of [4_000, 8_000, 16_000]) {
+      const nested = boundResearchContext({
+        phaseGoal: { phase: "evaluation", objective: "retain the locked test" },
+        toolResults: Array.from({ length: 80 }, (_, index) => ({ name: "workspace.read", ok: index % 2 === 0, output: { path: `result-${index}.md`, text: character.repeat(600), truncated: false } })),
+        laneToolResults: [0, 1, 2].map((index) => ({ role: `lane-${index}`, observations: [{ tool: "workspace.read", output: { text: character.repeat(2_000) } }] })),
+      }, budget);
+      assert.ok(serializeResearchContext(nested.context).length <= budget, `serialized payload exceeds ${budget} for ${JSON.stringify(character)}`);
+      assert.equal(nested.report.usedChars, serializeResearchContext(nested.context).length);
+      assert.equal(nested.context.phaseGoal.objective, "retain the locked test");
+    }
+  }
 });
 
 test("current authoritative evidence survives context packing ahead of learned-memory summaries", () => {
@@ -371,6 +455,12 @@ test("project runtime guidance is bounded, hashed, and separated from evidence",
     const roleGuidance = loadProjectGuidance(root, "validation scientist");
     assert.deepEqual(roleGuidance?.paths, ["EVIDRA.md", ".evidra/instructions.md", ".evidra/roles/validation-scientist.md"]);
     assert.match(roleGuidance?.text ?? "", /held-out split/);
+    // A long shared brief must not crowd out the role's own file.
+    writeFileSync(join(root, "EVIDRA.md"), "brief line\n".repeat(6_000));
+    const crowded = loadProjectGuidance(root, "validation scientist");
+    assert.equal(crowded?.truncated, true);
+    assert.ok(crowded?.paths.includes(".evidra/roles/validation-scientist.md"));
+    assert.match(crowded?.text ?? "", /held-out split/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -393,11 +483,20 @@ test("shared project skills are discovered deterministically and remain bounded 
 });
 
 test("strict Codex research output normalizes nullable optional fields", () => {
-  const payload = normalizeResearchDecisionPayload({ selectedHypothesis: null, hypotheses: [{ expectedOutcome: null, sourceAdaptation: { sourceTitle: "paper", section: null, repository: null, originalSetting: "setting", competitionDifference: "difference", expectedFailureModes: ["failure"] } }] });
+  const payload = normalizeResearchDecisionPayload({ selectedHypothesis: null, hypotheses: [{ expectedOutcome: null, evidenceSourceIds: ["src-1"], sourceAdaptation: { sourceTitle: "paper", section: null, repository: null, originalSetting: "setting", competitionDifference: "difference", expectedFailureModes: ["failure"] } }] });
   assert.equal(payload.hypotheses[0].expectedOutcome, undefined);
   assert.equal(payload.hypotheses[0].sourceAdaptation.section, undefined);
   assert.equal(payload.hypotheses[0].sourceAdaptation.repository, undefined);
   assert.equal(payload.selectedHypothesis, null);
+});
+
+test("an uncited source adaptation becomes an assumption instead of rejecting the decision", () => {
+  const payload = normalizeResearchDecisionPayload({ hypotheses: [{ assumptions: ["a"], evidenceSourceIds: [], sourceAdaptation: { sourceTitle: "research/t1_external_data.md", section: "Top plan", repository: null, originalSetting: "s", competitionDifference: "d", expectedFailureModes: ["f"] } }] });
+  assert.equal(payload.hypotheses[0].sourceAdaptation, undefined);
+  assert.equal(payload.hypotheses[0].assumptions.length, 2);
+  assert.match(payload.hypotheses[0].assumptions[1], /research\/t1_external_data\.md · Top plan/);
+  const cited = normalizeResearchDecisionPayload({ hypotheses: [{ evidenceSourceIds: ["src-9"], sourceAdaptation: { sourceTitle: "paper" } }] });
+  assert.equal(cited.hypotheses[0].sourceAdaptation.sourceTitle, "paper");
 });
 
 test("provider-native command aliases map to the bounded shell research tool", () => {
@@ -1102,6 +1201,9 @@ test("agent organization gives every lane a responsibility and reporting line", 
     assert.deepEqual(store.recoverStaleAgentDirectives(1, Date.now() + 2_000), [directive.id]);
     assert.equal(store.agentDirectiveOutcomes()[0]?.status, "failed");
     assert.throws(() => store.recordAgentDirectiveOutcome(directive.id, "validation scientist", "completed", "split rechecked; no leakage found"), /terminal failed/);
+    // A lane that finishes after stale-handoff recovery must not crash on the already-settled directive.
+    assert.equal(store.settleAgentDirective(directive.id, "validation scientist", "failed", "lane failed late"), false);
+    assert.equal(store.agentDirectiveOutcomes().find((outcome) => outcome.directiveId === directive.id)?.status, "failed");
     const completedDirective = store.enqueueAgentDirective("validation scientist", "record the successful split review", null, "research director");
     store.consumeAgentDirectives("validation scientist");
     store.recordAgentDirectiveOutcome(completedDirective.id, "validation scientist", "completed", "split rechecked; no leakage found");
@@ -1959,66 +2061,19 @@ test("retrospective replay selects difficult and diverse experiences determinist
   assert.deepEqual(selectRetrospectiveCoreset(records, 2).map((record) => record.trajectoryId), selectRetrospectiveCoreset(records, 2).map((record) => record.trajectoryId));
 });
 
-test("critic revision permits falsifiable exploration but blocks unsupported stopping and rejection", () => {
-  const decision = { phase: "evaluation", goalStatus: "met", decision: "run", bottleneck: "b", rationale: "r", hypotheses: [], selectedHypothesis: null, nextAction: "run it", toolCalls: [] };
-  const gated = applyCriticGate(decision, { verdict: "revise" });
-  assert.equal(gated.blocked, true);
-  assert.equal(gated.decision.goalStatus, "active");
-  assert.equal(gated.decision.decision, "inspect");
-  assert.match(gated.decision.nextAction, /critic verdict is revise/i);
+test("critic gates completion claims, never attempts", () => {
+  const decision = { phase: "evaluation", goalStatus: "met", decision: "stop", bottleneck: "b", rationale: "r", hypotheses: [], selectedHypothesis: null, nextAction: "finish", toolCalls: [] };
   assert.equal(applyCriticGate(decision, { verdict: "proceed" }).blocked, false);
-  const concreteRun = { ...decision, goalStatus: "active", selectedHypothesis: "candidate" };
-  assert.equal(applyCriticGate(concreteRun, { verdict: "revise" }).blocked, true, "a selected name without a falsification contract cannot run");
-  const falsifiableRun = { ...concreteRun, hypotheses: [{ title: "candidate", falsificationTest: "Run paired fixed inputs and reject if the metric does not improve." }] };
-  const revisedRun = applyCriticGate(falsifiableRun, { verdict: "revise" });
-  assert.equal(revisedRun.blocked, false);
-  assert.equal(revisedRun.decision.decision, "run");
-  assert.match(revisedRun.decision.nextAction, /exploratory run only.*do not claim validation/i);
-  assert.equal(applyCriticGate(falsifiableRun, { verdict: "reject" }).blocked, true, "explicit rejection remains a hard veto");
-  const mislabeledExploration = { ...falsifiableRun, decision: "inspect", rationale: "Run this selected hypothesis only as a bounded exploratory test.", nextAction: "Run the official evaluator on the public mini split.", selectedHypothesis: "candidate" };
-  const promoted = promoteExplicitExploratoryRun(mislabeledExploration, { verdict: "revise", summary: "A bounded exploratory run is defensible; promotion remains blocked." }, true);
-  assert.equal(promoted.promoted, true);
-  assert.equal(promoted.decision.decision, "run");
-  assert.match(promoted.decision.nextAction, /unresolved critic objections still block validation, promotion, and submission/i);
-  assert.equal(promoteExplicitExploratoryRun(mislabeledExploration, { verdict: "revise", summary: "Resolve prerequisites before execution." }, true).promoted, false);
-  assert.equal(promoteExplicitExploratoryRun(mislabeledExploration, { verdict: "revise", summary: "A bounded exploratory run is defensible." }, false).promoted, false);
-  assert.equal(promoteExplicitExploratoryRun(mislabeledExploration, { verdict: "reject", summary: "No exploratory run is allowed." }, true).promoted, false);
-  const auditDecision = {
-    ...mislabeledExploration,
-    decision: "inspect",
-    selectedHypothesis: "Reconcile score provenance",
-    hypotheses: [{ title: "Reconcile score provenance", formulationFamily: "validation", outcomeType: "proof", mechanism: "Compare records.", proposedChange: "Read run artifacts.", falsificationTest: "The records are unavailable." }],
-  };
-  const storedEstimatorHypothesis = {
-    id: "hyp-existing-estimator",
-    payload: {
-      id: "hyp-existing-estimator",
-      status: "proposed",
-      title: "Exploratory covariance propagation estimator",
-      formulationFamily: "inference",
-      outcomeType: "metric",
-      mechanism: "Propagating moments may improve the estimate.",
-      proposedChange: "Implement covariance propagation in an isolated worktree and run the locked mini evaluator.",
-      falsificationTest: "Reject if any row fails or the complete score does not improve.",
-      expectedMetricDelta: { low: -1e-9, median: -1e-10, high: 0 },
-      implementationRisk: "medium",
-      leakageRisk: "low",
-      decisionId: 12,
-    },
-  };
-  const operatorInstruction = "Run one isolated exploratory experiment even though unresolved data checks are blockers to validation and submission only.";
-  const steered = promoteOperatorSteeredExploration(auditDecision, { verdict: "revise" }, true, [operatorInstruction], [storedEstimatorHypothesis]);
-  assert.equal(steered.promoted, true);
-  assert.equal(steered.hypothesisId, "hyp-existing-estimator");
-  assert.equal(steered.decision.decision, "run");
-  assert.equal(steered.decision.selectedHypothesis, "Exploratory covariance propagation estimator");
-  assert.ok(steered.decision.hypotheses.some((hypothesis) => hypothesis.title === steered.decision.selectedHypothesis));
-  assert.match(steered.decision.nextAction, /unresolved checks as blockers to validation, promotion, and submission/i);
-  assert.equal(promoteOperatorSteeredExploration(auditDecision, { verdict: "revise" }, false, [operatorInstruction], [storedEstimatorHypothesis]).promoted, false, "safe permissions still block execution");
-  assert.equal(promoteOperatorSteeredExploration(auditDecision, { verdict: "reject" }, true, [operatorInstruction], [storedEstimatorHypothesis]).promoted, false, "critic rejection remains a hard veto");
-  assert.equal(promoteOperatorSteeredExploration(auditDecision, { verdict: "revise" }, true, [operatorInstruction], [storedEstimatorHypothesis], new Set(["hyp-existing-estimator"])).promoted, false, "already scheduled hypotheses are not duplicated");
-  const auditOnly = { ...storedEstimatorHypothesis, id: "hyp-audit", payload: { ...storedEstimatorHypothesis.payload, id: "hyp-audit", formulationFamily: "validation" } };
-  assert.equal(promoteOperatorSteeredExploration(auditDecision, { verdict: "revise" }, true, [operatorInstruction], [auditOnly]).promoted, false, "validation-only proposals are never executed as experiments");
+  assert.equal(applyCriticGate(decision, undefined).blocked, false);
+  for (const verdict of ["revise", "reject"]) {
+    const gated = applyCriticGate(decision, { verdict });
+    assert.equal(gated.blocked, true);
+    assert.equal(gated.decision.goalStatus, "active", "an objection keeps the goal open");
+    assert.equal(gated.decision.decision, "inspect", "a vetoed stop does not end the campaign");
+    assert.match(gated.decision.nextAction, /keep experimenting/i);
+  }
+  const runWhileClaiming = { ...decision, decision: "run", selectedHypothesis: "candidate" };
+  assert.equal(applyCriticGate(runWhileClaiming, { verdict: "reject" }).decision.decision, "run", "the attempt itself still runs");
 });
 
 test("critic constraints survive short event windows until a later proceed result", () => {
@@ -2028,10 +2083,7 @@ test("critic constraints survive short event windows until a later proceed resul
   ]);
   assert.deepEqual(open, { verdict: "revise", summary: "check leakage", objections: ["split is unverified"], requiredChecks: ["run grouped audit"] });
   const guidance = formatOpenCriticConstraintGuidance(open);
-  assert.match(guidance, /bounded internal phase goal may be marked met only when its own deterministic domain gate and durable subtask audit pass/i);
-  assert.match(guidance, /not a claim that the ultimate objective or candidate is complete or validated/i);
-  assert.match(guidance, /do not claim ultimate-goal completion, final-candidate validation, promotion, or submission/i);
-  assert.match(guidance, /explicit reject verdict still blocks execution/i);
+  assert.match(guidance, /block claims of completion, validation, promotion, or submission, never experiments/i);
   assert.equal(latestOpenCriticConstraint([
     { type: "research.critic.completed", payload: { review: { verdict: "revise", summary: "old", objections: [], requiredChecks: ["old check"] } } },
     { type: "research.critic.completed", payload: { review: { verdict: "proceed", summary: "resolved", objections: [], requiredChecks: [] } } },
@@ -2430,6 +2482,46 @@ test("stale recovery preserves experiments with a fresh worker heartbeat", () =>
     assert.deepEqual(store.recoverStaleExperiments(), []);
     assert.equal(store.experiments()[0].payload.status, "running");
     store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("restart quarantine preserves uncertain remote allocations and reservations across database reopen", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-remote-recovery-"));
+  const db = join(root, "state.sqlite");
+  try {
+    const crashed = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      import { ResearchStore } from ${JSON.stringify(new URL("../dist/core/store.js", import.meta.url).href)};
+      const store = new ResearchStore(${JSON.stringify(db)});
+      for (const executor of ["container", "modal", "slurm"]) {
+        store.saveExperiment({ id: executor, payload: { id: executor, status: "running", resources: { executor } } });
+        store.reserveComputeBudget({ experimentId: executor, budgetGpuHours: 10, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" });
+      }
+      process.kill(process.pid, "SIGKILL");
+    `], { timeout: 10_000, encoding: "utf8" });
+    assert.equal(crashed.signal, "SIGKILL", crashed.stderr);
+    const store = new ResearchStore(db);
+    assert.equal(store.recoverStaleExperiments().length, 3);
+    assert.equal(store.reservedComputeGpuHours(), 6);
+    store.close();
+    const reopened = new ResearchStore(db);
+    for (const executor of ["container", "modal", "slurm"]) {
+      const payload = reopened.experiments().find((entry) => entry.id === executor).payload;
+      assert.equal(payload.status, "blocked");
+      assert.equal(payload.remoteReconciliationRequired, true);
+      assert.equal(payload.recoveryAttempted, true);
+      assert.throws(() => reopened.saveExperiment({ id: executor, payload: { ...payload, status: "scheduled", remoteReconciliationRequired: false } }), /remote reconciliation/);
+      assert.throws(() => reopened.saveExperiment({ id: executor, payload: { ...payload, status: "running" } }), /remote reconciliation/);
+      assert.throws(() => reopened.saveExperiment({ id: executor, payload: { ...payload, status: "completed" } }), /remote reconciliation/);
+      reopened.saveExperiment({ id: executor, payload: { ...payload, status: "cancelled", remoteReconciliationRequired: false } });
+      assert.equal(reopened.experiments().find((entry) => entry.id === executor).payload.remoteReconciliationRequired, true);
+      assert.equal(reopened.releaseComputeReservation(executor, "unproven terminal status"), false);
+    }
+    assert.deepEqual(reopened.reconcileComputeReservations(), []);
+    assert.equal(reopened.reservedComputeGpuHours(), 6);
+    assert.deepEqual(reopened.recoverStaleExperiments(), []);
+    assert.equal(reopened.eventsByType("experiment.remote.reconciliation.required").length, 3);
+    assert.equal(reopened.verifyEventChain().status, "valid");
+    reopened.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -2846,8 +2938,8 @@ test("code health detects severe test deletion and untested structural growth", 
   const trend = assessCodeHealthTrend([growth, growth, growth]);
   assert.equal(trend.status, "warn");
   assert.equal(trend.untestedGrowthStreak, 3);
-  const severeTrend = assessCodeHealthTrend([growth, growth, growth, growth]);
-  assert.equal(severeTrend.status, "fail");
+  assert.equal(assessCodeHealthTrend([growth, growth, growth, growth]).status, "warn", "growth alone never vetoes an attempt");
+  assert.equal(assessCodeHealthTrend([growth, removed]).status, "fail");
   const isolatedTrend = assessScopedCodeHealthTrend([
     { scope: "worktree-a", assessment: growth },
     { scope: "worktree-b", assessment: growth },
@@ -2860,8 +2952,64 @@ test("code health detects severe test deletion and untested structural growth", 
     { scope: "worktree-d", assessment: growth },
     { scope: "worktree-d", assessment: growth },
   ], "worktree-d", growth);
-  assert.equal(sameLineageTrend.status, "fail");
+  assert.equal(sameLineageTrend.status, "warn");
   assert.equal(sameLineageTrend.untestedGrowthStreak, 4);
+});
+
+test("a placeholder evaluator is recognized so the director builds a scorer or a deliverable", async () => {
+  const { hasPlaceholderEvaluator, localResearchConfig } = await import("../dist/competitions/adapters.js");
+  assert.equal(hasPlaceholderEvaluator(localResearchConfig), true);
+  assert.equal(hasPlaceholderEvaluator({ evaluator: { command: [":"], estimatorPath: "" } }), true);
+  assert.equal(hasPlaceholderEvaluator({ evaluator: { command: ["python", "score.py"], estimatorPath: "model.py" } }), false);
+});
+
+test("a hidden holdout guards champions and champions stay inside their campaign", () => {
+  const events = {
+    "experiment.champion.updated": [
+      { payload: { experimentId: "old-campaign" }, createdAt: "2026-01-01T00:00:00.000Z" },
+      { payload: { experimentId: "this-campaign" }, createdAt: "2026-02-02T00:00:00.000Z" },
+    ],
+    "experiment.holdout.completed": [
+      { payload: { experimentId: "original", metric: 0.5, kept: true }, createdAt: "2026-02-01T00:00:00.000Z" },
+      { payload: { experimentId: "overfit", metric: 0.7, kept: false }, createdAt: "2026-02-01T01:00:00.000Z" },
+    ],
+  };
+  const store = { eventsByType: (type) => events[type] ?? [] };
+  assert.deepEqual(championExperimentIds(store, "2026-02-01T00:00:00.000Z"), ["this-campaign"]);
+  assert.equal(holdoutReference(store, "2026-02-01T00:00:00.000Z"), 0.5, "a rejected holdout never becomes the reference");
+  assert.equal(holdoutAllows(0.45, 0.5, "minimize"), true);
+  assert.equal(holdoutAllows(0.55, 0.5, "minimize"), false, "dev gains that regress the holdout are overfitting");
+  assert.equal(holdoutAllows(0.55, 0.5, "maximize"), true);
+  assert.equal(holdoutAllows(undefined, 0.5, "minimize"), false, "a failed holdout run cannot be kept");
+  assert.equal(holdoutAllows(0.9, undefined, "minimize"), true);
+  assert.equal(isAgentVisibleEvent({ type: "experiment.holdout.completed" }), false);
+  assert.equal(isAgentVisibleEvent({ type: "experiment.champion.updated" }), true);
+});
+
+test("champions compound: the latest improving run seeds the next experiment and heads the results log", () => {
+  const events = {
+    "experiment.champion.updated": [{ payload: { experimentId: "exp-1" } }, { payload: { experimentId: "exp-3" } }],
+    "experiment.implementation.completed": [
+      { payload: { experimentId: "exp-1", worktree: "/w/exp-1", files: { "kit/estimator.py": "sha256:a" } } },
+      { payload: { experimentId: "exp-3", worktree: "/w/exp-3", files: { "kit/estimator.py": "sha256:c", "kit/helper.py": "sha256:d" } } },
+    ],
+  };
+  const store = {
+    eventsByType: (type) => events[type] ?? [],
+    experiments: () => [
+      { id: "exp-1", payload: { hypothesisId: "h1", status: "completed", runId: "r1" } },
+      { id: "exp-2", payload: { hypothesisId: "h2", status: "completed", runId: "r2" } },
+      { id: "exp-3", payload: { hypothesisId: "h3", status: "completed", runId: "r3" } },
+    ],
+    runs: () => [{ id: "r1", payload: { metrics: { loss: 0.5 } } }, { id: "r2", payload: { metrics: { loss: 0.6 } } }, { id: "r3", payload: { metrics: { loss: 0.4 } } }],
+    hypotheses: () => [{ id: "h1", payload: { title: "tune", formulationFamily: "model" } }, { id: "h2", payload: { title: "worse", formulationFamily: "model" } }, { id: "h3", payload: { title: "new architecture", formulationFamily: "representation" } }],
+  };
+  assert.deepEqual(championExperimentIds(store), ["exp-1", "exp-3"]);
+  assert.deepEqual(championImplementation(store), { experimentId: "exp-3", worktree: "/w/exp-3", files: ["kit/estimator.py", "kit/helper.py"] });
+  const log = experimentLog(store, "loss");
+  assert.deepEqual(log.champion, { experimentId: "exp-3", idea: "new architecture", metric: 0.4 });
+  assert.deepEqual(log.recent.map((entry) => [entry.experimentId, entry.kept]), [["exp-1", true], ["exp-2", false], ["exp-3", true]]);
+  assert.equal(championImplementation({ eventsByType: () => [] }), undefined);
 });
 
 test("accepted experiment evidence forms a monotonic best-so-far ratchet", () => {
@@ -3408,9 +3556,11 @@ test("data audit distinguishes checksum coverage from content inspection for com
     writeFileSync(join(root, "train.csv"), "id,value\n1,a\n2,b\n");
     const report = auditData(root);
     assert.equal(report.scannedFiles, 3, "all files were checksummed");
-    assert.equal(report.tabularDiagnostics.length, 1, "only the supported CSV parser emits content diagnostics");
-    assert.deepEqual(report.uninspectedDataFiles.map((entry) => [entry.file, entry.format]).sort(), [["metadata.json", "JSON"], ["records.parquet", "Parquet"]]);
-    assert.ok(report.warnings.some((warning) => /empty tabular diagnostics do not establish absence/i.test(warning)));
+    assert.equal(report.tabularDiagnostics.length, 1, "only CSV holds records; the JSON object is metadata");
+    assert.deepEqual(report.metadataFiles, ["metadata.json"]);
+    assert.deepEqual(report.uninspectedDataFiles.map((entry) => [entry.file, entry.format]).sort(), [["records.parquet", "Parquet"]]);
+    assert.ok(report.notes.some((note) => /empty tabular diagnostics do not establish absence/i.test(note)));
+    assert.deepEqual(report.warnings, [], "unreadable formats are informational, not blocking findings");
     assert.match(dataAuditFingerprint(report), /^sha256:/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -3423,7 +3573,59 @@ test("data audit names oversized dataset files whose contents and checksums were
     const report = auditData(root, 10, 10);
     assert.deepEqual(report.skippedFiles, ["shard.parquet"]);
     assert.deepEqual(report.uninspectedDataFiles, [{ file: "shard.parquet", format: "Parquet", reason: "file size 40 exceeds the 10-byte audit limit; content and checksum were not inspected" }]);
-    assert.ok(report.warnings.some((warning) => /empty tabular diagnostics do not establish absence/i.test(warning)));
+    assert.ok(report.notes.some((note) => /empty tabular diagnostics do not establish absence/i.test(note)));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("data audit parses JSON record arrays and JSONL as tabular data and classifies other JSON as metadata", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-data-audit-json-"));
+  try {
+    writeFileSync(join(root, "records.json"), JSON.stringify([{ id: 1, label: "a" }, { id: 2, label: "b" }, { id: 2, label: "b" }]));
+    writeFileSync(join(root, "lines.jsonl"), '{"id":1,"x":0.5}\n{"id":2,"x":0.7}\n');
+    writeFileSync(join(root, "events.ndjson"), '{"id":1}\n{"id":2}\n');
+    writeFileSync(join(root, "schema.json"), JSON.stringify({ columns: ["id", "label"], rows: 3 }));
+    writeFileSync(join(root, "broken.json"), "{not json");
+    const report = auditData(root);
+    const records = report.tabularDiagnostics.find((entry) => entry.file === "records.json");
+    assert.equal(records.rows, 3);
+    assert.equal(records.columns, 2);
+    assert.equal(records.duplicateRows, 1, "JSON records receive the same duplicate-row diagnostics as CSV");
+    assert.ok(report.tabularDiagnostics.some((entry) => entry.file === "lines.jsonl" && entry.rows === 2));
+    assert.ok(report.tabularDiagnostics.some((entry) => entry.file === "events.ndjson" && entry.rows === 2));
+    assert.deepEqual(report.metadataFiles, ["schema.json"]);
+    assert.deepEqual(report.uninspectedDataFiles.map((entry) => entry.file), ["broken.json"]);
+    assert.ok(report.warnings.some((warning) => /duplicate rows/i.test(warning)), "duplicate records remain a blocking finding");
+    assert.equal(report.warnings.some((warning) => /content-inspected|metadata/i.test(warning)), false);
+    assert.ok(report.notes.some((note) => /classified as metadata/.test(note)));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("data audit excludes workspace manifests, validation policies, and the state directory", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-data-audit-manifests-"));
+  try {
+    const manifest = JSON.stringify({ id: "toy", datasetRevision: "v1" });
+    writeFileSync(join(root, "competition.json"), manifest);
+    mkdirSync(join(root, "competitions", "toy"), { recursive: true });
+    writeFileSync(join(root, "competitions", "toy", "competition.json"), manifest);
+    mkdirSync(join(root, ".evidra"));
+    writeFileSync(join(root, ".evidra", "config.json"), "{}");
+    mkdirSync(join(root, "state"));
+    writeFileSync(join(root, "state", "validation-policy.json"), "{}");
+    writeFileSync(join(root, "state", "notes.json"), "{}");
+    writeFileSync(join(root, "validation-policy.lock.json"), "{}");
+    writeFileSync(join(root, "train.csv"), "id,y\n1,0\n2,1\n");
+    const report = auditData(root, undefined, undefined, { excludeDirectories: [join(root, "state")] });
+    assert.equal(report.scannedFiles, 1, "only the dataset file is audited");
+    assert.deepEqual(report.duplicateGroups, [], "identical manifests are not reported as duplicated data");
+    assert.deepEqual(report.uninspectedDataFiles, []);
+    assert.deepEqual(report.warnings, []);
+    assert.ok(report.excludedFiles.includes("competition.json"));
+    assert.ok(report.excludedFiles.includes(join("competitions", "toy", "competition.json")));
+    assert.ok(report.excludedFiles.includes("state/"));
+    assert.equal(report.auditVersion, DATA_AUDIT_VERSION);
+    const before = dataAuditManifestFingerprint(root, undefined, { excludeDirectories: [join(root, "state")] });
+    writeFileSync(join(root, "competition.json"), JSON.stringify({ id: "toy", datasetRevision: "v2" }));
+    assert.equal(dataAuditManifestFingerprint(root, undefined, { excludeDirectories: [join(root, "state")] }), before, "editing the task manifest does not invalidate the dataset audit");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -3522,6 +3724,16 @@ test("workspace root discovery keeps nested CLI invocations on the project state
     const nested = join(root, "competitions", "demo", "starterkit");
     mkdirSync(nested, { recursive: true });
     assert.equal(findWorkspaceRoot(nested), root);
+    // An unrelated project below an initialized ancestor (e.g. a new project under a $HOME
+    // that holds another campaign) must get its own root, not the ancestor's state.
+    const unrelated = join(root, "Projects", "tts");
+    mkdirSync(unrelated, { recursive: true });
+    assert.equal(findWorkspaceRoot(unrelated), unrelated);
+    // A declared competition workspace outside competitions/ still belongs to the project.
+    mkdirSync(join(root, "competitions", "arc"), { recursive: true });
+    writeFileSync(join(root, "competitions", "arc", "competition.json"), JSON.stringify({ workspacePath: "arc-kit" }));
+    mkdirSync(join(root, "arc-kit", "src"), { recursive: true });
+    assert.equal(findWorkspaceRoot(join(root, "arc-kit", "src")), root);
     const uninitialized = mkdtempSync(join(tmpdir(), "evidra-uninitialized-"));
     try { assert.equal(findWorkspaceRoot(uninitialized), uninitialized); } finally { rmSync(uninitialized, { recursive: true, force: true }); }
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -4276,8 +4488,14 @@ test("phase advancement uses shared domain evidence for both research and challe
   }
 });
 
+// Campaigns created before the five-phase loop still hold these phases; their gates must keep working.
+function legacyPhaseGoal(goal, mode, phase) {
+  const template = definePhaseGoals(goal, mode)[0];
+  return { ...template, id: `${template.id}_${phase}`, phase };
+}
+
 test("hypothesis phase gates require a falsifiable selected direction", () => {
-  const goal = definePhaseGoals("test", "research").find((entry) => entry.phase === "hypothesis");
+  const goal = legacyPhaseGoal("test", "research", "hypothesis");
   const base = { eventTypes: ["experiment.created"], eventPayloads: [], hypotheses: 1, experiments: 1, runs: 0, artifacts: 0, candidateHypotheses: 1, falsifiableHypotheses: 0, selectedHypothesisFalsifiable: false };
   assert.deepEqual(evaluatePhaseGoalEvidence(goal, base).missing, ["falsifiable hypothesis", "selected hypothesis has a falsification test"]);
   assert.equal(evaluatePhaseGoalEvidence(goal, { ...base, falsifiableHypotheses: 1, selectedHypothesisFalsifiable: true }).met, true);
@@ -4478,6 +4696,21 @@ test("auxiliary implementation artifacts are checksum staged into isolated workt
     assert.throws(() => seedImplementationArtifacts(root, worktree, "challenge", [{ path: ".sota/research/fit.bin", sha256: digest, targetPath: "../escape.bin" }]), /escapes the adapter workspace/);
     const parsed = ResearchHypothesisSchema.parse({ title: "staged auxiliary input", mechanism: "Use fitted correction", proposedChange: "Apply model", falsificationTest: "Holdout improves", implementationArtifacts: [{ path: ".sota/research/fit.bin", sha256: digest, targetPath: ".evidra-inputs/fit.bin" }] });
     assert.equal(parsed.implementationArtifacts[0].sha256, digest);
+    const completeArtifacts = Array.from({ length: 10 }, (_, i) => ({ path: ".sota/research/fit.bin", sha256: digest, targetPath: `solution/module${i}.bin` }));
+    const complete = ResearchHypothesisSchema.parse({ ...parsed, implementationArtifacts: completeArtifacts });
+    assert.throws(() => seedImplementationArtifacts(root, worktree, "challenge", Array(65).fill(completeArtifacts[0])), /64 implementation artifacts/);
+    assert.equal(seedImplementationArtifacts(root, worktree, "challenge", complete.implementationArtifacts).length, 10);
+    const first = complete.implementationArtifacts[0];
+    const firstTarget = join(worktree, "challenge", first.targetPath);
+    writeFileSync(firstTarget, "tracked old helper");
+    assert.throws(() => seedImplementationArtifacts(root, worktree, "challenge", [first]), /different content/);
+    assert.equal(seedImplementationArtifacts(root, worktree, "challenge", [first], { replaceExisting: true }).length, 1);
+    assert.equal(sha256File(firstTarget), first.sha256);
+    assert.throws(() => seedImplementationArtifacts(root, root, ".", [], { replaceExisting: true }), /isolated worktree/);
+
+    for (const artifact of completeArtifacts) assert.equal(readFileSync(join(worktree, "challenge", artifact.targetPath), "utf8"), "fitted-parameters\n");
+    assert.throws(() => ResearchHypothesisSchema.parse({ ...parsed, implementationArtifacts: Array.from({ length: 65 }, (_, i) => ({ ...completeArtifacts[0], targetPath: `module${i}.bin` })) }), /64/);
+
     assert.throws(() => ResearchHypothesisSchema.parse({ title: "duplicate targets", mechanism: "m", proposedChange: "c", falsificationTest: "f", implementationArtifacts: [{ path: "a", sha256: digest, targetPath: "same.bin" }, { path: "b", sha256: digest, targetPath: "same.bin" }] }), /target paths must be unique/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -4520,7 +4753,7 @@ test("semantic auditor output is grounded before it can pass", () => {
 });
 
 test("validation phase completion requires the latest policy lifecycle event to be a lock", () => {
-  const goal = definePhaseGoals("lock a trustworthy split", "challenge").find((entry) => entry.phase === "validation");
+  const goal = legacyPhaseGoal("lock a trustworthy split", "challenge", "validation");
   const created = { type: "validation.policy.created", payload: { checksum: "sha256:policy" } };
   const reused = { type: "validation.policy.reused", payload: { checksum: "sha256:policy", locked: true, version: "policy-v1" } };
   const locked = { type: "validation.policy.locked", payload: { checksum: "sha256:policy" } };
@@ -4617,7 +4850,7 @@ test("current campaign goal progress ignores prior campaign goal sets", () => {
   const currentGoals = phaseGoalsForCurrentSet(combined, "challenge", current[0].goalSetId);
   assert.equal(currentGoals.length, current.length);
   assert.ok(currentGoals.every((goal) => goal.goalSetId === current[0].goalSetId));
-  assert.deepEqual(researchStageProgress(currentGoals).map((stage) => [stage.completed, stage.total]), [[0, 3], [0, 3], [0, 3]]);
+  assert.deepEqual(researchStageProgress(currentGoals).map((stage) => [stage.completed, stage.total]), [[0, 2], [0, 1], [0, 2]]);
   const newest = phaseGoalsForCurrentSet(combined, "challenge");
   assert.ok(newest.every((goal) => goal.goalSetId === current[0].goalSetId));
 });
@@ -4635,12 +4868,12 @@ test("goals CLI scopes by the active campaign and makes historical sets opt-in",
     const cli = join(process.cwd(), "dist", "cli.js");
     const env = { ...process.env, EVIDRA_STATE_DIR: state };
     const currentReport = JSON.parse(execFileSync(process.execPath, [cli, "goals", "--mode", "challenge", "--json"], { cwd: root, env, encoding: "utf8" }));
-    assert.equal(currentReport.goals.length, 9);
+    assert.equal(currentReport.goals.length, 5);
     assert.ok(currentReport.goals.every((goal) => goal.goalSetId === current[0].goalSetId));
     assert.ok(currentReport.stages.every((stage) => stage.completed <= stage.total));
     assert.equal(currentReport.stages[0].completed, 0, "completed history must not advance the active campaign");
     const historyReport = JSON.parse(execFileSync(process.execPath, [cli, "goals", "--mode", "challenge", "--all", "--json"], { cwd: root, env, encoding: "utf8" }));
-    assert.equal(historyReport.goals.length, 18);
+    assert.equal(historyReport.goals.length, 10);
     assert.equal(new Set(historyReport.goals.map((goal) => goal.goalSetId)).size, 2);
     assert.deepEqual(historyReport.stages, currentReport.stages, "history view keeps stage progress tied to the active campaign");
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -4653,11 +4886,12 @@ test("three-stage research progress is derived from detailed durable goals", () 
   assert.equal(researchStageForPhase("replication"), "validate");
   const progress = researchStageProgress(goals);
   assert.deepEqual(progress.map((stage) => [stage.stage, stage.completed, stage.total, stage.status]), [
-    ["orient", 0, 3, "active"],
-    ["discover", 0, 3, "pending"],
-    ["validate", 0, 3, "pending"],
+    ["orient", 0, 2, "active"],
+    ["discover", 0, 1, "pending"],
+    ["validate", 0, 2, "pending"],
   ]);
-  const advanced = goals.map((goal, index) => index < 3 ? { ...goal, status: "met" } : index === 3 ? { ...goal, status: "active" } : goal);
+  assert.deepEqual(goals.map((goal) => goal.phase), ["orientation", "baseline", "evaluation", "replication", "promotion"], "new campaigns go from baseline straight into the search loop");
+  const advanced = goals.map((goal, index) => index < 2 ? { ...goal, status: "met" } : index === 2 ? { ...goal, status: "active" } : goal);
   assert.equal(researchStageProgress(advanced)[0].status, "met");
   assert.equal(researchStageProgress(advanced)[1].status, "active");
 });
@@ -4851,13 +5085,106 @@ test("replication phase requires a successful run for the declared child manifes
 });
 
 test("data-audit phase requires clean findings or explicit acceptance", () => {
-  const goal = definePhaseGoals("test", "challenge").find((entry) => entry.phase === "data_audit");
+  const goal = legacyPhaseGoal("test", "challenge", "data_audit");
   const report = { type: "data.audit.completed", payload: { fingerprint: "fp-1", duplicateGroups: [{ files: ["a", "b"] }], distributionShift: [], warnings: [] } };
   assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [report.type], eventPayloads: [report], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, false);
   const accepted = { type: "data.audit.accepted", payload: { accepted: true, fingerprint: "fp-1", reason: "duplicates are intentional source mirrors" } };
   assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [report.type, accepted.type], eventPayloads: [report, accepted], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, true);
   const stale = { ...accepted, payload: { ...accepted.payload, fingerprint: "old-report" } };
   assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [report.type, stale.type], eventPayloads: [report, stale], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, false);
+});
+
+test("data-audit phase treats informational notes as non-blocking and names operator remediation", () => {
+  const goal = legacyPhaseGoal("test", "challenge", "data_audit");
+  const informational = { type: "data.audit.completed", payload: { fingerprint: "fp-2", duplicateGroups: 0, distributionShift: 0, warnings: [], notes: ["1 dataset file(s) were not content-inspected (Parquet); empty tabular diagnostics do not establish absence of duplicates, leakage, or distribution shift."] } };
+  assert.equal(evaluatePhaseGoalEvidence(goal, { eventTypes: [informational.type], eventPayloads: [informational], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 }).met, true, "unreadable formats alone do not block the gate");
+
+  const blocking = { type: "data.audit.completed", payload: { fingerprint: "fp-3", duplicateGroups: 2, distributionShift: 0, warnings: ["2 exact duplicate file group(s) detected; ensure split policy keeps duplicates together."], notes: [] } };
+  const blocked = evaluatePhaseGoalEvidence(goal, { eventTypes: [blocking.type], eventPayloads: [blocking], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
+  assert.equal(blocked.met, false, "summarized duplicate counts still block");
+  assert.equal(blocked.unmet[0].resolvedBy, "operator");
+  assert.equal(blocked.unmet[0].integrity, true);
+  assert.match(blocked.unmet[0].commands[0], /evidra challenge audit --accept/);
+
+  // Reports written before notes existed mixed coverage text into warnings.
+  const legacy = { type: "data.audit.completed", payload: { fingerprint: "fp-4", duplicateGroups: 0, warnings: ["3 dataset file(s) were not content-inspected (JSON); empty tabular diagnostics do not establish absence of duplicates, leakage, or distribution shift."] } };
+  const legacyGate = evaluatePhaseGoalEvidence(goal, { eventTypes: [legacy.type], eventPayloads: [legacy], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
+  assert.deepEqual(legacyGate.missing, ["informational audit notes acknowledged"]);
+  assert.equal(legacyGate.unmet[0].integrity, false);
+});
+
+test("unmet phase gates steer agents, explain stagnation pauses, and defer only non-integrity acknowledgements", () => {
+  const goal = legacyPhaseGoal("test", "challenge", "data_audit");
+  const legacy = { type: "data.audit.completed", payload: { fingerprint: "fp-5", warnings: ["2 dataset file(s) were not content-inspected (JSON); empty tabular diagnostics do not establish absence of duplicates, leakage, or distribution shift."] } };
+  const gate = evaluatePhaseGoalEvidence(goal, { eventTypes: [legacy.type], eventPayloads: [legacy], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
+  const guidance = formatPhaseGateGuidance("data_audit", gate);
+  assert.match(guidance, /PHASE GATE \(data_audit\)/);
+  assert.match(guidance, /informational audit notes acknowledged \[operator action\]/);
+  assert.match(guidance, /`evidra challenge audit --accept "<reason>"`/);
+  assert.match(guidance, /Only operator actions remain/);
+  assert.equal(formatPhaseGateGuidance("data_audit", { met: true, unmet: [] }), "");
+
+  const pause = formatStagnationPause(3, "data_audit", gate);
+  assert.match(pause, /Campaign paused after 3 unchanged active decisions; the data_audit phase gate is unmet/);
+  assert.match(pause, /evidra challenge audit --accept/);
+  assert.match(formatStagnationPause(3, undefined, undefined), /review the bottleneck/);
+
+  const hypothesis = { title: "latent-class component", falsificationTest: "held-out log-likelihood does not improve over the baseline" };
+  assert.equal(phaseGateDeferral(gate, { selectedHypothesis: hypothesis.title, hypotheses: [hypothesis] }).advance, true, "a concrete hypothesis advances past a pending acknowledgement");
+  assert.equal(phaseGateDeferral(gate, { selectedHypothesis: null, hypotheses: [hypothesis] }).advance, false, "no selected hypothesis means pause");
+  assert.equal(phaseGateDeferral(gate, { selectedHypothesis: "vague", hypotheses: [{ title: "vague", falsificationTest: " " }] }).advance, false, "an unfalsifiable hypothesis means pause");
+
+  const duplicates = { type: "data.audit.completed", payload: { fingerprint: "fp-6", duplicateGroups: 1, warnings: ["1 exact duplicate file group(s) detected; ensure split policy keeps duplicates together."], notes: [] } };
+  const integrityGate = evaluatePhaseGoalEvidence(goal, { eventTypes: [duplicates.type], eventPayloads: [duplicates], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
+  assert.equal(phaseGateDeferral(integrityGate, { selectedHypothesis: hypothesis.title, hypotheses: [hypothesis] }).advance, false, "integrity findings are never deferred");
+  const validationGate = evaluatePhaseGoalEvidence(legacyPhaseGoal("test", "challenge", "validation"), { eventTypes: [], eventPayloads: [], hypotheses: 0, experiments: 0, runs: 0, artifacts: 0 });
+  assert.equal(phaseGateDeferral(validationGate, { selectedHypothesis: hypothesis.title, hypotheses: [hypothesis] }).advance, false, "an unlocked validation policy is never deferred");
+});
+
+test("controller-raised attention items stay visible until cleared", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-controller-attention-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    store.appendEvent("research.attention.raised", { id: "stagnation:data_audit", severity: "critical", kind: "stagnation", summary: "Campaign paused on the data_audit phase gate; unmet: informational audit notes acknowledged", next: 'evidra challenge audit --accept "<reason>"' });
+    const open = operatorAttention(store).items.find((item) => item.id === "stagnation:data_audit");
+    assert.equal(open?.severity, "critical");
+    assert.match(open.next, /evidra challenge audit --accept/);
+    store.appendEvent("research.attention.cleared", { id: "stagnation:data_audit", reason: "data_audit phase advanced" });
+    assert.equal(operatorAttention(store).items.some((item) => item.id === "stagnation:data_audit"), false);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("stale validation locks are re-locked only when no candidate was evaluated under them", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-validation-reconcile-"));
+  try {
+    const paths = { policy: join(root, "validation-policy.json"), lock: join(root, "validation-policy.lock.json") };
+    const config = { id: "toy", name: "Toy", taskType: "classification", datasetRevision: "data-v1", metric: { name: "macro_f1", direction: "maximize" }, evaluator: { command: ["true"], estimatorPath: "" } };
+    writeValidationPolicy(paths.policy, createValidationPolicy(config));
+    const original = lockValidationPolicy(paths.policy, paths.lock);
+    assert.equal(reconcileValidationPolicyLock(paths, createValidationPolicy(config), () => []).status, "current");
+
+    // competition.json edited after locking: the dataset revision moved.
+    const edited = createValidationPolicy({ ...config, datasetRevision: "data-v2" });
+    const blocked = reconcileValidationPolicyLock(paths, edited, () => ["exp-1"]);
+    assert.equal(blocked.status, "operator_required");
+    assert.deepEqual(blocked.evaluatedExperimentIds, ["exp-1"]);
+    assert.ok(blocked.changedFields.includes("datasetRevision"));
+    assert.ok(blocked.commands.some((command) => command.startsWith("evidra validation unlock --reason")));
+    assert.equal(readValidationPolicyLock(paths.lock).checksum, original.checksum, "an evaluated policy is never changed automatically");
+
+    const relocked = reconcileValidationPolicyLock(paths, edited, () => []);
+    assert.equal(relocked.status, "relocked");
+    assert.equal(relocked.previousChecksum, original.checksum);
+    assert.notEqual(relocked.checksum, original.checksum);
+    assert.match(relocked.unlockRecord.unlockReason, /automatic: .*datasetRevision.*no candidate was evaluated/);
+    const lock = readValidationPolicyLock(paths.lock);
+    assert.equal(lock.locked, true);
+    assert.equal(lock.checksum, relocked.checksum);
+    assert.equal(assertValidationPolicy(paths.policy, paths.lock).checksum, relocked.checksum);
+    assert.equal(JSON.parse(readFileSync(paths.policy, "utf8")).datasetRevision, "data-v2");
+    assert.equal(reconcileValidationPolicyLock(paths, edited, () => []).status, "current");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("data audit fingerprints are stable across generation timestamps", () => {
@@ -6738,7 +7065,7 @@ test("research tool registry exposes safe workspace tools", async () => {
     assert.match(malformedShape.error, /arguments must be an object/);
     const protectedState = await executeResearchTool({ name: "workspace.read", arguments: { path: ".sota/database.sqlite" } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(protectedState.ok, false);
-    assert.match(protectedState.error, /internal state/);
+    assert.match(protectedState.error, /internal state|sensitive workspace path/);
     const unsupportedTool = await executeResearchTool({ name: "workspace.commands", arguments: { command: ["inspect data"] } }, { root, storePath: db, autonomy: "safe" });
     assert.equal(unsupportedTool.ok, false);
     assert.match(unsupportedTool.error, /Use shell\.exec/);
@@ -7176,12 +7503,12 @@ test("research lane teams share only cacheable observations within one invocatio
   const previousHost = process.env.OLLAMA_HOST;
   const calls = new Map();
   const readPaths = [];
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk.toString(); });
     request.on("end", () => {
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ message: { content: JSON.stringify({ role: "peer", summary: "bounded report", findings: [], recommendations: [], uncertainties: [], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0.5 }) } }));
+      response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify({ role: "peer", summary: "bounded report", findings: [], recommendations: [], uncertainties: [], discriminatingTests: [], evidence: [], evidenceSourceIds: [], confidence: 0.5 }) } }));
     });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -7539,7 +7866,7 @@ test("research director executes typed tools and reasons over returned evidence"
   let observedRefreshedState = false;
   let observedExactToolGuidance = false;
   let refreshes = 0;
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     calls += 1;
     const decision = calls === 1
       ? { phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Need workspace evidence", rationale: "The workspace has not been inspected yet.", hypotheses: [], selectedHypothesis: null, nextAction: "Inspect files", toolCalls: [{ name: "workspace.files", arguments: {} }] }
@@ -7552,7 +7879,7 @@ test("research director executes typed tools and reasons over returned evidence"
       if (body.includes("sha256:refreshed-state")) observedRefreshedState = true;
       if (body.includes("Use only exact tool names") && body.includes("workspace.read")) observedExactToolGuidance = true;
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+      response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(decision) } }));
     });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -7590,14 +7917,14 @@ test("research director converts exhausted tool rounds into a durable conservati
   let exhaustion;
   const events = [];
   let finalizationContext;
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     calls += 1;
     let body = "";
     request.on("data", (chunk) => { body += chunk.toString(); });
     request.on("end", () => {
       if (calls === 3) finalizationContext = JSON.parse(body).messages?.at(-1)?.content ?? body;
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ message: { content: JSON.stringify({
+      response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify({
         phase: "orientation", goalStatus: "active", decision: calls === 3 ? "propose" : "inspect", bottleneck: "Evidence is sufficient to choose a bounded next step",
         rationale: "The existing workspace inventory and collected search result support a concrete next step.", hypotheses: [], selectedHypothesis: null,
         nextAction: calls === 3 ? "Run the focused validation check" : "Inspect the next evidence source", toolCalls: calls === 1
@@ -7639,7 +7966,7 @@ test("research director keeps the finalization-only turn inside the hard tool ca
   let calls = 0;
   let toolExecutions = 0;
   let exhaustionCount = 0;
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     calls += 1;
     request.resume();
     request.on("end", () => {
@@ -7649,7 +7976,7 @@ test("research director keeps the finalization-only turn inside the hard tool ca
         nextAction: "Inspect another source", toolCalls: [{ name: calls === 1 ? "workspace.files" : "workspace.search", arguments: calls === 1 ? {} : { query: "more" } }],
       };
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+      response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(decision) } }));
     });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -7681,7 +8008,7 @@ test("research director changes to an untried model after a retryable route fail
   let calls = 0;
   const seenModels = [];
   const decision = { phase: "orientation", goalStatus: "active", decision: "propose", bottleneck: "route recovered", rationale: "The alternate route returned a valid decision.", hypotheses: [], selectedHypothesis: null, nextAction: "continue", toolCalls: [] };
-  const server = createServer((request, response) => {
+  const server = createOllamaServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk.toString(); });
     request.on("end", () => {
@@ -7693,7 +8020,7 @@ test("research director changes to an untried model after a retryable route fail
         return;
       }
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+      response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(decision) } }));
     });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -7717,10 +8044,300 @@ test("research director changes to an untried model after a retryable route fail
   }
 });
 
+function createOllamaServer(handler) {
+  return createServer((request, response) => {
+    if (request.url?.endsWith("/api/version")) { response.end(JSON.stringify({ version: "0.40.3" })); return; }
+    handler(request, response);
+  });
+}
+
+test("local provider preserves the endpoint, schema, completion, and usage contracts", async () => {
+  const previousHost = process.env.OLLAMA_HOST;
+  const requests = [];
+  let payload = { done: true, done_reason: "stop", message: { content: '{"answer":"verified"}' }, prompt_eval_count: 123, eval_count: 17, prompt_eval_cached_count: 8 };
+  const server = createOllamaServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      requests.push({ path: request.url, body: JSON.parse(body) });
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify(payload));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const host = `http://127.0.0.1:${server.address().port}`;
+  const schema = { type: "object", properties: { answer: { type: "string" } }, required: ["answer"] };
+  const task = { role: "research director", objective: "Keep the full objective", context: { evidence: "observed" }, outputSchema: JSON.stringify(schema) };
+  let reportedUsage;
+  const agent = new CodexExecAgent({ provider: "local", model: "test", cwd: process.cwd(), onUsage: (usage) => { reportedUsage = usage; } });
+  try {
+    for (const suffix of ["", "/", "/api/chat", "/proxy/api/chat"]) {
+      process.env.OLLAMA_HOST = host + suffix;
+      const result = await agent.run(task);
+      assert.equal(requests.at(-1).path, suffix.startsWith("/proxy") ? "/proxy/api/chat" : "/api/chat");
+      assert.deepEqual(requests.at(-1).body.format, schema);
+      assert.match(requests.at(-1).body.messages[0].content, /Keep the full objective/);
+      assert.deepEqual(result.usage, { inputTokens: 123, outputTokens: 17, cachedInputTokens: 8 });
+      assert.deepEqual(reportedUsage, result.usage);
+    }
+    for (const invalid of [
+      { message: { content: "partial" } },
+      { done: false, message: { content: "partial" } },
+      { done: true, done_reason: "length", message: { content: "truncated" } },
+      { done: true, error: "failed", message: { content: "untrusted" } },
+      { done: true, message: { content: 42 } },
+    ]) {
+      payload = invalid;
+      await assert.rejects(() => agent.run(task), /Ollama/);
+    }
+    payload = { done: true, done_reason: "length", message: { content: "truncated" }, prompt_eval_count: 150, eval_count: 30 };
+    await assert.rejects(() => agent.run(task), /did not complete/);
+    assert.equal(reportedUsage.inputTokens, 150);
+    assert.equal(reportedUsage.outputTokens, 30);
+    payload = { done: true, message: { content: "legacy terminal response" }, prompt_eval_count: -1, eval_count: 1.5 };
+    assert.equal((await agent.run(task)).usage, undefined);
+    const before = requests.length;
+    await assert.rejects(() => agent.run({ ...task, outputSchema: "not JSON" }), /schema is invalid JSON/);
+    assert.equal(requests.length, before);
+    const interrupt = new AbortController();
+    interrupt.abort();
+    await assert.rejects(() => new CodexExecAgent({ provider: "local", model: "test", cwd: process.cwd(), interruptSignal: interrupt.signal }).run(task), /interrupted/);
+    assert.equal(requests.length, before);
+    const listeners = [process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")];
+    await assert.rejects(() => agent.run(task, undefined, () => { throw new Error("registration failed"); }), /registration failed/);
+    assert.deepEqual([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")], listeners);
+    assert.equal(requests.length, before);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("local response byte bounds preserve split Unicode and cancel oversized streams", async () => {
+  const content = "🙂verified", bytes = new TextEncoder().encode(content);
+  const exact = new Response(new ReadableStream({ start(controller) { controller.enqueue(bytes.subarray(0, 2)); controller.enqueue(bytes.subarray(2)); controller.close(); } }));
+  assert.equal(await boundedLocalResponseText(exact, bytes.length), content);
+  assert.equal(exact.body.locked, false);
+  for (const declared of [false, true]) {
+    let cancelled = false;
+    const oversized = new Response(new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array(8)); }, cancel() { cancelled = true; } }), { headers: declared ? { "content-length": "1000" } : {} });
+    await assert.rejects(() => boundedLocalResponseText(oversized, 4), /4-byte limit/);
+    assert.equal(cancelled, true);
+    assert.equal(oversized.body.locked, false);
+  }
+  await assert.rejects(() => boundedLocalResponseText(new Response(new Uint8Array([0xc3])), 4), /encoded data|encoding/i);
+});
+
+test("local provider bounds serialized request bytes before sending HTTP", async () => {
+  const previousHost = process.env.OLLAMA_HOST;
+  let requests = 0;
+  const server = createOllamaServer((_request, response) => { requests += 1; response.end(JSON.stringify({ done: true, message: { content: "ok" } })); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const agent = new CodexExecAgent({ provider: "local", model: "test", cwd: process.cwd() });
+    const task = { role: "conversation assistant", objective: "verify", context: {} };
+    for (const oversized of [
+      { ...task, objective: "🙂".repeat(LOCAL_REQUEST_MAX_BYTES / 4 + 1) },
+      { ...task, objective: String.fromCharCode(0).repeat(LOCAL_REQUEST_MAX_BYTES / 5) },
+      { ...task, outputSchema: JSON.stringify({ type: "object", description: "x".repeat(LOCAL_REQUEST_MAX_BYTES) }) },
+    ]) await assert.rejects(() => agent.run(oversized), /request exceeds.*byte limit/);
+    assert.equal(requests, 0);
+    assert.equal((await agent.run(task)).output, "ok");
+    assert.equal(requests, 1);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST; else process.env.OLLAMA_HOST = previousHost;
+    server.closeAllConnections(); await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("local generation and metadata reject oversized chunked and decompressed bodies", async () => {
+  const previousHost = process.env.OLLAMA_HOST;
+  let mode = "declared", probeTarget = "tags", delivered = 0, streamClosed;
+  let assistantCalls = 0;
+  const chunk = Buffer.alloc(64 * 1024, 120);
+  const compressed = gzipSync(Buffer.alloc(LOCAL_RESPONSE_MAX_BYTES + 1, 120));
+  const server = createOllamaServer((request, response) => {
+    if (probeTarget === "show" && request.url.endsWith("/tags")) { response.end(JSON.stringify({models:[{name:"test"}]})); return; }
+    if (mode === "chunked") {
+      response.writeHead(200, { "content-type": "application/json" });
+      const timer = setInterval(() => { delivered += 1; response.write(chunk); if (delivered >= 100) { clearInterval(timer); response.end(); } }, 1);
+      response.on("close", () => { clearInterval(timer); streamClosed?.(); });
+    } else if (mode === "gzip") {
+      response.writeHead(200, { "content-encoding": "gzip", "content-length": compressed.length }); response.end(compressed);
+    } else if (mode === "error") { response.statusCode = 500; response.end("x".repeat(LOCAL_ERROR_MAX_BYTES + 1)); }
+    else if (mode === "redacted-error") { response.statusCode = 500; response.end("OPENAI_API_KEY=sk-1234567890123456789012345678901234567890"); }
+    else response.end("x".repeat(LOCAL_RESPONSE_MAX_BYTES + 1));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
+  const task = { role: "conversation assistant", objective: "verify", context: {} };
+  const agent = new CodexExecAgent({ provider: "local", model: "test", cwd: process.cwd(), timeoutMs: 5000, onAssistant: () => { assistantCalls += 1; } });
+  try {
+    for (const selected of ["declared", "gzip", "error", "chunked"]) {
+      mode = selected; delivered = 0;
+      let closed;
+      if (mode === "chunked") closed = new Promise((resolve) => { streamClosed = resolve; });
+      await assert.rejects(() => agent.run(task), /response exceeds.*byte limit/, selected);
+      if (closed) { await closed; assert.ok(delivered < 100); }
+    }
+    for (const selected of ["declared", "gzip"]) {
+      mode = selected;
+      probeTarget = "tags";
+      await assert.rejects(() => listLocalModels({ timeoutMs: 5000 }), /response exceeds.*byte limit/);
+      probeTarget = "show";
+      await assert.rejects(() => checkProvider({ provider: "local", model: "test", cwd: process.cwd(), timeoutMs: 5000 }), /response exceeds.*byte limit/);
+    }
+    mode = "redacted-error";
+    await assert.rejects(() => agent.run(task), (error) => { assert.match(error.message, /500/); assert.doesNotMatch(error.message, /12345678901234567890/); return true; });
+    assert.equal(assistantCalls, 0);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST; else process.env.OLLAMA_HOST = previousHost;
+    server.closeAllConnections(); await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("local provider sends finite output limits and accounts rejected over-budget responses", async () => {
+  const previousHost = process.env.OLLAMA_HOST, previousLimit = process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS;
+  const requests = [];
+  let generated = 24, usage, assistants = 0;
+  const server = createOllamaServer((request, response) => {
+    let body = ""; request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      requests.push(JSON.parse(body));
+      response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: "verified" }, prompt_eval_count: 100, eval_count: generated }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`; delete process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS;
+  const options = { provider: "local", model: "test", cwd: process.cwd(), onUsage: (value) => { usage = value; }, onAssistant: () => { assistants += 1; } };
+  const task = { role: "conversation assistant", objective: "verify", context: {} };
+  try {
+    assert.equal((await new CodexExecAgent(options).run(task)).output, "verified");
+    assert.equal(requests.at(-1).options.num_predict, 4096);
+    process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS = " 32 ";
+    await new CodexExecAgent(options).run(task); assert.equal(requests.at(-1).options.num_predict, 32);
+    await new CodexExecAgent({ ...options, localMaxOutputTokens: 64 }).run(task); assert.equal(requests.at(-1).options.num_predict, 64);
+    const accepted = assistants;
+    process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS = "16";
+    await assert.rejects(() => new CodexExecAgent(options).run(task), /exceeded.*output token limit/);
+    assert.equal(usage.outputTokens, 24); assert.equal(usage.inputTokens, 100);
+    assert.equal(assistants, accepted);
+    const before = requests.length;
+    for (const value of ["", "0", "-1", "1.5", "1e3", "65537", "Infinity", "not a limit"]) {
+      process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS = value;
+      await assert.rejects(() => new CodexExecAgent(options).run(task), /output token limit must be/);
+    }
+    for (const localMaxOutputTokens of [0, -1, 1.5, Infinity, NaN, 65537]) await assert.rejects(() => new CodexExecAgent({ ...options, localMaxOutputTokens }).run(task), /output token limit must be/);
+    assert.equal(requests.length, before);
+    generated = 1;
+    for (const localMaxOutputTokens of [1, 65536]) {
+      await new CodexExecAgent({ ...options, localMaxOutputTokens }).run(task);
+      assert.equal(requests.at(-1).options.num_predict, localMaxOutputTokens);
+    }
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST; else process.env.OLLAMA_HOST = previousHost;
+    if (previousLimit === undefined) delete process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS; else process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS = previousLimit;
+    server.closeAllConnections(); await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("local requests disable truncation and reject context exhaustion without dropping the objective", async () => {
+  const previousHost = process.env.OLLAMA_HOST;
+  const requests = [];
+  let mode = "input-overflow", assistants = 0, usage;
+  const objective = "KEEP-START\n" + "preserve the complete experiment objective. ".repeat(2000) + "\nKEEP-END";
+  const server = createOllamaServer((request, response) => {
+    let body = ""; request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      const value = JSON.parse(body); requests.push(value);
+      if (value.truncate !== false || value.shift !== false) {
+        response.end(JSON.stringify({ done: true, message: { content: "silently truncated result" } })); return;
+      }
+      if (mode === "input-overflow") { response.statusCode = 400; response.end(JSON.stringify({ error: "input exceeds context length" })); }
+      else if (mode === "generation-overflow") response.end(JSON.stringify({ done: true, error: "context exhausted during generation", message: { content: "partial" }, prompt_eval_count: 3500, eval_count: 50 }));
+      else response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: "verified" }, prompt_eval_count: 300, eval_count: 1 }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
+  const agent = new CodexExecAgent({ provider: "local", model: "test", cwd: process.cwd(), onAssistant: () => { assistants += 1; }, onUsage: (value) => { usage = value; } });
+  try {
+    const task = { role: "research director", objective, context: { evidence: "full retained evidence" }, outputSchema: JSON.stringify({ type: "object" }) };
+    await assert.rejects(() => agent.run(task), /400.*input exceeds context length/);
+    assert.ok(requests[0].messages[0].content.startsWith(objective));
+    assert.match(requests[0].messages[0].content, /full retained evidence/);
+    assert.deepEqual(requests[0].format, { type: "object" });
+    assert.equal(assistants, 0); assert.equal(usage, undefined);
+    mode = "generation-overflow";
+    await assert.rejects(() => agent.run(task), /Ollama returned an error/);
+    assert.equal(assistants, 0); assert.equal(usage.outputTokens, 50);
+    assert.equal(usage.inputTokens, 3500);
+    mode = "fits";
+    assert.equal((await agent.run({ ...task, objective: "small verified objective" })).output, "verified");
+    assert.equal(assistants, 1);
+    for (const request of requests) { assert.equal(request.truncate, false); assert.equal(request.shift, false); }
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST; else process.env.OLLAMA_HOST = previousHost;
+    server.closeAllConnections(); await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("local context controls require a recognized released server before health or inference", async () => {
+  const previousHost = process.env.OLLAMA_HOST;
+  let version = "0.40.3", paths = [], mode = "normal";
+  const server = createServer((request, response) => {
+    paths.push(request.url);
+    if (request.url.endsWith("/version")) {
+      if (mode === "stalled") { response.writeHead(200); response.flushHeaders(); response.write('{"version":'); return; }
+      response.end(JSON.stringify({ version }));
+    } else if (request.url.endsWith("/tags")) response.end(JSON.stringify({ models: [{ name: "test" }] }));
+    else if (request.url.endsWith("/show")) response.end("{}");
+    else response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: "verified" }, eval_count: 1 }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}/proxy/api/chat`;
+  const options = { provider: "local", model: "test", cwd: process.cwd(), timeoutMs: 2000 };
+  const task = { role: "conversation assistant", objective: "verify", context: {} };
+  try {
+    for (const unsupported of ["0.39.9", "0.40.2", "0.40.3-rc1", "0.040.3", "1.0.0", "unknown", "", null, 40, {}]) {
+      version = unsupported; paths = [];
+      await assert.rejects(() => new CodexExecAgent(options).run(task), /requires a stable.*0.40.3/);
+      assert.deepEqual(paths, ["/proxy/api/version"]);
+      paths = [];
+      await assert.rejects(() => checkProvider(options), /requires a stable.*0.40.3/);
+      assert.deepEqual(paths, ["/proxy/api/version"]);
+    }
+    for (const supported of ["0.40.3", "0.40.4", "0.41.0"]) {
+      version = supported; paths = [];
+      assert.equal((await new CodexExecAgent(options).run(task)).output, "verified");
+      assert.deepEqual(paths, ["/proxy/api/version", "/proxy/api/chat"]);
+      paths = [];
+      await checkProvider(options);
+      assert.deepEqual(paths, ["/proxy/api/version", "/proxy/api/tags", "/proxy/api/show"]);
+    }
+    mode = "stalled"; paths = [];
+    const listeners = [process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")];
+    await assert.rejects(() => new CodexExecAgent({ ...options, timeoutMs: 50 }).run(task), /timed out/);
+    assert.deepEqual(paths, ["/proxy/api/version"]);
+    assert.deepEqual([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")], listeners);
+    paths = [];
+    const interrupt = new AbortController();
+    const interrupted = new CodexExecAgent({ ...options, interruptSignal: interrupt.signal }).run(task);
+    setTimeout(() => interrupt.abort(), 50);
+    await assert.rejects(() => interrupted, /interrupted/);
+    assert.deepEqual(paths, ["/proxy/api/version"]);
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST; else process.env.OLLAMA_HOST = previousHost;
+    server.closeAllConnections(); await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("local provider enforces the configured turn timeout", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-local-timeout-"));
   const previousHost = process.env.OLLAMA_HOST;
-  const server = createServer((_request, _response) => {
+  const server = createOllamaServer((_request, _response) => {
     // Deliberately leave the response open: the provider must abort it.
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -7734,6 +8351,46 @@ test("local provider enforces the configured turn timeout", async () => {
     else process.env.OLLAMA_HOST = previousHost;
     await new Promise((resolve) => server.close(resolve));
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("local discovery and health probes bound stalled headers and bodies and honor interruption", async () => {
+  const previousHost = process.env.OLLAMA_HOST;
+  let mode = "headers";
+  let requests = 0;
+  const server = createOllamaServer((request, response) => {
+    requests += 1;
+    if (mode === "headers") return;
+    response.setHeader("content-type", "application/json");
+    if (mode === "body") { response.write('{"models":'); return; }
+    if (mode === "show" && request.url === "/api/show") { response.write('{"details":'); return; }
+    response.end(JSON.stringify({ models: [null, { name: 42 }, { name: "test" }] }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}/api/chat`;
+  try {
+    for (const stalled of ["headers", "body"]) {
+      mode = stalled;
+      await assert.rejects(() => listLocalModels({ timeoutMs: 100 }), /probe timed out/);
+    }
+    mode = "show";
+    await assert.rejects(() => checkProvider({ provider: "local", model: "test", cwd: process.cwd(), timeoutMs: 100 }), /probe timed out/);
+    mode = "headers";
+    const interrupt = new AbortController();
+    const pending = listLocalModels({ interruptSignal: interrupt.signal });
+    setTimeout(() => interrupt.abort(), 50);
+    await assert.rejects(() => pending, /probe interrupted/);
+    const before = requests;
+    await assert.rejects(() => listLocalModels({ interruptSignal: interrupt.signal }), /probe interrupted/);
+    assert.equal(requests, before);
+    mode = "healthy";
+    assert.deepEqual((await listLocalModels()).map((model) => model.id), ["test"]);
+    await checkProvider({ provider: "local", model: "test", cwd: process.cwd() });
+  } finally {
+    if (previousHost === undefined) delete process.env.OLLAMA_HOST;
+    else process.env.OLLAMA_HOST = previousHost;
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 
@@ -7765,6 +8422,29 @@ test("Codex failure events preserve nested provider diagnostics", () => {
   assert.equal(codexEventErrorMessage({ type: "turn.failed", error: { message: "rate limit reached; retry in 42 seconds" } }), "rate limit reached; retry in 42 seconds");
   assert.equal(codexEventErrorMessage({ type: "error", message: "network disconnected" }), "network disconnected");
   assert.equal(codexEventErrorMessage({ type: "turn.failed" }), "Codex turn failed.");
+});
+
+test("Codex provider prompts use the same serialized context counted by the packer", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-context-provider-"));
+  let providerPrompt;
+  try {
+    const packed = boundResearchContext({ observation: { output: '\u0000"\\'.repeat(3_000) }, phaseGoal: { phase: "validation" } }, 4_000);
+    const agent = new CodexExecAgent({ provider: "codex", model: "gpt-test", cwd: root }, {
+      isLoggedIn: async () => true,
+      createClient: () => ({ startThread: () => ({ runStreamed: async (prompt) => {
+        providerPrompt = prompt;
+        return { events: (async function* () {
+          yield { type: "item.completed", item: { type: "agent_message", text: "checked" } };
+          yield { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } };
+        })() };
+      } }) }),
+    });
+    await agent.run({ role: "research director", objective: "verify", context: packed.context });
+    const sent = providerPrompt.split("Research context:\n")[1].split("\n\n")[0];
+    assert.equal(sent, serializeResearchContext(packed.context));
+    assert.equal(sent.length, packed.report.usedChars);
+    assert.ok(sent.length <= 4_000);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("Codex adapter accepts only a completed injected stream", async () => {
@@ -8025,10 +8705,10 @@ test("research director honors the bounded provider-attempt policy", async () =>
   const root = mkdtempSync(join(tmpdir(), "evidra-director-attempts-"));
   const previousHost = process.env.OLLAMA_HOST;
   let calls = 0;
-  const server = createServer((_request, response) => {
+  const server = createOllamaServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: "not valid research JSON" } }));
+    response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: "not valid research JSON" } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -8049,13 +8729,13 @@ test("research director reuses successful read-only observations within a turn",
   const previousHost = process.env.OLLAMA_HOST;
   let calls = 0;
   let toolCalls = 0;
-  const server = createServer((_request, response) => {
+  const server = createOllamaServer((_request, response) => {
     calls += 1;
     const decision = calls === 1
       ? { phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Need evidence", rationale: "Inspect once.", hypotheses: [], selectedHypothesis: null, nextAction: "Inspect files", toolCalls: [{ name: "workspace.files", arguments: {} }, { name: "workspace.files", arguments: {} }] }
       : { phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Evidence collected", rationale: "The cached observation is sufficient.", hypotheses: [], selectedHypothesis: null, nextAction: "Continue", toolCalls: [] };
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+    response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(decision) } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -8084,10 +8764,10 @@ test("research director stops a repeated read-only request instead of burning to
   let toolCalls = 0;
   let suppressed;
   const repeated = { phase: "baseline", goalStatus: "active", decision: "inspect", bottleneck: "Need repository inventory", rationale: "The existing workspace observation is available.", hypotheses: [], selectedHypothesis: null, nextAction: "Inspect the workspace again", toolCalls: [{ name: "workspace.files", arguments: {} }] };
-  const server = createServer((_request, response) => {
+  const server = createOllamaServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: JSON.stringify(repeated) } }));
+    response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(repeated) } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
@@ -8116,10 +8796,10 @@ test("research director does not rerun an identical read-only shell command with
   let calls = 0;
   let executions = 0;
   const repeated = { phase: "validation", goalStatus: "active", decision: "inspect", bottleneck: "Need to confirm the locked inputs", rationale: "Recheck the exact prior command.", hypotheses: [], selectedHypothesis: null, nextAction: "Hash the locked input again", toolCalls: [{ name: "shell.exec", arguments: { command: ["sha256sum", "mini.parquet"] } }] };
-  const server = createServer((_request, response) => {
+  const server = createOllamaServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: JSON.stringify(repeated) } }));
+    response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(repeated) } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
@@ -8149,10 +8829,10 @@ test("research director does not retry a policy-denied tool route across tool ro
   let calls = 0;
   let toolExecutions = 0;
   const deniedTool = { phase: "baseline", goalStatus: "active", decision: "inspect", bottleneck: "Need to run a command", rationale: "Try shell execution again.", hypotheses: [], selectedHypothesis: null, nextAction: "Run the command", toolCalls: [{ name: "shell.exec", arguments: { command: "npm test" } }] };
-  const server = createServer((_request, response) => {
+  const server = createOllamaServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: JSON.stringify(deniedTool) } }));
+    response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(deniedTool) } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
@@ -8182,10 +8862,10 @@ test("research director suppresses an unchanged malformed tool request after ret
   let calls = 0;
   let toolExecutions = 0;
   const invalidTool = { phase: "orientation", goalStatus: "active", decision: "inspect", bottleneck: "Need the file content", rationale: "Read the file.", hypotheses: [], selectedHypothesis: null, nextAction: "Read the source file", toolCalls: [{ name: "workspace.read", arguments: {} }] };
-  const server = createServer((_request, response) => {
+  const server = createOllamaServer((_request, response) => {
     calls += 1;
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: JSON.stringify(invalidTool) } }));
+    response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(invalidTool) } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
@@ -8215,12 +8895,12 @@ test("research director stops when different read-only searches return no new ob
   let calls = 0;
   let toolCalls = 0;
   let suppressed;
-  const server = createServer((_request, response) => {
+  const server = createOllamaServer((_request, response) => {
     calls += 1;
     const query = calls === 1 ? "332302" : "different-term";
     const decision = { phase: "data_audit", goalStatus: "active", decision: "inspect", bottleneck: "Search yielded no result", rationale: "Try a different query.", hypotheses: [], selectedHypothesis: null, nextAction: "Search again", toolCalls: [{ name: "workspace.search", arguments: { query } }] };
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ message: { content: JSON.stringify(decision) } }));
+    response.end(JSON.stringify({ done: true, done_reason: "stop", message: { content: JSON.stringify(decision) } }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   process.env.OLLAMA_HOST = `http://127.0.0.1:${server.address().port}`;
@@ -8528,6 +9208,765 @@ test("Modal result parser ignores progress and rejects malformed worker payloads
   assert.equal(parseModalWorkerResult("Modal failed before the worker returned"), undefined);
 });
 
+test("Modal transport envelope survives controller capture after verbose progress", () => {
+  const payload = { exitCode: 0, stdout: "x".repeat(7 * 1024 * 1024 - 1024), stderr: "", artifacts: {} };
+  const captured = boundProcessOutput(`${"progress\n".repeat(2 * 1024 * 1024)}\n${JSON.stringify(payload)}\n`);
+  assert.match(captured, /output truncated by Evidra/);
+  assert.equal(parseModalWorkerResult(captured)?.stdout.length, payload.stdout.length);
+});
+
+test("Modal completion envelopes reject ambiguity and malformed terminal evidence", () => {
+  const valid = { exitCode: 0, stdout: '{"accuracy":0.9}', stderr: "", artifacts: {} };
+  const success = JSON.stringify(valid);
+  for (const malformed of [
+    { ...valid, exitCode: "0" },
+    { ...valid, exitCode: -1 },
+    { ...valid, exitCode: 256 },
+    { ...valid, exitCode: 0.5 },
+    { ...valid, stdout: null },
+    { ...valid, stderr: [] },
+    { ...valid, artifacts: null },
+    { ...valid, artifacts: [] },
+    { ...valid, artifacts: { "result.json": "Zh==" } },
+  ]) {
+    const bad = JSON.stringify(malformed);
+    for (const output of [bad, `${success}\n${bad}`, `${bad}\n${success}`]) {
+      assert.equal(parseModalWorkerResult(output), undefined, output);
+    }
+  }
+  assert.equal(parseModalWorkerResult(`${success}\n${success}`), undefined);
+  assert.equal(parseModalWorkerResult(`${success}\n${JSON.stringify({ ...valid, exitCode: 7 })}`), undefined);
+  assert.deepEqual(parseModalWorkerResult(`{"progress":1}\n${success}\nFinished`), valid);
+});
+
+test("Modal runtime preflight failures never record allocation intent or charge worker compute", async () => {
+  const previousPath = process.env.PATH;
+  try {
+    for (const mode of ["missing", "broken", "timeout", "interrupted", "sdk-missing", "sdk-broken", "sdk-malformed", "sdk-timeout", "sdk-interrupted"]) {
+      const root = mkdtempSync(join(tmpdir(), "evidra-modal-preflight-"));
+      const bin = join(root, "bin"); mkdirSync(bin);
+      const db = join(root, "state.sqlite"), store = new ResearchStore(db);
+      try {
+        if (mode !== "missing") writeFileSync(join(bin, "modal"), `#!${process.execPath}
+          if(process.argv.includes('--version')){
+            if(${JSON.stringify(mode)}.startsWith('sdk-')){console.log('modal client version 1.6.1');process.exit(0);}
+            if(${JSON.stringify(mode)}==='broken'){console.log('accuracy=0.9');console.error('ModuleNotFoundError: modal');process.exit(1);}
+            setInterval(()=>{},1000);
+          }else{require('node:fs').writeFileSync('launched','yes');process.exit(0);}
+        `, { mode: 0o755 });
+        if (mode.startsWith("sdk-") && mode !== "sdk-missing") writeFileSync(join(bin, "python3"), `#!${process.execPath}
+          if(${JSON.stringify(mode)}==='sdk-malformed'){console.log('accuracy=0.9');process.exit(0);}
+          if(${JSON.stringify(mode)}==='sdk-broken'){console.log('accuracy=0.9');process.exit(1);}
+          require('node:fs').writeFileSync('sdk-check-ready','yes');setInterval(()=>{},1000);
+        `, { mode: 0o755 });
+        process.env.PATH = bin;
+        const manifest = { id: mode, resources: { executor: "modal", timeoutMinutes: mode.endsWith("timeout") ? 0.001 : 1 }, evaluation: { requiredArtifacts: [] } };
+        store.saveExperiment({ id: mode, payload: { ...manifest, status: "running" } });
+        store.reserveComputeBudget({ experimentId: mode, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+        let processes = 0;
+        const result = await new ModalExecutor(root, (event) => recordRemoteExecution(db, event)).run(manifest, root, ["train"], mode === "interrupted" ? (control) => control.terminate() : mode === "sdk-interrupted" ? (control) => { if (++processes === 2) control.terminate(); } : undefined, "accuracy");
+        assert.equal(result.status, "failed");
+        assert.equal(result.exitCode, mode.endsWith("timeout") ? 124 : mode.endsWith("interrupted") ? 130 : 127);
+        assert.equal(result.durationSeconds, 0);
+        assert.deepEqual(result.metrics, {});
+        assert.deepEqual(result.artifacts, {});
+        assert.match(result.stderr, /preflight failed; no remote launch/);
+        assert.equal(existsSync(join(root, "launched")), false);
+        assert.equal(store.eventsByType("run.remote.submitting").length, 0);
+        assert.equal(store.eventsByType("run.remote.terminal").length, 0);
+        store.saveExperiment({ id: mode, payload: { ...manifest, status: result.status } });
+      } finally { store.close(); }
+      const reopened = new ResearchStore(db);
+      try {
+        assert.equal(reopened.reservedComputeGpuHours(), 0);
+        assert.equal(reopened.experiments()[0].payload.status, "failed");
+        assert.equal(reopened.remoteExecutionState(mode).recorded, false);
+      } finally { reopened.close(); rmSync(root, { recursive: true, force: true }); }
+    }
+  } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
+});
+
+test("Modal distinguishes proven spawn failure from errors after the client starts", async () => {
+  const previousPath = process.env.PATH;
+  try {
+    for (const mode of ["missing", "not-executable", "callback-error"]) {
+      const root = mkdtempSync(join(tmpdir(), "evidra-modal-spawn-"));
+      const bin = join(root, "bin"); mkdirSync(bin); installModalAllocationFixture(bin);
+      const db = join(root, "state.sqlite");
+      const store = new ResearchStore(db);
+      try {
+        writeFileSync(join(bin, "modal"), `#!${process.execPath}
+          if(process.argv.includes('--version')){
+            const fs=require('node:fs');
+            if(${JSON.stringify(mode)}==='missing')fs.unlinkSync(__filename);
+            if(${JSON.stringify(mode)}==='not-executable')fs.chmodSync(__filename,0o644);
+            console.log('modal client version 1.0.0');process.exit(0);
+          }
+          console.log('[evidra-call] '+JSON.stringify({submissionId:process.argv[process.argv.indexOf('--submission-id')+1],callId:'fc-launched'}));
+          console.log(JSON.stringify({exitCode:0,stdout:'accuracy=0.9',stderr:'',artifacts:{}}));
+        `, { mode: 0o755 });
+        process.env.PATH = bin;
+        const manifest = { id: mode, resources: { executor: "modal", timeoutMinutes: 1 }, evaluation: { requiredArtifacts: [] } };
+        store.saveExperiment({ id: mode, payload: { ...manifest, status: "running" } });
+        store.reserveComputeBudget({ experimentId: mode, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+        const result = await new ModalExecutor(root, (event) => {
+          if (mode === "callback-error" && event.phase === "submitted") throw Object.assign(new Error("observer ENOENT after launch"), { code: "ENOENT" });
+          recordRemoteExecution(db, event);
+        }).run(manifest, root, ["train"], undefined, "accuracy");
+        const notStarted = mode !== "callback-error";
+        assert.equal(result.status, "failed");
+        assert.equal(result.exitCode, 127);
+        assert.equal(result.failureClass, notStarted ? "dependency" : "unknown");
+        assert.deepEqual(result.metrics, {});
+        const proofs = store.eventsByType("run.remote.terminal");
+        assert.equal(proofs.length, notStarted ? 1 : 0);
+        if (notStarted) {
+          assert.equal(proofs[0].payload.state, "NOT_STARTED");
+          assert.equal(proofs[0].payload.spawnErrorCode, mode === "missing" ? "ENOENT" : "EACCES");
+        }
+        assert.equal(store.remoteExecutionState(mode).confirmed, notStarted);
+        store.saveExperiment({ id: mode, payload: { ...manifest, status: "failed" } });
+      } finally { store.close(); }
+      const reopened = new ResearchStore(db);
+      try {
+        assert.equal(reopened.reservedComputeGpuHours(), mode === "callback-error" ? 1 : 0);
+        assert.equal(reopened.experiments()[0].payload.status, mode === "callback-error" ? "blocked" : "failed");
+      } finally { reopened.close(); rmSync(root, { recursive: true, force: true }); }
+    }
+  } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
+});
+
+function installModalAllocationFixture(bin, mode = "completed") {
+  writeFileSync(join(bin, "python3"), `#!${process.execPath}
+    const mode=${JSON.stringify(mode)};
+    if(process.argv.includes('--check-runtime')){console.log(JSON.stringify({ready:true}));process.exit(0);}
+    if(mode==='app-missing')process.exit(1);
+    console.log(JSON.stringify({callId:process.argv[3],state:'COMPLETED',exitCode:mode==='worker-failed'?7:0,appId:'ap-contract',appState:mode==='app-active'?'ACTIVE':'STOPPED',runningTasks:mode==='app-active'?1:0}));
+  `, { mode: 0o755 });
+}
+
+test("Modal uses the shipped worker from an unrelated workspace and preserves custom entrypoints", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-modal-entrypoint-"));
+  const bin = join(root, "bin"), workspace = join(root, "workspace with spaces");
+  mkdirSync(bin); mkdirSync(workspace); installModalAllocationFixture(bin);
+  const previousPath = process.env.PATH, previousEntrypoint = process.env.EVIDRA_MODAL_ENTRYPOINT;
+  try {
+    writeFileSync(join(workspace, "modal_app.py"), "raise RuntimeError('workspace decoy must not be used')");
+    writeFileSync(join(bin, "modal"), `#!${process.execPath}
+      const fs=require('node:fs');
+      if(process.argv.includes('--version')){console.log('modal client version 1.6.1');process.exit(0);}
+      fs.writeFileSync('modal-entrypoint.json',JSON.stringify(process.argv[3]));
+      console.log('[evidra-call] '+JSON.stringify({submissionId:process.argv[process.argv.indexOf('--submission-id')+1],callId:'fc-entrypoint'}));
+      console.log(JSON.stringify({exitCode:0,stdout:'accuracy=0.9',stderr:'',artifacts:{}}));
+    `, { mode: 0o755 });
+    process.env.PATH = `${bin}:${previousPath ?? ""}`;
+    const manifest = { id: "shipped-entrypoint", resources: { executor: "modal", timeoutMinutes: 1 } };
+    delete process.env.EVIDRA_MODAL_ENTRYPOINT;
+    const shipped = await new ModalExecutor(workspace).run(manifest, workspace, ["train"], undefined, "accuracy");
+    assert.equal(shipped.status, "completed");
+    const entrypoint = JSON.parse(readFileSync(join(workspace, "modal-entrypoint.json"), "utf8"));
+    assert.equal(entrypoint, `${join(process.cwd(), "modal_app.py")}::run`);
+    assert.match(readFileSync(entrypoint.slice(0, -"::run".length), "utf8"), /Generic Evidra experiment worker/);
+    process.env.EVIDRA_MODAL_ENTRYPOINT = "custom worker.py::run";
+    const custom = await new ModalExecutor(workspace).run(manifest, workspace, ["train"], undefined, "accuracy");
+    assert.equal(custom.status, "completed");
+    assert.equal(JSON.parse(readFileSync(join(workspace, "modal-entrypoint.json"), "utf8")), "custom worker.py::run");
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+    if (previousEntrypoint === undefined) delete process.env.EVIDRA_MODAL_ENTRYPOINT; else process.env.EVIDRA_MODAL_ENTRYPOINT = previousEntrypoint;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Modal requires successful client completion before accepting worker evidence or artifacts", async () => {
+  const previousPath = process.env.PATH;
+  try {
+    for (const mode of ["completed", "client-failed", "timeout", "interrupted", "missing-envelope", "worker-failed", "missing-receipt", "mismatched-receipt", "duplicate-receipt", "app-active", "app-missing", "app-mismatch"]) {
+      const root = mkdtempSync(join(tmpdir(), "evidra-modal-completion-")), bin = join(root, "bin"); mkdirSync(bin); installModalAllocationFixture(bin, mode);
+      try {
+        const payload = { exitCode: mode === "worker-failed" ? 7 : 0, stdout: "accuracy=0.9", stderr: "worker diagnostics", artifacts: { "result.json": Buffer.from("verified artifact").toString("base64") } };
+        writeFileSync(join(bin, "modal"), `#!${process.execPath}
+          const fs=require('node:fs'),mode=${JSON.stringify(mode)};
+          if(process.argv.includes('--version')){console.log('modal client version 1.0.0');process.exit(0);}
+          const digest=process.argv[process.argv.indexOf('--config-sha256')+1];
+          const snapshot=fs.readFileSync(require('node:path').join(process.env.EVIDRA_MODAL_WORKSPACE,'.sota','experiment-config.json'));
+          if(!/^[0-9a-f]{64}$/.test(digest)||require('node:crypto').createHash('sha256').update(snapshot).digest('hex')!==digest)process.exit(9);
+          const receipt='[evidra-call] '+JSON.stringify({submissionId:mode==='mismatched-receipt'?'wrong':process.argv[process.argv.indexOf('--submission-id')+1],callId:'fc-contract',appId:mode==='app-mismatch'?'ap-other':'ap-contract'});
+          if(mode!=='missing-receipt')console.log(receipt);
+          if(mode==='duplicate-receipt')console.log(receipt);
+          console.log(mode==='missing-envelope'?'accuracy=0.9':${JSON.stringify(JSON.stringify(payload))});
+          fs.writeFileSync('ready','yes');
+          if(mode==='client-failed')process.exit(3);
+          if(mode==='timeout'||mode==='interrupted'){process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000);}
+        `, { mode: 0o755 });
+        process.env.PATH = `${bin}:${previousPath ?? ""}`;
+        const manifest = { id: "modal-contract", resources: { executor: "modal", timeoutMinutes: mode === "timeout" ? 0.01 : 1 }, evaluation: { requiredArtifacts: ["result.json"] } };
+        const database = join(root, "state.sqlite");
+        const store = new ResearchStore(database);
+        store.saveExperiment({ id: manifest.id, payload: { ...manifest, status: "running" } });
+        store.reserveComputeBudget({ experimentId: manifest.id, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+        let timer;
+        const result = await new ModalExecutor(root, (event) => store.appendEvent(`run.remote.${event.phase}`, event)).run(manifest, root, ["train"], mode === "interrupted" ? (control) => {
+          if (timer) clearInterval(timer);
+          timer = setInterval(() => { if (existsSync(join(root, "ready"))) { clearInterval(timer); control.terminate(); } }, 10);
+        } : undefined, "accuracy");
+        if (timer) clearInterval(timer);
+        assert.equal(result.status, mode === "completed" ? "completed" : "failed", mode);
+        const confirmed = ["completed", "worker-failed"].includes(mode);
+        assert.equal(store.remoteExecutionState(manifest.id).confirmed, confirmed, mode);
+        assert.equal(store.eventsByType("run.remote.submitting").length, 1);
+        const receipts = store.eventsByType("run.remote.submitted");
+        assert.equal(receipts.length, ["missing-receipt", "mismatched-receipt"].includes(mode) ? 0 : 1, mode);
+        if (receipts.length) { assert.equal(receipts[0].payload.callId, "fc-contract"); assert.equal(receipts[0].payload.protocol, "modal-call-v1"); }
+        assert.equal(store.eventsByType("run.remote.terminal").length, confirmed ? 1 : 0);
+        store.saveExperiment({ id: manifest.id, payload: { ...manifest, status: result.status } });
+        store.close();
+        const reopened = new ResearchStore(database);
+        try {
+          assert.equal(reopened.reservedComputeGpuHours(), confirmed ? 0 : 1, mode);
+          assert.equal(reopened.remoteExecutionState(manifest.id).confirmed, confirmed, mode);
+          if (!confirmed) {
+            assert.equal(reopened.experiments()[0].payload.status, "blocked");
+            assert.equal(reopened.releaseComputeReservation(manifest.id), false);
+            assert.equal(reopened.reconcileRemoteExperiment(manifest.id), false);
+            assert.throws(() => reopened.saveExperiment({ id: manifest.id, payload: { ...manifest, status: "running" } }), /reconcil/);
+          }
+        } finally { reopened.close(); }
+        assert.equal(existsSync(join(root, "result.json")), confirmed, mode);
+        if (!confirmed) { assert.deepEqual(result.metrics, {}); assert.deepEqual(result.artifacts, {}); if (!["mismatched-receipt", "duplicate-receipt", "app-active", "app-missing", "app-mismatch"].includes(mode)) assert.match(result.stdout, /accuracy/); assert.equal(result.failureClass, "unknown"); assert.match(result.stderr, /completion is unconfirmed|application termination is unconfirmed/); }
+        else assert.equal(readFileSync(join(root, "result.json"), "utf8"), "verified artifact");
+        if (mode === "client-failed") assert.equal(result.exitCode, 3);
+        if (mode === "timeout") assert.equal(result.exitCode, 124);
+        if (mode === "interrupted") assert.equal(result.exitCode, 130);
+        if (mode === "missing-envelope") assert.equal(result.exitCode, 65);
+        if (mode === "worker-failed") assert.equal(result.exitCode, 7);
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    }
+  } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
+});
+
+test("actual Modal Python worker bounds pipe reads and separates worker failures from client failures", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-modal-python-"));
+  const script = `
+import json, pathlib, runpy, sys, types
+class Image:
+    @classmethod
+    def debian_slim(cls, **kwargs): return cls()
+    def pip_install(self, *args): return self
+    def add_local_dir(self, *args, **kwargs): return self
+class App:
+    def __init__(self, *args): self.app_id = 'ap-contract'
+    def function(self, **kwargs):
+        assert kwargs.get("restrict_modal_access") is True
+        assert kwargs.get("single_use_containers") is True
+        def decorate(fn):
+            fn.remote = fn
+            class Call:
+                object_id = 'fc-contract'
+                def get(self): return fn(*self.args)
+            def spawn(*args):
+                call = Call()
+                call.args = args
+                return call
+            fn.spawn = spawn
+            return fn
+        return decorate
+    def local_entrypoint(self): return lambda fn: fn
+sys.modules['modal'] = types.SimpleNamespace(Image=Image, App=App)
+worker = runpy.run_path(sys.argv[1])
+worker['execute'].__globals__['REMOTE_WORKSPACE'] = pathlib.Path(sys.argv[2])
+mode = sys.argv[3]
+if mode == 'mount':
+    import os
+    root = pathlib.Path(sys.argv[2]) / 'isolated'
+    root.mkdir()
+    namespace = worker['execute'].__globals__
+    namespace['WORKSPACE'] = root
+    included = namespace['include_workspace_path']
+    ignored = namespace['ignore_workspace_path']
+    wanted = ['train.py', 'src/.hidden/module.py', '.sota/experiment-config.json']
+    excluded = ['.git/config', '.sota/controller.sqlite', '.sota/worker-home/.credentials', '.venv/bin/python', 'node_modules/package/index.js', '__pycache__/cache.pyc', '.mypy_cache/cache.json', 'src/.sota/experiment-config.json', '.git/.sota/experiment-config.json']
+    for name in wanted + excluded:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('fixture')
+        for spelling in (name, './' + name, str(path)):
+            assert included(spelling) == (name in wanted), spelling
+        assert ignored(pathlib.Path(name)) == (name in excluded), name
+    for name in ('../outside', str(root.parent / 'outside'), '/.sota/experiment-config.json'):
+        assert not included(name), name
+    (root / 'allowed-link.py').symlink_to(root / 'train.py')
+    assert not ignored(pathlib.Path('allowed-link.py'))
+    (root / 'controller-link').symlink_to(root / '.sota/controller.sqlite')
+    (root / 'git-link').symlink_to(root / '.git/config')
+    (root / 'config-link').symlink_to(root / '.sota/experiment-config.json')
+    outside = root.parent / 'outside'
+    outside.write_text('controller secret')
+    (root / 'external-link').symlink_to(outside)
+    (root / 'dangling-link').symlink_to(root / 'missing')
+    os.mkfifo(root / 'fifo')
+    for name in ('controller-link', 'git-link', 'config-link', 'external-link', 'dangling-link', 'fifo'):
+        assert ignored(pathlib.Path(name)), name
+    expected = set(wanted + ['allowed-link.py'])
+    selected = {str(path.relative_to(root)) for path in root.rglob('*') if not ignored(path.relative_to(root))}
+    assert selected == expected, selected
+    config_path = root / '.sota/experiment-config.json'
+    config_path.unlink()
+    config_path.symlink_to(root / 'train.py')
+    assert ignored(pathlib.Path('.sota/experiment-config.json'))
+    print('mount checks passed')
+    sys.exit(0)
+if mode == 'config':
+    import hashlib, copy, os
+    root = pathlib.Path(sys.argv[2])
+    directory = root / '.sota'
+    directory.mkdir(exist_ok=True)
+    path = directory / 'experiment-config.json'
+    config = {'schemaVersion': 1, 'experimentId': 'contract', 'datasetVersion': 'data-v2', 'splitVersion': 'split-v3', 'evaluation': {'folds': [0], 'seeds': [-1], 'matrixRequired': True}, 'resources': {'environment': {'CUSTOM_VALUE': 'declared', 'API_KEY': 'secret', 'HOME': '/controller', 'EVIDRA_EXPERIMENT_ID': 'spoof'}}}
+    code = 'import os,json,pathlib; pathlib.Path("config-command-started").write_text("yes"); print(json.dumps({k:os.environ.get(k) for k in ("CUSTOM_VALUE","API_KEY","HOME","EVIDRA_EXPERIMENT_ID","EVIDRA_DATASET_VERSION","EVIDRA_SPLIT_VERSION","EVIDRA_MATRIX_REQUIRED","EVIDRA_EXPERIMENT_CONFIG_SHA256")}))'
+    namespace = worker['execute'].__globals__
+    namespace['print'] = lambda *args, **kwargs: None
+    def invoke(digest=''):
+        return worker['execute'](json.dumps([sys.executable, '-c', code]), '.', config_sha256=digest)
+    data = json.dumps(config).encode()
+    path.write_bytes(data)
+    digest = hashlib.sha256(data).hexdigest()
+    result = invoke(digest)
+    assert result['exitCode'] == 0, result
+    env = json.loads(result['stdout'])
+    assert env == {'CUSTOM_VALUE': 'declared', 'API_KEY': None, 'HOME': '/tmp/evidra-worker-home', 'EVIDRA_EXPERIMENT_ID': 'contract', 'EVIDRA_DATASET_VERSION': 'data-v2', 'EVIDRA_SPLIT_VERSION': 'split-v3', 'EVIDRA_MATRIX_REQUIRED': '1', 'EVIDRA_EXPERIMENT_CONFIG_SHA256': digest}, env
+    def rejected(digest=''):
+        marker = root / 'config-command-started'
+        marker.unlink(missing_ok=True)
+        result = invoke(digest)
+        assert not marker.exists(), 'Invalid contract started command'
+        assert result['exitCode'] == 65 and result['stdout'] == '' and result['artifacts'] == {}, result
+    changed = copy.deepcopy(config)
+    changed['datasetVersion'] = 'changed'
+    path.write_text(json.dumps(changed))
+    rejected(digest)
+    path.unlink()
+    rejected(digest)
+    path.write_text('{invalid')
+    rejected()
+    for field, value in [('schemaVersion', True), ('experimentId', None), ('datasetVersion', ''), ('evaluation', {'folds': [0], 'seeds': [0], 'matrixRequired': 'false'}), ('evaluation', {'folds': [True], 'seeds': [0], 'matrixRequired': False}), ('resources', {'environment': {'BAD-NAME': 'x'}}), ('resources', {'environment': {'CUSTOM': None}}), ('resources', {'environment': {'CUSTOM': chr(0)}})]:
+        changed = copy.deepcopy(config)
+        changed[field] = value
+        path.write_text(json.dumps(changed))
+        rejected()
+    path.write_bytes(b'x' * (namespace['MAX_CONFIG_BYTES'] + 1))
+    rejected()
+    path.unlink()
+    target = root / 'outside-config'
+    target.write_bytes(data)
+    path.symlink_to(target)
+    rejected(digest)
+    path.unlink()
+    os.mkfifo(path)
+    rejected(digest)
+    path.unlink()
+    print('config checks passed')
+    sys.exit(0)
+if mode == 'artifacts':
+    import os
+    namespace = worker['execute'].__globals__
+    namespace['print'] = lambda *args, **kwargs: None
+    namespace['MAX_ARTIFACT_BYTES'] = 128
+    root = pathlib.Path(sys.argv[2])
+    (root / 'normal').write_bytes(b'verified artifact')
+    (root / 'large').write_bytes(b'x' * 129)
+    os.mkfifo(root / 'fifo')
+    (root / 'link').symlink_to(root / 'normal')
+    (root / 'parent').symlink_to(root, target_is_directory=True)
+    read = worker['read_worker_artifact']
+    assert read(root, 'normal') == b'verified artifact'
+    assert read(root, 'large') is None
+    assert read(root, 'missing') is None
+    assert read(root, 'normal', 2) is None
+    namespace['MAX_ENVELOPE_BYTES'] = 512
+    valid = dict(exitCode=0, stdout='metric', stderr='', artifacts={})
+    assert json.loads(worker['completion_envelope'](valid)) == valid
+    for oversized in (dict(valid, stdout=chr(0)*512), dict(valid, artifacts={'file': 'x'*512}), dict(valid, stderr='न'*512)):
+        envelope = worker['completion_envelope'](oversized)
+        assert len(envelope.encode()) <= 512
+        rejected = json.loads(envelope)
+        assert rejected['exitCode'] == 65 and rejected['stdout'] == '' and rejected['artifacts'] == {}
+    namespace['MAX_ARTIFACT_TOTAL_BYTES'] = 20
+    (root / 'second').write_bytes(b'1234567890')
+    result = worker['execute'](json.dumps([sys.executable, '-c', 'pass']), '.', json.dumps(['normal', 'second']))
+    assert result['exitCode'] == 65 and result['artifacts'] == {} and result['stdout'] == ''
+    namespace['MAX_ARTIFACT_TOTAL_BYTES'] = 256
+    for code, artifacts in [('import sys; sys.stdout.write(chr(0)*512)', []), ('pass', ['large', 'normal'])]:
+        if artifacts: (root / 'large').write_bytes(b'x'*128)
+        namespace['MAX_ENVELOPE_BYTES'] = 256 if artifacts else 512
+        result = worker['execute'](json.dumps([sys.executable, '-c', code]), '.', json.dumps(artifacts))
+        assert result['exitCode'] == 65 and result['artifacts'] == {} and result['stdout'] == '', result
+        assert 'transport budget' in result['stderr']
+    namespace['MAX_ENVELOPE_BYTES'] = 512
+    for name in ('fifo', 'link', 'parent/normal', '../normal', '/etc/passwd'):
+        try: read(root, name)
+        except (OSError, ValueError): pass
+        else: raise AssertionError('unsafe artifact accepted: ' + name)
+    original_read = os.read
+    def mutate(descriptor, size):
+        (root / 'normal').write_bytes(b'changed artifact')
+        return original_read(descriptor, size)
+    os.read = mutate
+    try:
+        try: read(root, 'normal')
+        except ValueError: pass
+        else: raise AssertionError('changing artifact accepted')
+    finally: os.read = original_read
+    print('artifact checks passed')
+    sys.exit(0)
+if mode in ('partial-lines', 'unicode', 'invalid-utf8', 'stderr-limit', 'stdout-limit', 'exact-limit'):
+    namespace = worker['execute'].__globals__
+    namespace['MAX_CAPTURE_BYTES'] = 128
+    progress = []
+    namespace['print'] = lambda text, **kwargs: progress.append(len(text))
+    codes = {
+        'partial-lines': 'import os; os.write(1, b\"partial\"); os.write(2, b\"y\"*200000); os.write(1, b\"x\"*200000)',
+        'unicode': 'import os, time; [(os.write(1, bytes([value])), time.sleep(0.005)) for value in \"नमस्ते\".encode()]',
+        'invalid-utf8': 'import os; os.write(1, bytes([255])); os.write(2, bytes([254]))',
+        'stderr-limit': 'import os; os.write(1, b\"accuracy=0.9\"); os.write(2, b\"y\"*129)',
+        'stdout-limit': 'import os; os.write(1, b"accuracy=0.9" + b"x"*129)',
+        'exact-limit': 'import os; os.write(1, b\"x\"*128)',
+    }
+    result = worker['execute'](json.dumps([sys.executable, '-c', codes[mode]]), '.')
+    print(json.dumps(dict(result, maxProgressChars=max(progress), progressEvents=len(progress))))
+    sys.exit(0)
+if mode == 'rpc-error':
+    def fail(*args): raise RuntimeError('RPC completion unconfirmed')
+    worker['execute'].spawn = fail
+code = 'import sys; print(\"worker evidence\"); sys.exit(7)' if mode == 'failed' else 'import os, signal; os.kill(os.getpid(), signal.SIGTERM)' if mode == 'signal' else 'print(\"worker evidence\")'
+if mode == 'unterminated': code = 'import sys; sys.stdout.write("worker evidence")'
+if mode == 'timeout': code = 'import time; time.sleep(30)'
+if mode == 'closed-pipes': code = 'import os,time; os.close(1); os.close(2); time.sleep(30)'
+if mode == 'child-pipe': code = 'import subprocess,sys,pathlib; child=subprocess.Popen([sys.executable,"-c","import time; time.sleep(30)"]); pathlib.Path("child.pid").write_text(str(child.pid))'
+worker['run'](json.dumps([sys.executable, '-c', code]), timeout_seconds=1 if mode in ('timeout', 'closed-pipes', 'child-pipe') else 3600)
+`;
+  try {
+    for (const mode of ["completed", "failed", "signal", "rpc-error", "partial-lines", "unicode", "invalid-utf8", "unterminated", "timeout", "closed-pipes", "child-pipe", "mount", "config", "artifacts", "stderr-limit", "stdout-limit", "exact-limit"]) {
+      const result = spawnSync("python3", ["-c", script, join(process.cwd(), "modal_app.py"), root, mode], { encoding: "utf8", timeout: 10_000 });
+      assert.equal(result.error, undefined);
+      if (mode === "mount") { assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.trim(), "mount checks passed"); continue; }
+      if (mode === "config") { assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.trim(), "config checks passed"); continue; }
+      if (mode === "artifacts") { assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.trim(), "artifact checks passed"); continue; }
+      if (["rpc-error", "timeout", "closed-pipes", "child-pipe"].includes(mode)) {
+        assert.notEqual(result.status, 0);
+        assert.equal(parseModalWorkerResult(result.stdout), undefined);
+        assert.match(result.stderr, mode === "rpc-error" ? /RPC completion unconfirmed/ : /exceeded its subprocess deadline/);
+        if (mode === "child-pipe") {
+          const pid = readFileSync(join(root, "child.pid"), "utf8");
+          const stopped = execFileSync("python3", ["-c", `
+import pathlib, sys, time
+status = pathlib.Path('/proc') / sys.argv[1] / 'status'
+for _ in range(100):
+    if not status.exists(): break
+    if any(line.startswith('State:') and ('Z' in line or 'X' in line) for line in status.read_text().splitlines()): break
+    time.sleep(0.01)
+else: raise RuntimeError('owned child is still running')
+print('stopped')
+`, pid], { encoding: "utf8", timeout: 3000 });
+          assert.equal(stopped.trim(), "stopped");
+        }
+      } else {
+        assert.equal(result.status, 0, result.stderr);
+        const envelope = parseModalWorkerResult(result.stdout);
+        assert.equal(envelope?.exitCode, mode === "failed" ? 7 : mode === "signal" ? 143 : ["partial-lines", "stderr-limit", "stdout-limit"].includes(mode) ? 65 : 0);
+        if (mode === "partial-lines") {
+          assert.equal(envelope.stdout, "");
+          assert.deepEqual(envelope.artifacts, {});
+          assert.match(envelope.stderr, /output exceeded the capture budget/);
+          const details = JSON.parse(result.stdout);
+          assert(details.maxProgressChars <= 65536 + 30);
+          assert(details.progressEvents > 2);
+        } else if (["stderr-limit", "stdout-limit"].includes(mode)) { assert.equal(envelope.stdout, ""); assert.match(envelope.stderr, /output exceeded the capture budget/); }
+        else if (mode === "exact-limit") assert.equal(envelope.stdout, "x".repeat(128));
+        else if (mode === "unicode") assert.equal(envelope.stdout, "नमस्ते");
+        else if (mode === "invalid-utf8") { assert.equal(envelope.stdout, "�"); assert.equal(envelope.stderr, "�"); }
+        else if (mode !== "signal") assert.match(envelope.stdout, /worker evidence/);
+      }
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Modal recovery polls recorded calls without replaying or importing measurement evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-modal-recovery-"));
+  const previousPythonPath = process.env.PYTHONPATH;
+  const previousMode = process.env.EVIDRA_MODAL_TEST_MODE;
+  const previousPython = process.env.EVIDRA_MODAL_PYTHON;
+  try {
+    writeFileSync(join(root, "modal.py"), `
+import json, os
+class InputCancellation(BaseException): pass
+class FunctionCall:
+    @classmethod
+    def from_id(cls, call_id):
+        assert call_id in ('fc-owned', 'fc-pending')
+        call = cls()
+        call.call_id = call_id
+        return call
+    def get(self, timeout):
+        assert timeout == 0
+        mode = os.environ['EVIDRA_MODAL_TEST_MODE']
+        if mode.startswith('cancel-') or mode in ('pending', 'stopped-pending') or self.call_id == 'fc-pending': raise TimeoutError('still running')
+        if mode in ('canceled', 'active-canceled'): raise InputCancellation('input canceled')
+        if mode == 'keyboard-interrupt': raise KeyboardInterrupt()
+        if mode == 'task-interrupt': raise asyncio.CancelledError()
+        if mode in ('expired', 'active-expired', 'historical-expired'): raise RuntimeError('output expired')
+        return dict(exitCode=True if mode == 'malformed' else 7 if mode == 'failed' else 0, stdout='accuracy=0.99', stderr='', artifacts={'result.json': 'e30='})
+__version__='runtime-fixture'
+class App:
+    def function(self, *, restrict_modal_access=False, single_use_containers=False):
+        raise AssertionError('preflight must not register or launch work')
+if os.environ['EVIDRA_MODAL_TEST_MODE']=='runtime-missing-options':
+    App.function=lambda self: None
+import sys
+from types import SimpleNamespace as NS
+async def call_metadata(request):
+    return NS(function_call_id='fc-wrong' if os.environ['EVIDRA_MODAL_TEST_MODE']=='app-wrong-metadata' else request.function_call_id,num_inputs=2 if os.environ['EVIDRA_MODAL_TEST_MODE']=='cancel-multiple-inputs' else 1, metadata=NS(app_id='ap-pending' if request.function_call_id=='fc-pending' else 'ap-owned'))
+stop_observations = 0
+async def app_list(request):
+    global stop_observations
+    mode=os.environ['EVIDRA_MODAL_TEST_MODE']
+    app=NS(app_id='ap-owned',state=1 if mode in ('app-active','historical-active','app-active-zero','pending','active-expired','active-canceled') else 5,n_running_tasks=1 if mode in ('app-active','historical-active','app-stopped-running','active-expired','active-canceled') else 0)
+    if mode.startswith('cancel-'):
+        app.description='unrelated' if mode=='cancel-wrong-name' else 'evidra-12345678-1234-1234-1234-123456789abc'
+        app.state=3 if mode=='cancel-deployed' else 5 if os.path.exists(os.path.join(os.path.dirname(__file__),'stop-called')) else 1
+        if mode=='cancel-stopping' and app.state==5:
+            stop_observations += 1
+            if stop_observations==1: app.state=4
+        app.n_running_tasks=0 if app.state==5 else 1
+    return NS(apps=[] if mode=='app-missing' else [app,app] if mode=='app-ambiguous' else [app,NS(app_id='ap-pending',state=1,n_running_tasks=1)])
+async def app_stop(request):
+    if os.environ['EVIDRA_MODAL_TEST_MODE']=='cancel-refused': raise RuntimeError('stop refused')
+    assert request.app_id=='ap-owned'
+    open(os.path.join(os.path.dirname(__file__), 'stop-called'), 'w').write('yes')
+class Client:
+    @classmethod
+    async def from_env(cls):
+        open(os.path.join(os.path.dirname(__file__), "sdk-request-started"), "w").write("yes")
+        return NS(_stub=NS(FunctionCallFromId=call_metadata,AppList=app_list,AppStop=app_stop))
+import asyncio
+sys.modules['modal._utils.async_utils']=NS(synchronizer=NS(create_blocking=lambda fn: lambda *args: asyncio.run(fn(*args))))
+sys.modules['modal.client']=NS(_Client=Client)
+sys.modules['modal._object']=NS(_get_environment_name=lambda env: '')
+sys.modules['modal_proto']=NS(api_pb2=NS(FunctionCallFromIdRequest=lambda **kw:NS(**kw),AppListRequest=lambda **kw:NS(**kw),AppStopRequest=lambda **kw:NS(**kw),APP_STOP_SOURCE_CLI=1,APP_STATE_EPHEMERAL=1,APP_STATE_STOPPING=4,APP_STATE_STOPPED=5))
+`);
+    process.env.PYTHONPATH = root;
+    process.env.EVIDRA_MODAL_PYTHON = "python3";
+    for (const mode of ["completed", "failed", "pending", "expired", "malformed", "missing-receipt", "multiple", "shared-intent", "shared-experiment", "app-active", "app-active-zero", "app-stopped-running", "app-missing", "app-ambiguous", "app-wrong-metadata", "historical-active", "historical-stopped", "runtime-capable", "runtime-missing-options", "active-expired", "stopped-pending", "historical-expired", "canceled", "active-canceled", "keyboard-interrupt", "task-interrupt", "cancel-owned", "cancel-wrong-name", "cancel-deployed", "cancel-multiple-inputs", "cancel-shared-app", "cancel-legacy", "cancel-refused", "cancel-wrong-id", "cancel-stopping"]) {
+      process.env.EVIDRA_MODAL_TEST_MODE = mode;
+      if (mode.startsWith("runtime-")) {
+        rmSync(join(root, "sdk-request-started"), { force: true });
+        const checked = spawnSync("python3", [join(process.cwd(), "modal_reconcile.py"), "--check-runtime"], { encoding: "utf8", timeout: 3000 });
+        assert.equal(checked.error, undefined);
+        assert.equal(checked.status === 0, mode === "runtime-capable", checked.stderr);
+        if (checked.status === 0) assert.equal(JSON.parse(checked.stdout).ready, true);
+        else assert.match(checked.stderr, /lacks required worker isolation options/);
+        assert.equal(existsSync(join(root, "sdk-request-started")), false);
+        continue;
+      }
+
+      rmSync(join(root, "stop-called"), { force: true });
+      const db = join(root, `${mode}.sqlite`), id = `recover-${mode}`;
+      const store = new ResearchStore(db);
+      const common = { executor: "modal", protocol: "modal-call-v1", experimentId: id, submissionId: "12345678-1234-1234-1234-123456789abc", allocationName: "evidra-12345678-1234-1234-1234-123456789abc" };
+      if (mode.startsWith("cancel-") && mode !== "cancel-legacy") common.appName = common.allocationName;
+      store.saveExperiment({ id, payload: { id, status: "running", resources: { executor: "modal" } } });
+      store.reserveComputeBudget({ experimentId: id, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+      store.appendEvent("run.remote.submitting", { ...common, phase: "submitting" });
+      if (mode !== "missing-receipt") store.appendEvent("run.remote.submitted", { ...common, callId: "fc-owned", ...(mode.startsWith("cancel-") ? { appId: mode === "cancel-wrong-id" ? "ap-other" : "ap-owned" } : {}), phase: "submitted" });
+      if (["multiple", "shared-intent", "shared-experiment"].includes(mode)) {
+        const second = { ...common, experimentId: mode === "shared-experiment" ? `${id}-other` : id, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" };
+        if (mode === "shared-experiment") {
+          store.saveExperiment({ id: second.experimentId, payload: { id: second.experimentId, status: "running", resources: { executor: "modal" } } });
+          store.reserveComputeBudget({ experimentId: second.experimentId, budgetGpuHours: 2, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+        }
+        store.appendEvent("run.remote.submitting", { ...second, phase: "submitting" });
+        store.appendEvent("run.remote.submitted", { ...second, callId: mode === "multiple" ? "fc-pending" : "fc-owned", phase: "submitted" });
+      }
+      if (mode === "cancel-shared-app") {
+        const other = { ...common, experimentId: `${id}-other`, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc", appName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" };
+        store.appendEvent("run.remote.submitted", { ...other, appId: "ap-owned", callId: "fc-other", phase: "submitted" });
+      }
+      if (mode.startsWith("historical-")) store.appendEvent("run.remote.terminal", { ...common, callId: "fc-owned", state: "COMPLETED", exitCode: 0, completionEvidence: "sdk-result", phase: "terminal" });
+      store.recoverStaleExperiments(0);
+      store.close();
+      const completed = ["completed", "failed", "historical-stopped", "expired", "malformed", "stopped-pending", "historical-expired", "canceled", "cancel-owned", "cancel-stopping"].includes(mode);
+      assert.deepEqual(await reconcileRemoteExperiment(db, root, id, { cancelModal: mode.startsWith("cancel-") }), { released: completed, queried: ["missing-receipt", "shared-intent", "shared-experiment", "cancel-legacy", "cancel-shared-app"].includes(mode) ? 0 : mode === "multiple" ? 2 : 1 }, mode);
+      if (["cancel-owned", "cancel-stopping"].includes(mode)) assert.deepEqual(await reconcileRemoteExperiment(db, root, id, { cancelModal: true }), { released: true, queried: 0 });
+      const reopened = new ResearchStore(db);
+      try {
+        assert.equal(reopened.reservedComputeGpuHours(), completed ? 0 : mode === "shared-experiment" ? 2 : 1);
+        assert.equal(reopened.experiments()[0].payload.status, completed ? "failed" : "blocked");
+        assert.equal(reopened.runs().length, 0);
+        if (mode.startsWith("cancel-")) assert.equal(existsSync(join(root, "stop-called")), ["cancel-owned", "cancel-stopping"].includes(mode), mode);
+        if (mode.startsWith("cancel-") && !["cancel-shared-app", "cancel-legacy"].includes(mode)) {
+          assert.equal(reopened.eventsByType("run.remote.cleanup.requested").length, 1);
+          assert.equal(reopened.eventsByType("run.remote.cleanup.observed")[0].payload.verifiedStopped, ["cancel-owned", "cancel-stopping"].includes(mode));
+          if (!["cancel-owned", "cancel-stopping"].includes(mode)) assert.ok(reopened.eventsByType("run.remote.cleanup.observed")[0].payload.diagnostic.length <= 2000);
+        }
+
+        assert.equal(existsSync(join(root, "result.json")), false);
+        const terminals = reopened.eventsByType("run.remote.terminal");
+        if (mode.startsWith("shared-")) assert.equal(reopened.recordModalTerminalEvidence({ ...common, callId: "fc-owned", state: "COMPLETED", exitCode: 0, completionEvidence: "sdk-result", at: new Date().toISOString() }), false);
+        assert.equal(terminals.length, completed || mode === "multiple" || mode === "historical-active" ? 1 : 0);
+        if (completed || mode === "multiple") {
+          const proof = terminals[0].payload;
+          assert.equal(proof.completionEvidence, ["expired", "malformed", "stopped-pending", "canceled", "cancel-owned", "cancel-stopping"].includes(mode) ? "sdk-allocation" : "sdk-result");
+          assert.equal(proof.exitCode, mode === "failed" ? 7 : ["expired", "malformed", "stopped-pending", "canceled", "cancel-owned", "cancel-stopping"].includes(mode) ? 125 : 0);
+          assert.equal(reopened.recordModalTerminalEvidence({ ...proof, completionEvidence: proof.completionEvidence === "sdk-allocation" ? "sdk-allocation" : "client-envelope" }), true);
+          assert.equal(reopened.recordModalTerminalEvidence({ ...proof, callId: "fc-other" }), false);
+          assert.equal(reopened.eventsByType("run.remote.terminal").length, 1);
+          if (["historical-stopped", "historical-expired"].includes(mode)) assert.equal(reopened.eventsByType("run.remote.allocation.terminal").length, 1);
+        }
+      } finally { reopened.close(); }
+    }
+  } finally {
+    for (const [key, value] of [["PYTHONPATH", previousPythonPath], ["EVIDRA_MODAL_TEST_MODE", previousMode], ["EVIDRA_MODAL_PYTHON", previousPython]]) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Modal call ownership stays bounded and rejects aliases without SQLite JSON support", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-modal-ownership-"));
+  const store = new ResearchStore(join(root, "state.sqlite"));
+  const originalPrepare = store.db.prepare;
+  try {
+    for (let index = 0; index < 200; index += 1) store.appendEvent("run.remote.submitted", { executor: "modal", protocol: "modal-call-v1", callId: `fc-unrelated${index}`, experimentId: `other-${index}`, submissionId: `other-${index}` });
+    const receipt = { executor: "modal", protocol: "modal-call-v1", experimentId: "owned", submissionId: "intent", callId: "fc-owned" };
+    store.appendEvent("run.remote.submitted", receipt);
+    const plan = store.db.prepare("EXPLAIN QUERY PLAN SELECT payload_json FROM events WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal' AND json_extract(payload_json, '$.callId') = ? ORDER BY id LIMIT 2").all(receipt.callId);
+    assert(plan.some((row) => row.detail.includes("idx_events_modal_call_id")), JSON.stringify(plan));
+    store.eventsByType = () => { throw new Error("ownership must not materialize receipt history"); };
+    for (const portable of [false, true]) {
+      store.db.prepare = function(sql) {
+        if (portable && sql.includes("json_extract")) throw new Error("simulate SQLite without JSON1");
+        return originalPrepare.call(this, sql);
+      };
+      assert.equal(store.modalCallOwnershipConfirmed("owned", "intent", "fc-owned"), true);
+      assert.equal(store.modalCallOwnershipConfirmed("other", "intent", "fc-owned"), false);
+      assert.equal(store.modalCallOwnershipConfirmed("owned", "intent", "fc-missing"), false);
+    }
+    store.db.prepare = originalPrepare;
+    store.appendEvent("run.remote.submitted", { ...receipt, experimentId: "alias" });
+    for (const portable of [false, true]) {
+      store.db.prepare = function(sql) {
+        if (portable && sql.includes("json_extract")) throw new Error("simulate SQLite without JSON1");
+        return originalPrepare.call(this, sql);
+      };
+      assert.equal(store.modalCallOwnershipConfirmed("owned", "intent", "fc-owned"), false);
+    }
+  } finally { store.db.prepare = originalPrepare; store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Modal app ownership rejects aliases through indexed and JSON-disabled lookups", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-modal-app-owner-")), store = new ResearchStore(join(root, "state.sqlite"));
+  const common = { executor: "modal", protocol: "modal-call-v1", experimentId: "owned", submissionId: "12345678-1234-1234-1234-123456789abc", allocationName: "evidra-12345678-1234-1234-1234-123456789abc", appName: "evidra-12345678-1234-1234-1234-123456789abc", appId: "ap-owned", callId: "fc-owned", phase: "submitted" };
+  try {
+    store.appendEvent("run.remote.submitted", common);
+    assert.equal(store.modalAppOwnershipConfirmed("owned", common.submissionId, "ap-owned"), true);
+    const plan = store.db.prepare("EXPLAIN QUERY PLAN SELECT payload_json FROM events WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal' AND json_extract(payload_json, '$.appId') = ? ORDER BY id LIMIT 2").all("ap-owned");
+    assert.ok(plan.some(row => row.detail.includes("idx_events_modal_app_id")));
+    const prepare = store.db.prepare.bind(store.db);
+    store.db.prepare = sql => { if (sql.includes("json_extract")) throw new Error("JSON1 unavailable"); return prepare(sql); };
+    assert.equal(store.modalAppOwnershipConfirmed("owned", common.submissionId, "ap-owned"), true);
+    store.appendEvent("run.remote.submitted", { ...common, experimentId: "other", callId: "fc-other" });
+    assert.equal(store.modalAppOwnershipConfirmed("owned", common.submissionId, "ap-owned"), false);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Modal allocation proofs preserve historical records and require causal matching quiescence", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-modal-allocation-proof-"));
+  try {
+    for (const mode of ["migrated", "writer", "json-disabled", "no-allocation", "before-terminal", "duplicate", "wrong-app", "wrong-call", "active", "running", "string-count", "wrong-phase", "wrong-exit", "extra-strong-proof", "allocation-only", "allocation-only-wrong-exit", "allocation-only-wrong-source"]) {
+      const db = join(root, `${mode}.sqlite`), id = `allocation-${mode}`;
+      const store = new ResearchStore(db);
+      const common = { executor: "modal", protocol: "modal-call-v1", experimentId: id, submissionId: "12345678-1234-1234-1234-123456789abc", allocationName: "evidra-12345678-1234-1234-1234-123456789abc", callId: "fc-owned" };
+      const terminal = { ...common, phase: "terminal", state: "COMPLETED", exitCode: 0, completionEvidence: "sdk-result" };
+      if (mode.startsWith("allocation-only")) Object.assign(terminal, { state: "ALLOCATION_STOPPED", exitCode: mode === "allocation-only-wrong-exit" ? 0 : 125, completionEvidence: mode === "allocation-only-wrong-source" ? "sdk-result" : "sdk-allocation" });
+      const allocation = { ...terminal, appId: mode === "wrong-app" ? "ap-other" : "ap-owned", appState: mode === "active" ? "ACTIVE" : "STOPPED", runningTasks: mode === "running" ? 1 : mode === "string-count" ? "0" : 0, at: new Date().toISOString() };
+      if (mode === "wrong-call") allocation.callId = "fc-other";
+      if (mode === "wrong-phase") allocation.phase = "submitted";
+      if (mode === "wrong-exit") allocation.exitCode = 7;
+      store.saveExperiment({ id, payload: { id, status: "running", resources: { executor: "modal" } } });
+      store.reserveComputeBudget({ experimentId: id, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+      store.appendEvent("run.remote.submitting", { ...common, phase: "submitting" });
+      store.appendEvent("run.remote.submitted", { ...common, phase: "submitted", appId: "ap-owned" });
+      if (mode === "before-terminal") store.appendEvent("run.remote.allocation.terminal", allocation);
+      store.appendEvent("run.remote.terminal", mode === "extra-strong-proof" ? { ...terminal, appId: "ap-owned", appState: "STOPPED", runningTasks: 0 } : terminal);
+      if (mode === "json-disabled") {
+        const prepare = store.db.prepare.bind(store.db);
+        store.db.prepare = (sql) => { if (sql.includes("json_extract")) throw new Error("JSON1 unavailable"); return prepare(sql); };
+      }
+      if (["writer", "json-disabled"].includes(mode)) {
+        assert.equal(store.recordModalTerminalEvidence(allocation), true);
+        assert.equal(store.recordModalTerminalEvidence(allocation), true);
+        assert.equal(store.recordModalTerminalEvidence({ ...allocation, appId: "ap-other" }), false);
+        assert.equal(store.eventsByType("run.remote.terminal").length, 1);
+        assert.equal(store.eventsByType("run.remote.allocation.terminal").length, 1);
+      } else if (!["before-terminal", "no-allocation"].includes(mode)) {
+        store.appendEvent("run.remote.allocation.terminal", allocation);
+        if (mode === "duplicate") store.appendEvent("run.remote.allocation.terminal", allocation);
+      }
+      const confirmed = ["migrated", "writer", "json-disabled", "allocation-only"].includes(mode);
+      assert.equal(store.remoteExecutionState(id).confirmed, confirmed, mode);
+      store.saveExperiment({ id, payload: { id, status: "failed", resources: { executor: "modal" } } });
+      assert.equal(store.reservedComputeGpuHours(), confirmed ? 0 : 1, mode);
+      store.close();
+      const reopened = new ResearchStore(db);
+      try { assert.equal(reopened.remoteExecutionState(id).confirmed, confirmed, mode); assert.equal(reopened.reservedComputeGpuHours(), confirmed ? 0 : 1, mode); }
+      finally { reopened.close(); }
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Modal reconciliation requires ordered completion evidence for every invocation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-modal-ledger-"));
+  try {
+    for (const mode of ["confirmed", "missing", "duplicate", "reordered", "wrong-receipt", "wrong-exit", "extra-intent", "call-confirmed", "call-mismatched", "call-missing", "call-reused", "spawn-proven", "spawn-receipt", "spawn-wrongcode", "spawn-wrongexit", "spawn-reordered", "spawn-duplicate", "legacy-app-proof"]) {
+      const confirmed = ["call-confirmed", "spawn-proven"].includes(mode);
+      const db = join(root, `${mode}.sqlite`);
+      const store = new ResearchStore(db);
+      const id = `modal-${mode}`;
+      const common = { executor: "modal", experimentId: id, submissionId: "12345678-1234-1234-1234-123456789abc", allocationName: "evidra-12345678-1234-1234-1234-123456789abc" };
+      store.saveExperiment({ id, payload: { id, status: "running", resources: { executor: "modal" } } });
+      store.reserveComputeBudget({ experimentId: id, budgetGpuHours: 1, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+      const intent = { ...common, phase: "submitting" };
+      const receipt = { ...common, phase: "submitted", completionEvidence: mode === "wrong-receipt" ? "unverified" : "client-envelope" };
+      const terminal = { ...common, phase: "terminal", completionEvidence: "client-envelope", state: "COMPLETED", exitCode: mode === "wrong-exit" ? 256 : 7 };
+      if (mode === "legacy-app-proof") Object.assign(terminal, { appId: "ap-owned", appState: "STOPPED", runningTasks: 0 });
+      if (mode.startsWith("call-")) {
+        intent.protocol = receipt.protocol = terminal.protocol = "modal-call-v1";
+        if (mode !== "call-missing") receipt.callId = "fc-owned";
+        terminal.callId = mode === "call-mismatched" ? "fc-other" : "fc-owned";
+        if (mode === "call-confirmed") Object.assign(terminal, { appId: "ap-owned", appState: "STOPPED", runningTasks: 0 });
+      }
+      if (mode.startsWith("spawn-")) {
+        intent.protocol = terminal.protocol = "modal-call-v1";
+        terminal.state = "NOT_STARTED";
+        terminal.completionEvidence = "spawn-error";
+        terminal.exitCode = mode === "spawn-wrongexit" ? 0 : 127;
+        terminal.spawnErrorCode = mode === "spawn-wrongcode" ? "ECONNRESET" : "ENOENT";
+      }
+      const records = mode === "missing" ? [intent] : mode === "reordered" ? [terminal, intent, receipt] : mode === "spawn-reordered" ? [terminal, intent] : mode.startsWith("spawn-") && mode !== "spawn-receipt" ? [intent, terminal] : [intent, receipt, terminal];
+      if (mode === "duplicate") records.push(terminal);
+      if (mode === "spawn-duplicate") records.push(terminal);
+      if (mode === "extra-intent") records.push({ ...intent, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" });
+      if (mode === "call-reused") records.push(...[intent, receipt, terminal].map((event) => ({ ...event, submissionId: "aaaaaaaa-1234-1234-1234-123456789abc", allocationName: "evidra-aaaaaaaa-1234-1234-1234-123456789abc" })));
+      for (const event of records) store.appendEvent(`run.remote.${event.phase}`, event);
+      store.recoverStaleExperiments(0);
+      store.close();
+      assert.deepEqual(await reconcileRemoteExperiment(db, root, id), { released: confirmed, queried: 0 }, mode);
+      const reopened = new ResearchStore(db);
+      try { assert.equal(reopened.reservedComputeGpuHours(), confirmed ? 0 : 1, mode); }
+      finally { reopened.close(); }
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("container executor command mounts only the isolated worktree", () => {
   const command = containerCommand("docker", "python:3.11-slim", "/tmp/evidra-worktree", ["python", "run.py"]);
   assert.deepEqual(command.slice(0, 4), ["docker", "run", "--rm", "--init"]);
@@ -8537,15 +9976,381 @@ test("container executor command mounts only the isolated worktree", () => {
   assert(command.includes("/tmp/evidra-worktree:/workspace:rw"));
   const imageIndex = command.indexOf("python:3.11-slim");
   assert(imageIndex > 0);
-  assert.equal(command[imageIndex + 1], "python");
-  assert.deepEqual(command.slice(-2), ["python", "run.py"]);
+  assert.equal(command[command.indexOf("--entrypoint") + 1], "python");
+  assert(command.includes("--no-healthcheck"));
+  assert.deepEqual(command.slice(imageIndex + 1), ["run.py"]);
   assert.throws(() => containerCommand("docker", "--privileged", "/tmp/evidra-worktree", ["sh"]), /plain image reference/);
+});
+
+test("container execution preserves declared argv and rejects implicit image commands", () => {
+  const argv = ["/usr/bin/python", "script with spaces.py", "literal; $(echo unexpected)", "", "--flag"];
+  for (const runtime of ["docker", "podman"]) {
+    const command = containerCommand(runtime, "test:latest", "/tmp/worktree", argv);
+    assert.equal(command[command.indexOf("--entrypoint") + 1], argv[0]);
+    assert.deepEqual(command.slice(command.indexOf("test:latest") + 1), argv.slice(1));
+    assert(command.includes("--no-healthcheck"));
+    for (const invalid of [[], [""], [" "], ["--privileged"], ["sh", "bad\0arg"]]) assert.throws(() => containerCommand(runtime, "test:latest", "/tmp/worktree", invalid), /non-empty executable/);
+  }
+});
+
+test("container completion awaits exact daemon cleanup and rejects uncertain outcomes", async () => {
+  const previousPath = process.env.PATH;
+  const previousRuntime = process.env.EVIDRA_CONTAINER_RUNTIME;
+  const previousHost = process.env.DOCKER_HOST;
+  const cid = "a".repeat(64);
+  try {
+    for (const mode of ["completed", "timeout", "interrupted", "removal-failed", "query-failed", "missing-receipt", "receipt-durability-failed", "terminal-durability-failed", "daemon-changed"]) {
+      const root = mkdtempSync(join(tmpdir(), "evidra-container-contract-"));
+      try {
+        const bin = join(root, "bin"); mkdirSync(bin);
+        writeFileSync(join(bin, "docker"), `#!${process.execPath}
+          const fs=require('node:fs'), args=process.argv.slice(2), mode=${JSON.stringify(mode)}, cid=${JSON.stringify(cid)};
+          if(process.env.DOCKER_HOST!=='tcp://test.invalid:2375') process.exit(11);
+          if(args[0]==='info') { console.log(mode==='daemon-changed'&&fs.existsSync('cleanup-completed')?'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee':'dddddddd-dddd-dddd-dddd-dddddddddddd'); }
+          else if(args[0]==='run') {
+            if(!fs.existsSync('intent-persisted')) process.exit(12);
+            if(args.includes('--rm')) process.exit(8);
+            if(mode!=='missing-receipt') fs.writeFileSync(args[args.indexOf('--cidfile')+1],cid);
+            fs.writeFileSync('active',cid);
+            console.log('accuracy=0.9');
+            if(mode==='timeout'||mode==='interrupted') { process.on('SIGTERM',()=>process.exit(0)); setInterval(()=>{},1000); }
+          } else if(args[0]==='rm') {
+            if(mode!=='missing-receipt' && args.at(-1)!==cid) process.exit(9);
+            if(!args.includes('--volumes')) process.exit(10);
+            if(mode==='removal-failed') process.exit(2);
+            setTimeout(()=>{fs.rmSync('active',{force:true});fs.writeFileSync('cleanup-completed','yes');},80);
+          } else if(args[0]==='ps') {
+            if(mode==='query-failed') process.exit(2);
+            if(fs.existsSync('active')) console.log(cid);
+          }
+        `, { mode: 0o755 });
+        process.env.PATH = `${bin}:${previousPath ?? ""}`;
+        process.env.EVIDRA_CONTAINER_RUNTIME = "docker";
+        process.env.DOCKER_HOST = "tcp://test.invalid:2375";
+        const manifest = { id: "container-contract", resources: { executor: "container", image: "test:latest", timeoutMinutes: mode === "timeout" ? 0.004 : 1 }, evaluation: { requiredArtifacts: [] } };
+        const db = join(root, "state.sqlite");
+        const store = new ResearchStore(db);
+        store.saveExperiment({ id: manifest.id, payload: { ...manifest, status: "running" } });
+        store.reserveComputeBudget({ experimentId: manifest.id, budgetGpuHours: 10, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" });
+        store.close();
+        const result = await new ContainerExecutor(root, (event) => {
+          if (mode === "receipt-durability-failed" && event.phase === "submitted") throw undefined;
+          if (mode === "terminal-durability-failed" && event.phase === "terminal") throw new Error("ledger unavailable");
+          recordRemoteExecution(db, event);
+          if (event.phase === "submitting") writeFileSync(join(root, "intent-persisted"), "durable");
+        }).run(manifest, root, ["train"], mode === "interrupted" ? (control) => { setTimeout(() => control.terminate(), 160); } : undefined, "accuracy");
+        assert.equal(result.status, mode === "completed" ? "completed" : "failed");
+        if (mode === "timeout") assert.equal(result.exitCode, 124);
+        if (mode === "interrupted") assert.equal(result.exitCode, 130);
+        if (["removal-failed", "query-failed", "missing-receipt", "daemon-changed"].includes(mode)) {
+          assert.equal(result.failureClass, "unknown");
+          assert.match(result.stderr, /termination is unconfirmed/);
+        } else {
+          assert.equal(existsSync(join(root, "active")), false);
+          assert.equal(existsSync(join(root, "cleanup-completed")), true);
+          assert.ok(result.durationSeconds >= 0.08);
+        }
+        const reopened = new ResearchStore(db);
+        const confirmed = ["completed", "timeout", "interrupted"].includes(mode);
+        assert.equal(reopened.remoteExecutionState(manifest.id).confirmed, confirmed);
+        reopened.saveExperiment({ id: manifest.id, payload: { ...manifest, status: result.status } });
+        assert.equal(reopened.reservedComputeGpuHours(), confirmed ? 0 : 2);
+        assert.equal(reopened.experiments()[0].payload.status, confirmed ? result.status : "blocked");
+        assert.equal(reopened.verifyEventChain().status, "valid");
+        reopened.close();
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    }
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+    if (previousHost === undefined) delete process.env.DOCKER_HOST; else process.env.DOCKER_HOST = previousHost;
+    if (previousRuntime === undefined) delete process.env.EVIDRA_CONTAINER_RUNTIME; else process.env.EVIDRA_CONTAINER_RUNTIME = previousRuntime;
+  }
+});
+
+test("container launch refuses missing durability and retains identity after controller SIGKILL", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-container-crash-"));
+  const bin = join(root, "bin"); mkdirSync(bin);
+  const db = join(root, "state.sqlite");
+  try {
+    writeFileSync(join(bin, "docker"), `#!${process.execPath}
+      const fs=require('node:fs'), args=process.argv.slice(2);
+      if(args[0]==='info') { console.log('dddddddd-dddd-dddd-dddd-dddddddddddd'); }
+      else if(args[0]==='run') {
+        const receipt=args[args.indexOf('--cidfile')+1];
+        fs.writeFileSync(receipt,'b'.repeat(64));
+        fs.writeFileSync('daemon-worker',JSON.stringify({name:args[args.indexOf('--name')+1],receipt}));
+        process.kill(process.ppid,'SIGKILL');
+      }
+    `, { mode: 0o755 });
+    const imports = `
+      import { ContainerExecutor } from ${JSON.stringify(new URL("../dist/core/executors.js", import.meta.url).href)};
+      import { ResearchStore } from ${JSON.stringify(new URL("../dist/core/store.js", import.meta.url).href)};
+      import { recordRemoteExecution } from ${JSON.stringify(new URL("../dist/core/execution-heartbeat.js", import.meta.url).href)};
+      const root=${JSON.stringify(root)}, db=${JSON.stringify(db)};
+      const manifest={id:'crash',resources:{executor:'container',image:'test:latest',timeoutMinutes:1},evaluation:{requiredArtifacts:[]}};
+    `;
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, EVIDRA_CONTAINER_RUNTIME: "docker" };
+    const refused = spawnSync(process.execPath, ["--input-type=module", "-e", imports + `
+      try { await new ContainerExecutor(root,()=>{throw new Error('ledger unavailable')}).run(manifest,root,['train']); process.exit(9); }
+      catch(error) { if(!String(error).includes('ledger unavailable')) process.exit(8); }
+    `], { cwd: root, env, encoding: "utf8", timeout: 10_000 });
+    assert.equal(refused.status, 0, refused.stderr);
+    assert.equal(existsSync(join(root, "daemon-worker")), false);
+    const crashed = spawnSync(process.execPath, ["--input-type=module", "-e", imports + `
+      const store=new ResearchStore(db);
+      store.saveExperiment({id:manifest.id,payload:{...manifest,status:'running'}});
+      store.reserveComputeBudget({experimentId:manifest.id,budgetGpuHours:10,usedGpuHours:0,requestedGpuHours:2,gpu:'A100'});
+      store.close();
+      await new ContainerExecutor(root,event=>recordRemoteExecution(db,event)).run(manifest,root,['train']);
+    `], { cwd: root, env, encoding: "utf8", timeout: 10_000 });
+    assert.equal(crashed.signal, "SIGKILL", crashed.stderr);
+    const worker = JSON.parse(readFileSync(join(root, "daemon-worker"), "utf8"));
+    const reopened = new ResearchStore(db);
+    const intent = reopened.eventsByType("run.remote.submitting")[0].payload;
+    assert.equal(intent.executor, "container");
+    assert.equal(intent.runtime, "docker");
+    assert.equal(intent.allocationName, worker.name);
+    assert.equal(intent.allocationName, `evidra-${intent.submissionId}`);
+    assert.equal(reopened.eventsByType("run.remote.terminal").length, 0);
+    reopened.recoverStaleExperiments(0);
+    assert.equal(reopened.reservedComputeGpuHours(), 2);
+    assert.equal(reopened.experiments()[0].payload.status, "blocked");
+    assert.equal(reopened.reconcileRemoteExperiment("crash"), false);
+    assert.throws(() => reopened.saveExperiment({id:'crash',payload:{...reopened.experiments()[0].payload,status:'running'}}), /remote reconciliation/);
+    assert.equal(reopened.verifyEventChain().status, "valid");
+    reopened.close();
+    rmSync(join(worker.receipt, ".."), { recursive: true, force: true });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("container reconciliation requires ordered matching cleanup evidence and never validates measurements", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-container-proof-"));
+  const db = join(root, "state.sqlite");
+  try {
+    const store = new ResearchStore(db);
+    const common = { executor: "container", experimentId: "proof", submissionId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", allocationName: "evidra-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", runtime: "docker", at: new Date().toISOString() };
+    const intent = { ...common, phase: "submitting" };
+    const receipt = { ...common, phase: "submitted", containerId: "b".repeat(64) };
+    const terminal = { ...receipt, phase: "terminal", state: "REMOVED", exitCode: 0 };
+    const originalPrepare = store.db.prepare;
+    store.db.prepare = function(sql) {
+      if (sql.includes("json_extract(payload_json, '$.experimentId')")) throw new Error("simulate SQLite without JSON1");
+      return originalPrepare.call(this, sql);
+    };
+    const invalid = [
+      [intent, receipt], [receipt, intent, terminal], [intent, terminal, receipt],
+      [intent, receipt, { ...terminal, containerId: "c".repeat(64) }],
+      [intent, receipt, { ...terminal, runtime: "podman" }],
+      [intent, receipt, { ...terminal, executor: "slurm" }],
+      [intent, receipt, { ...terminal, state: "RUNNING" }],
+      [intent, receipt, { ...terminal, exitCode: 1 }],
+      [intent, { ...receipt, containerId: "short" }, { ...terminal, containerId: "short" }],
+      [intent, receipt, terminal, terminal],
+    ];
+    for (const [index, ledger] of invalid.entries()) {
+      const id = `invalid-${index}`;
+      store.saveExperiment({ id, payload: { id, status: "running", resources: { executor: "container" } } });
+      store.reserveComputeBudget({ experimentId: id, budgetGpuHours: 100, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+      for (const event of ledger) store.appendEvent(`run.remote.${event.phase}`, { ...event, experimentId: id });
+      store.recoverStaleExperiments(0);
+      assert.equal(store.remoteExecutionState(id).confirmed, false);
+      assert.equal(store.reconcileRemoteExperiment(id), false);
+      assert.equal(store.releaseComputeReservation(id), false);
+    }
+    store.db.prepare = originalPrepare;
+    store.saveExperiment({ id: "proof", payload: { id: "proof", status: "running", resources: { executor: "container" } } });
+    store.reserveComputeBudget({ experimentId: "proof", budgetGpuHours: 100, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" });
+    store.appendEvent("run.remote.submitting", { ...common, phase: "submitting" });
+    const receiptEvidence = { ...common, containerId: "b".repeat(64) };
+    assert.equal(store.recordContainerReceiptEvidence(receiptEvidence), true);
+    assert.equal(store.recordContainerReceiptEvidence(receiptEvidence), true);
+    assert.equal(store.recordContainerReceiptEvidence({ ...receiptEvidence, containerId: "c".repeat(64) }), false);
+    store.recoverStaleExperiments(0);
+    assert.equal(store.reconcileRemoteExperiment("proof"), false);
+    const proof = { ...common, containerId: "b".repeat(64), state: "REMOVED", exitCode: 0 };
+    assert.equal(store.recordContainerTerminalEvidence(proof), true);
+    assert.equal(store.recordContainerTerminalEvidence(proof), true);
+    assert.equal(store.recordContainerTerminalEvidence({ ...proof, containerId: "c".repeat(64) }), false);
+    assert.equal(store.eventsByType("run.remote.terminal").filter((event) => event.payload.experimentId === "proof").length, 1);
+    store.close();
+    assert.deepEqual(await reconcileRemoteExperiment(db, root, "proof"), { released: true, queried: 0 });
+    const reopened = new ResearchStore(db);
+    assert.equal(reopened.reservedComputeGpuHours(), invalid.length);
+    assert.equal(reopened.experiments().find((entry) => entry.id === "proof").payload.status, "failed");
+    assert.equal(reopened.experiments().find((entry) => entry.id === "proof").payload.remoteReconciliationRequired, false);
+    assert.equal(reopened.runs().length, 0);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Docker refuses launch when daemon identity is missing or malformed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-docker-preflight-"));
+  const bin = join(root, "bin"); mkdirSync(bin);
+  const previousPath = process.env.PATH, previousRuntime = process.env.EVIDRA_CONTAINER_RUNTIME;
+  try {
+    process.env.PATH = `${bin}:${previousPath ?? ""}`; process.env.EVIDRA_CONTAINER_RUNTIME = "docker";
+    for (const response of ["process.exit(1)", "console.log('')", "console.log('bad identity with spaces')"]) {
+      writeFileSync(join(bin, "docker"), `#!${process.execPath}
+        const fs=require('node:fs'); if(process.argv[2]==='info'){${response};}else{fs.writeFileSync('launched','yes');}
+      `, { mode: 0o755 });
+      const events = [];
+      const result = await new ContainerExecutor(root, (event) => events.push(event)).run({id:'preflight',resources:{executor:'container',image:'test:latest',timeoutMinutes:1}},root,['train']);
+      assert.equal(result.exitCode, 127);
+      assert.match(result.stderr, /daemon identity.*launch refused/);
+      assert.equal(existsSync(join(root, "launched")), false);
+      assert.deepEqual(events, []);
+    }
+  } finally {
+    if(previousPath===undefined)delete process.env.PATH;else process.env.PATH=previousPath;
+    if(previousRuntime===undefined)delete process.env.EVIDRA_CONTAINER_RUNTIME;else process.env.EVIDRA_CONTAINER_RUNTIME=previousRuntime;
+    rmSync(root,{recursive:true,force:true});
+  }
+});
+
+test("Docker recovery checks daemon identity and exact terminal worker evidence", async () => {
+  const previousPath = process.env.PATH;
+  const daemonId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+  const submissionId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const allocationName = `evidra-${submissionId}`;
+  const cid = "b".repeat(64);
+  const modes = ["exited", "no-receipt", "removed", "running", "wrong-name", "wrong-label", "wrong-id", "restart-enabled", "before-wrong-daemon", "after-wrong-daemon", "query-failed", "malformed", "ambiguous-missing-receipt", "legacy", "duplicate", "timeout", "interrupted", "reordered"];
+  try {
+    for (const mode of modes) {
+      const root = mkdtempSync(join(tmpdir(), "evidra-docker-query-"));
+      const bin = join(root, "bin"); mkdirSync(bin);
+      const db = join(root, "state.sqlite");
+      try {
+        const state = { Status: mode === "running" ? "running" : "exited", Running: mode === "running", Restarting: false, Paused: false, Pid: mode === "running" ? 123 : 0, ExitCode: 7 };
+        const inspection = [mode === "wrong-id" ? "c".repeat(64) : cid, mode === "wrong-name" ? "/other" : `/${allocationName}`, { "org.evidra.allocation": mode === "wrong-label" ? "other" : allocationName }, state, mode === "restart-enabled" ? "always" : "no"];
+        writeFileSync(join(bin, "docker"), `#!${process.execPath}
+          const fs=require('node:fs'),args=process.argv.slice(2),mode=${JSON.stringify(mode)};
+          fs.appendFileSync('queries',JSON.stringify(args)+'\\n');
+          if(args[0]==='info') {
+            const count=fs.existsSync('info-count')?Number(fs.readFileSync('info-count','utf8')):0;
+            fs.writeFileSync('info-count',String(count+1));
+            if(mode==='interrupted') process.exit(130);
+            if(mode==='timeout') {setInterval(()=>{},1000);}
+            else console.log(mode==='before-wrong-daemon'||mode==='after-wrong-daemon'&&count>0?'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee':${JSON.stringify(daemonId)});
+          } else if(args[0]==='inspect') {
+            if(mode==='query-failed'||mode==='removed'||mode==='ambiguous-missing-receipt') process.exit(1);
+            if(mode==='malformed') console.log('not JSON');
+            else console.log(${JSON.stringify(JSON.stringify(inspection))});
+          } else if(args[0]==='ps') {if(mode==='query-failed') process.exit(1);}
+          else process.exit(9);
+        `, { mode: 0o755 });
+        process.env.PATH = `${bin}:${previousPath ?? ""}`;
+        const store = new ResearchStore(db);
+        store.saveExperiment({ id: "recovery", payload: { id: "recovery", status: "running", resources: { executor: "container" } } });
+        store.reserveComputeBudget({ experimentId: "recovery", budgetGpuHours: 10, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" });
+        const common = { executor: "container", experimentId: "recovery", submissionId, allocationName, runtime: "docker", ...(mode === "legacy" ? {} : { daemonId }), at: new Date().toISOString() };
+        const intent = { ...common, phase: "submitting" }, receipt = { ...common, phase: "submitted", containerId: cid };
+        if (mode === "reordered") store.appendEvent("run.remote.submitted", receipt);
+        store.appendEvent("run.remote.submitting", intent);
+        if (!["no-receipt", "ambiguous-missing-receipt", "reordered"].includes(mode)) store.appendEvent("run.remote.submitted", receipt);
+        if (mode === "duplicate") store.appendEvent("run.remote.submitting", intent);
+        store.recoverStaleExperiments(0); store.close();
+        const result = await reconcileRemoteExperiment(db, root, "recovery", { timeoutMs: mode === "timeout" ? 25 : 5000 });
+        const released = ["exited", "no-receipt", "removed"].includes(mode);
+        assert.equal(result.released, released, mode);
+        const reopened = new ResearchStore(db);
+        assert.equal(reopened.reservedComputeGpuHours(), released ? 0 : 2, mode);
+        assert.equal(reopened.experiments()[0].payload.status, released ? "failed" : "blocked", mode);
+        assert.equal(reopened.runs().length, 0);
+        if (released) {
+          const proof = reopened.eventsByType("run.remote.terminal")[0].payload;
+          assert.equal(proof.daemonId, daemonId);
+          assert.equal(proof.containerId, cid);
+          assert.equal(proof.state, mode === "removed" ? "REMOVED" : "EXITED");
+          assert.equal(proof.exitCode, mode === "removed" ? 0 : 7);
+          assert.deepEqual(await reconcileRemoteExperiment(db, root, "recovery"), { released: false, queried: 0 });
+        } else assert.equal(reopened.eventsByType("run.remote.terminal").length, 0, mode);
+        assert.equal(reopened.verifyEventChain().status, "valid"); reopened.close();
+        if (existsSync(join(root, "queries"))) assert.doesNotMatch(readFileSync(join(root, "queries"), "utf8"), /"run"|"rm"|"stop"|"kill"/);
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    }
+  } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
+});
+
+test("explicit Docker orphan cancellation requires durable ownership and verified removal", async () => {
+  const previousPath = process.env.PATH;
+  const daemonId = "dddddddd-dddd-dddd-dddd-dddddddddddd", submissionId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", cid = "b".repeat(64);
+  const allocationName = `evidra-${submissionId}`;
+  const modes = ["known", "adopt", "wrong-daemon", "changed-before-removal", "changed-after-removal", "wrong-name", "wrong-label", "wrong-id", "removal-failed", "nonempty-query", "query-failed", "timeout", "interrupted", "missing-worker", "receipt-write-failed", "intent-write-failed"];
+  const originalReceipt = ResearchStore.prototype.recordContainerReceiptEvidence;
+  const originalAppend = ResearchStore.prototype.appendEvent;
+  try {
+    for (const mode of modes) {
+      const root = mkdtempSync(join(tmpdir(), "evidra-docker-cancel-")), bin = join(root, "bin"), db = join(root, "state.sqlite"); mkdirSync(bin);
+      try {
+        const snapshot = [mode === "wrong-id" ? "c".repeat(64) : cid, mode === "wrong-name" ? "/other" : `/${allocationName}`, { "org.evidra.allocation": mode === "wrong-label" ? "other" : allocationName }, { Status: "running", Running: true, Pid: 123 }, "no"];
+        writeFileSync(join(bin, "docker"), `#!${process.execPath}
+          const fs=require('node:fs'), args=process.argv.slice(2),mode=${JSON.stringify(mode)},cid=${JSON.stringify(cid)};
+          fs.appendFileSync('commands',JSON.stringify(args)+'\\n');
+          if(args[0]==='info') {
+            const count=fs.existsSync('info-count')?Number(fs.readFileSync('info-count','utf8')):0;fs.writeFileSync('info-count',String(count+1));
+            console.log(mode==='wrong-daemon'||mode==='changed-before-removal'&&count>0||mode==='changed-after-removal'&&count>1?'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee':${JSON.stringify(daemonId)});
+          }else if(args[0]==='inspect') {
+            if(mode==='missing-worker')process.exit(1);
+            console.log(${JSON.stringify(JSON.stringify(snapshot))});
+          }else if(args[0]==='rm') {
+            if(JSON.stringify(args)!==JSON.stringify(['rm','--force','--volumes',cid]))process.exit(9);
+            const Database=require(${JSON.stringify(join(process.cwd(), "node_modules", "better-sqlite3"))});
+            const database=new Database('state.sqlite',{readonly:true});
+            const records=database.prepare("SELECT type,payload_json FROM events WHERE type IN ('run.remote.submitted','run.remote.cleanup.requested') ORDER BY id").all();database.close();
+            if(records.length!==2||records.some(record=>JSON.parse(record.payload_json).containerId!==cid))process.exit(8);
+            fs.writeFileSync('removal-requested','yes');
+            if(mode==='timeout'){setInterval(()=>{},1000);}
+            else if(mode==='interrupted')process.exit(130);
+            else if(mode==='removal-failed')process.exit(2);
+            else fs.writeFileSync('removed','yes');
+          }else if(args[0]==='ps') {
+            if(mode==='query-failed')process.exit(2);
+            if(mode==='nonempty-query'||!fs.existsSync('removed'))console.log(cid);
+          }else process.exit(9);
+        `, { mode: 0o755 });
+        process.env.PATH = `${bin}:${previousPath ?? ""}`;
+        const store = new ResearchStore(db);
+        store.saveExperiment({ id: "cancel", payload: { id: "cancel", status: "running", resources: { executor: "container" } } });
+        store.reserveComputeBudget({ experimentId: "cancel", budgetGpuHours: 10, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" });
+        const common = { executor: "container", experimentId: "cancel", submissionId, allocationName, runtime: "docker", daemonId, at: new Date().toISOString() };
+        store.appendEvent("run.remote.submitting", { ...common, phase: "submitting" });
+        if (!["adopt", "missing-worker", "receipt-write-failed"].includes(mode)) store.appendEvent("run.remote.submitted", { ...common, phase: "submitted", containerId: cid });
+        store.recoverStaleExperiments(0); store.close();
+        if (mode === "receipt-write-failed") ResearchStore.prototype.recordContainerReceiptEvidence = () => { throw new Error("database unavailable"); };
+        if (mode === "intent-write-failed") ResearchStore.prototype.appendEvent = function(type, payload) { if (type === "run.remote.cleanup.requested") throw new Error("database unavailable"); return originalAppend.call(this, type, payload); };
+        const result = await reconcileRemoteExperiment(db, root, "cancel", { cancelContainer: true, timeoutMs: mode === "timeout" ? 1500 : 5000 });
+        ResearchStore.prototype.recordContainerReceiptEvidence = originalReceipt; ResearchStore.prototype.appendEvent = originalAppend;
+        const released = ["known", "adopt"].includes(mode);
+        assert.equal(result.released, released, mode);
+        const reopened = new ResearchStore(db);
+        assert.equal(reopened.reservedComputeGpuHours(), released ? 0 : 2, mode);
+        assert.equal(reopened.experiments()[0].payload.status, released ? "failed" : "blocked", mode);
+        assert.equal(reopened.runs().length, 0);
+        if (released) {
+          const proof = reopened.eventsByType("run.remote.terminal")[0].payload;
+          assert.equal(proof.containerId, cid); assert.equal(proof.state, "REMOVED");
+          assert.equal(reopened.eventsByType("run.remote.submitted").length, 1);
+          const request = reopened.eventsByType("run.remote.cleanup.requested")[0].payload, observed = reopened.eventsByType("run.remote.cleanup.observed")[0].payload;
+          assert.equal(request.requestId, observed.requestId); assert.equal(observed.verifiedAbsent, true);
+          assert.equal(observed.exitCode, 0);
+        } else assert.equal(reopened.eventsByType("run.remote.terminal").length, 0, mode);
+        assert.equal(reopened.verifyEventChain().status, "valid"); reopened.close();
+        const removalExpected = ["known", "adopt", "changed-after-removal", "removal-failed", "nonempty-query", "query-failed", "timeout", "interrupted"].includes(mode);
+        assert.equal(existsSync(join(root, "removal-requested")), removalExpected, mode);
+        assert.doesNotMatch(readFileSync(join(root, "commands"), "utf8"), /"run"|"stop"|"kill"/);
+      } finally {
+        ResearchStore.prototype.recordContainerReceiptEvidence = originalReceipt; ResearchStore.prototype.appendEvent = originalAppend;
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }
 });
 
 test("Slurm executor command preserves argv boundaries and declared resources", () => {
   const command = slurmCommand("exp with spaces", "/tmp/evidra-worktree", ["python", "train.py", "--name", "O'Reilly"], "/tmp/out.log", "/tmp/err.log", 12.4, "A100:1");
   assert.equal(command[0], "sbatch");
   assert(command.includes("--parsable"));
+  assert(command.includes("--no-requeue"), "only the controller owns bounded retry decisions");
   assert(command.includes("--chdir"));
   assert(command.includes("/tmp/evidra-worktree"));
   assert(command.includes("--gres"));
@@ -8553,6 +10358,290 @@ test("Slurm executor command preserves argv boundaries and declared resources", 
   assert.equal(command.at(-1), "exec 'python' 'train.py' '--name' 'O'\\''Reilly'");
   assert(command.includes("--time"));
   assert(command.includes("13"));
+});
+
+test("Slurm accounting requires the exact allocation, terminal state, and zero status/signal", () => {
+  assert.deepEqual(parseSlurmAccounting("123.batch|COMPLETED|0:0\n123|FAILED|7:0\n", "123"), { state: "FAILED", exitCode: 7, terminal: true });
+  for (const [state, code, expected] of [["COMPLETED", "0:0", 0], ["COMPLETED", "3:0", 3], ["COMPLETED", "0:9", 137], ["TIMEOUT", "0:15", 124], ["CANCELLED by 1000", "0:15", 130], ["FAILED", "0:0", 1]]) {
+    assert.equal(parseSlurmAccounting(`123|${state}|${code}\n`, "123").exitCode, expected);
+  }
+  for (const output of ["123.batch|COMPLETED|0:0", "123|RUNNING|0:0", "123|COMPLETED|invalid", "123|COMPLETED|0:0\n123|FAILED|1:0"]) {
+    assert.equal(parseSlurmAccounting(output, "123").terminal, false);
+    assert.notEqual(parseSlurmAccounting(output, "123").exitCode, 0);
+  }
+});
+
+async function withFakeSlurm(scripts, execute) {
+  const root = mkdtempSync(join(tmpdir(), "evidra-slurm-contract-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  const previousPath = process.env.PATH;
+  try {
+    for (const [name, script] of Object.entries(scripts)) {
+      const metadata = name === "sbatch"
+        ? "require('node:fs').writeFileSync('allocation-name', process.argv[process.argv.indexOf('--job-name')+1]);"
+        : name === "sacct" ? "const originalLog=console.log; console.log=(line)=>{ const value=String(line); originalLog(/^\\d+\\|[^|]+\\|[^|]+$/.test(value) ? value+'|'+require('node:fs').readFileSync('allocation-name','utf8') : value); };" : "";
+      writeFileSync(join(bin, name), `#!${process.execPath}\n${metadata}\n${script}\n`, { mode: 0o755 });
+    }
+    process.env.PATH = `${bin}:${previousPath ?? ""}`;
+    const manifest = { id: "slurm-contract", resources: { executor: "slurm", timeoutMinutes: 1 }, evaluation: { requiredArtifacts: [] } };
+    await execute({ root, manifest, executor: new SlurmExecutor(root) });
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const slurmReceipt = "console.log('123')";
+const slurmQueueEmpty = "process.exit(0)";
+
+test("post-restart Slurm queries release only the exact terminal allocation identity", async () => {
+  const submissionId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const allocationName = `evidra-${submissionId}`;
+  const cases = [
+    { output: `123|COMPLETED|0:0|${allocationName}`, released: true },
+    { output: `123|FAILED|7:0|${allocationName}`, released: true },
+    { output: `123|RUNNING|0:0|${allocationName}`, released: false },
+    { output: "123|COMPLETED|0:0|different-allocation", released: false },
+    { output: `123|COMPLETED|0:0|${allocationName}\n123|RUNNING|0:0|${allocationName}`, released: false },
+    { output: `123|COMPLETED|0:0|${allocationName}\n123|RUNNING|0:0|other-allocation`, released: true },
+    { output: "", released: false },
+    { output: `123|COMPLETED|0:0|${allocationName}`, exitCode: 2, released: false },
+    { output: `123|COMPLETED|0:0|${allocationName}`, receipt: false, released: false, queried: 0 },
+    { output: `123|COMPLETED|0:0|${allocationName}`, legacy: true, released: false, queried: 0 },
+    { output: "", stalled: true, released: false },
+  ];
+  for (const scenario of cases) {
+    await withFakeSlurm({ sacct: scenario.stalled ? "setInterval(()=>{},1000);" : `const args=process.argv.slice(2); if(args[args.indexOf('--clusters')+1]!=='east' || !args.includes('--duplicates') || !args.includes('--starttime')) process.exit(9); console.log(${JSON.stringify(scenario.output)}); process.exit(${scenario.exitCode ?? 0});` }, async ({ root, manifest }) => {
+      const db = join(root, "state.sqlite");
+      const store = new ResearchStore(db);
+      const payload = { ...manifest, status: "running" };
+      store.saveExperiment({ id: manifest.id, payload });
+      store.reserveComputeBudget({ experimentId: manifest.id, budgetGpuHours: 4, usedGpuHours: 0, requestedGpuHours: 3, gpu: "A100" });
+      const event = { executor: "slurm", experimentId: manifest.id, submissionId, ...(scenario.legacy ? {} : { allocationName }), at: new Date().toISOString() };
+      store.appendEvent("run.remote.submitting", { ...event, phase: "submitting" });
+      if (scenario.receipt !== false) store.appendEvent("run.remote.submitted", { ...event, phase: "submitted", jobId: "123", cluster: "east" });
+      store.saveExperiment({ id: manifest.id, payload: { ...payload, status: "failed" } });
+      store.close();
+      const result = await reconcileSlurmExperiment(db, root, manifest.id, scenario.stalled ? { timeoutMs: 50 } : {});
+      assert.deepEqual(result, { released: scenario.released, queried: scenario.queried ?? 1 });
+      const reopened = new ResearchStore(db);
+      assert.equal(reopened.reservedComputeGpuHours(), scenario.released ? 0 : 3);
+      assert.equal(reopened.experiments()[0].payload.status, scenario.released ? "failed" : "blocked");
+      assert.equal(reopened.eventsByType("run.remote.terminal").length, scenario.released ? 1 : 0);
+      if (scenario.released) {
+        const proof = reopened.eventsByType("run.remote.terminal")[0].payload;
+        assert.equal(reopened.recordRemoteTerminalEvidence(proof), true);
+        recordRemoteExecution(db, proof);
+        assert.equal(reopened.eventsByType("run.remote.terminal").length, 1);
+      }
+      assert.equal(reopened.verifyEventChain().status, "valid");
+      reopened.close();
+    });
+  }
+});
+
+test("Slurm allocation ledger persists intent before submission and gates restart reconciliation", async () => {
+  for (const accounting of ["123|COMPLETED|0:0", "123|RUNNING|0:0"]) {
+    await withFakeSlurm({
+      sbatch: "if (!require('node:fs').existsSync('intent-persisted')) process.exit(9); console.log('123;gpu-east');",
+      squeue: slurmQueueEmpty, sacct: `console.log(${JSON.stringify(accounting)})`,
+    }, async ({ root, manifest }) => {
+      const db = join(root, "state.sqlite");
+      const store = new ResearchStore(db);
+      store.saveExperiment({ id: manifest.id, payload: { ...manifest, status: "running" } });
+      store.reserveComputeBudget({ experimentId: manifest.id, budgetGpuHours: 10, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" });
+      store.close();
+      const executor = new SlurmExecutor(root, (event) => {
+        recordRemoteExecution(db, event);
+        if (event.phase === "submitting") writeFileSync(join(root, "intent-persisted"), "durable");
+      });
+      await executor.run(manifest, root, ["train"]);
+      const reopened = new ResearchStore(db);
+      const intent = reopened.eventsByType("run.remote.submitting")[0].payload;
+      const receipt = reopened.eventsByType("run.remote.submitted")[0].payload;
+      assert.equal(receipt.submissionId, intent.submissionId);
+      assert.equal(receipt.jobId, "123");
+      assert.equal(receipt.cluster, "gpu-east");
+      reopened.recoverStaleExperiments(0);
+      assert.equal(reopened.reconcileRemoteExperiment(manifest.id), accounting.includes("COMPLETED"));
+      const payload = reopened.experiments()[0].payload;
+      assert.equal(payload.status, accounting.includes("COMPLETED") ? "failed" : "blocked");
+      assert.equal(reopened.reservedComputeGpuHours(), accounting.includes("COMPLETED") ? 0 : 2);
+      if (accounting.includes("COMPLETED")) assert.equal(payload.remoteReconciliationRequired, false);
+      else assert.equal(reopened.eventsByType("run.remote.terminal").length, 0);
+      assert.equal(reopened.verifyEventChain().status, "valid");
+      reopened.close();
+    });
+  }
+});
+
+test("Slurm does not launch when submission intent cannot be persisted", async () => {
+  await withFakeSlurm({ sbatch: "require('node:fs').writeFileSync('launched','yes'); console.log('123');" }, async ({ root, manifest }) => {
+    const executor = new SlurmExecutor(root, () => { throw new Error("ledger unavailable"); });
+    await assert.rejects(() => executor.run(manifest, root, ["train"]), /ledger unavailable/);
+    assert.equal(existsSync(join(root, "launched")), false);
+  });
+});
+
+test("remote reconciliation rejects partial and contradictory allocation ledgers", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-ledger-gates-"));
+  try {
+    const store = new ResearchStore(join(root, "state.sqlite"));
+    const valid = [
+      { phase: "submitting" },
+      { phase: "submitted", jobId: "123", cluster: "east" },
+      { phase: "terminal", jobId: "123", cluster: "east", state: "FAILED", exitCode: 7 },
+    ];
+    const ledgers = [
+      valid.slice(1), valid.slice(0, 2),
+      [valid[0], valid[1], { ...valid[2], jobId: "456" }],
+      [valid[0], valid[1], { ...valid[2], cluster: "west" }],
+      [valid[0], valid[1], { ...valid[2], state: "RUNNING" }],
+      [...valid, valid[2]], [...valid, { phase: "submitting", submissionId: "unconfirmed" }],
+      [valid[1], valid[0], valid[2]], [valid[0], valid[2], valid[1]],
+      [valid[2], valid[1], valid[0]],
+      [valid[0], { ...valid[1], cluster: "--unsafe" }, { ...valid[2], cluster: "--unsafe" }],
+    ];
+    for (const [index, ledger] of ledgers.entries()) {
+      const id = `uncertain-${index}`;
+      store.saveExperiment({ id, payload: { id, status: "running", resources: { executor: "slurm" } } });
+      store.reserveComputeBudget({ experimentId: id, budgetGpuHours: 20, usedGpuHours: 0, requestedGpuHours: 1, gpu: "A100" });
+      for (const event of ledger) store.appendEvent(`run.remote.${event.phase}`, { executor: "slurm", experimentId: id, submissionId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", allocationName: "evidra-bbbbbbbb-bbbb-bbbb-bbbbbbbbbbbb", at: new Date().toISOString(), ...event });
+    }
+    store.recoverStaleExperiments(0);
+    for (const index of ledgers.keys()) assert.equal(store.reconcileRemoteExperiment(`uncertain-${index}`), false);
+    assert.equal(store.reservedComputeGpuHours(), ledgers.length);
+    store.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("unconfirmed Slurm outcomes retain compute and reject replay without a controller restart", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-live-remote-fence-"));
+  try {
+    const db = join(root, "state.sqlite");
+    const store = new ResearchStore(db);
+    const payload = { id: "live", status: "running", resources: { executor: "slurm" } };
+    store.saveExperiment({ id: "live", payload });
+    store.reserveComputeBudget({ experimentId: "live", budgetGpuHours: 4, usedGpuHours: 0, requestedGpuHours: 3, gpu: "A100" });
+    const event = { executor: "slurm", experimentId: "live", submissionId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", allocationName: "evidra-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", at: new Date().toISOString() };
+    store.appendEvent("run.remote.submitting", { ...event, phase: "submitting" });
+    store.appendEvent("run.remote.submitted", { ...event, phase: "submitted", jobId: "123", cluster: "east" });
+    assert.equal(store.remoteExecutionState("live").confirmed, false);
+    assert.equal(store.releaseComputeReservation("live"), false);
+    assert.throws(() => store.saveExperiment({ id: "live", payload }), /unconfirmed remote/);
+    assert.throws(() => store.saveExperiment({ id: "live", payload: { ...payload, status: "completed" } }), /unconfirmed remote/);
+    store.saveExperiment({ id: "live", payload: { ...payload, status: "failed" } });
+    assert.equal(store.experiments()[0].payload.status, "blocked");
+    assert.equal(store.experiments()[0].payload.remoteReconciliationRequired, true);
+    assert.equal(store.experiments()[0].payload.remoteOutcomeStatus, "failed");
+    assert.deepEqual(store.reconcileComputeReservations(), []);
+    assert.equal(store.reserveComputeBudget({ experimentId: "other", budgetGpuHours: 4, usedGpuHours: 0, requestedGpuHours: 2, gpu: "A100" }).allowed, false);
+    store.close();
+    const reopened = new ResearchStore(db);
+    assert.equal(reopened.reservedComputeGpuHours(), 3);
+    reopened.appendEvent("run.remote.terminal", { ...event, phase: "terminal", jobId: "123", cluster: "east", state: "CANCELLED", exitCode: 130 });
+    assert.equal(reopened.remoteExecutionState("live").confirmed, true);
+    assert.equal(reopened.reconcileRemoteExperiment("live"), true);
+    assert.equal(reopened.reservedComputeGpuHours(), 0);
+    reopened.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Slurm executor does not promote completed jobs with failed exit status", async () => {
+  await withFakeSlurm({ sbatch: slurmReceipt, squeue: slurmQueueEmpty, sacct: "console.log('123|COMPLETED|7:0')" }, async ({ root, manifest, executor }) => {
+    const result = await executor.run(manifest, root, ["train"]);
+    assert.equal(result.status, "failed");
+    assert.equal(result.exitCode, 7);
+    assert.equal(recoveryPlan(result.failureClass).retry, false);
+    assert.match(result.stderr, /Slurm job 123/);
+  });
+});
+
+test("Slurm executor awaits one cancellation request before collecting accounting", async () => {
+  await withFakeSlurm({
+    sbatch: slurmReceipt,
+    scancel: "require('node:fs').appendFileSync('cancel-requests', 'request\\n'); setTimeout(() => require('node:fs').writeFileSync('cancel-complete','yes'), 150)",
+    sacct: "console.log(require('node:fs').existsSync('cancel-complete') ? '123|CANCELLED|0:15' : '123|RUNNING|0:0')",
+  }, async ({ root, manifest, executor }) => {
+    let registrations = 0;
+    const result = await executor.run(manifest, root, ["train"], (control) => { if (++registrations === 2) { control.terminate(); control.terminate(); } });
+    assert.equal(result.exitCode, 130);
+    assert.match(result.stderr, /Slurm job 123: CANCELLED/);
+    assert.equal(readFileSync(join(root, "cancel-requests"), "utf8").trim(), "request");
+    assert.equal(recoveryPlan(result.failureClass).retry, false);
+  });
+});
+
+test("Slurm executor distinguishes deadline cancellation from operator interruption", async () => {
+  await withFakeSlurm({ sbatch: slurmReceipt, squeue: "console.log('RUNNING')", scancel: "process.exit(0)", sacct: "console.log('123|CANCELLED|0:15')" }, async ({ root, manifest, executor }) => {
+    manifest.resources.timeoutMinutes = 0.004;
+    const result = await executor.run(manifest, root, ["train"]);
+    assert.equal(result.exitCode, 124);
+    assert.equal(result.failureClass, "timeout");
+    assert.match(result.stderr, /Timed out/);
+  });
+});
+
+test("Slurm queue errors trigger cancellation and remain failed evidence", async () => {
+  await withFakeSlurm({ sbatch: slurmReceipt, squeue: "console.error('controller unavailable'); process.exit(2)", scancel: "require('node:fs').writeFileSync('cancel-requested','yes')", sacct: "console.log('123|COMPLETED|0:0')" }, async ({ root, manifest, executor }) => {
+    const result = await executor.run(manifest, root, ["train"]);
+    assert.equal(result.status, "failed");
+    assert.match(result.stderr, /queue query failed.*controller unavailable/);
+    assert.ok(existsSync(join(root, "cancel-requested")));
+    assert.equal(recoveryPlan(result.failureClass).retry, false);
+  });
+});
+
+test("Slurm unconfirmed accounting cannot enter an automatic retry route", async () => {
+  await withFakeSlurm({ sbatch: slurmReceipt, squeue: slurmQueueEmpty, sacct: "console.log('123|RUNNING|0:0')" }, async ({ root, manifest, executor }) => {
+    const result = await executor.run(manifest, root, ["train"]);
+    assert.equal(result.status, "failed");
+    assert.match(result.stderr, /unconfirmed.*reconcile/);
+    assert.equal(result.failureClass, "unknown");
+    assert.equal(recoveryPlan(result.failureClass).retry, false);
+  });
+});
+
+test("Slurm control commands stay on the cluster named by the submission receipt", async () => {
+  const validateCluster = "const args=process.argv.slice(2); if(args[0]!=='--clusters'||args[1]!=='gpu-east') process.exit(2);";
+  await withFakeSlurm({ sbatch: "console.log('123;gpu-east')", squeue: validateCluster, sacct: validateCluster + "console.log('123|COMPLETED|0:0')" }, async ({ root, manifest, executor }) => {
+    const result = await executor.run(manifest, root, ["train"]);
+    assert.equal(result.status, "completed");
+    assert.match(result.stderr, /on gpu-east/);
+  });
+});
+
+test("Slurm log previews reject symlinks to files outside the worktree", async () => {
+  const external = mkdtempSync(join(tmpdir(), "evidra-slurm-private-"));
+  const secret = join(external, "controller.txt");
+  writeFileSync(secret, "private-controller-material");
+  try {
+    await withFakeSlurm({
+      sbatch: `const args=process.argv.slice(2); require('node:fs').symlinkSync(${JSON.stringify(secret)}, args[args.indexOf('--output')+1]); console.log('123');`,
+      squeue: slurmQueueEmpty, sacct: "console.log('123|COMPLETED|0:0')",
+    }, async ({ root, manifest, executor }) => {
+      const result = await executor.run(manifest, root, ["train"]);
+      assert.doesNotMatch(result.stdout, /private-controller-material/);
+      assert.doesNotMatch(result.stderr, /private-controller-material/);
+    });
+  } finally { rmSync(external, { recursive: true, force: true }); }
+});
+
+test("Slurm reads bounded head/tail log evidence instead of loading entire worker files", async () => {
+  await withFakeSlurm({
+    sbatch: "const args=process.argv.slice(2); const path=args[args.indexOf('--output')+1]; const fs=require('node:fs'); fs.writeFileSync(path,'startup-evidence\\n'+'🧪'.repeat(5*1024*1024)+'\\naccuracy=0.9\\n'); console.log('123');",
+    squeue: slurmQueueEmpty, sacct: "console.log('123|COMPLETED|0:0')",
+  }, async ({ root, manifest, executor }) => {
+    const result = await executor.run(manifest, root, ["train"], undefined, "accuracy");
+    assert.equal(result.status, "completed");
+    assert.equal(result.metrics.accuracy, 0.9);
+    assert.ok(Buffer.byteLength(result.stdout) <= 16*1024*1024);
+    assert.match(result.stdout, /^startup-evidence/);
+    assert.match(result.stdout, /output truncated by Evidra/);
+    assert.ok(!result.stdout.includes('\uFFFD'));
+  });
 });
 
 test("paired statistics and recovery are deterministic", () => {
@@ -9338,6 +11427,82 @@ test("SIGINT marks the process result interrupted and kills its detached group",
   assert.match(result.stderr, /Interrupted by Evidra/);
 });
 
+test("explicit cancellation cannot become success through a graceful zero exit", async () => {
+  let control;
+  const script = "process.on('SIGTERM', () => { console.log('accuracy=0.99'); process.exit(0); }); console.log('ready'); setInterval(() => {}, 1000);";
+  const result = await runProcess([process.execPath, "-e", script], process.cwd(), 5_000,
+    (_stream, chunk) => { if (chunk.includes("ready")) control.terminate(); },
+    (value) => { control = value; });
+  assert.equal(result.exitCode, 130);
+  assert.match(result.stderr, /Interrupted by Evidra/);
+  assert.match(result.stdout, /accuracy=0.99/);
+});
+
+test("timeouts drain graceful shutdown output without accepting a zero exit", async () => {
+  const script = "process.on('SIGTERM', () => { console.log('shutdown-evidence'); process.exit(0); }); console.log('ready'); setInterval(() => {}, 1000);";
+  const result = await runProcess([process.execPath, "-e", script], process.cwd(), 500);
+  assert.equal(result.exitCode, 124);
+  assert.match(result.stderr, /Timed out/);
+  assert.match(result.stdout, /shutdown-evidence/);
+});
+
+test("paused worker timeouts resume and reap resistant workers before returning", async () => {
+  let control;
+  let workerPid;
+  let observedPause = false;
+  try {
+    const script = "process.on('SIGTERM', () => console.log('termination-requested')); console.log('ready=' + process.pid); setInterval(() => {}, 1000);";
+    const result = await runProcess([process.execPath, "-e", script], process.cwd(), 500,
+      (_stream, chunk) => {
+        const match = chunk.match(/ready=(\d+)/);
+        if (match) { workerPid = Number(match[1]); control.pause(); observedPause = control.paused; }
+      }, (value) => { control = value; });
+    assert.equal(observedPause, true);
+    assert.equal(result.exitCode, 124);
+    assert.equal(control.paused, false);
+    assert.match(result.stdout, /termination-requested/);
+    assert.throws(() => process.kill(workerPid, 0), "timeout result must wait for worker exit");
+  } finally {
+    if (workerPid) { try { process.kill(workerPid, "SIGKILL"); } catch { /* reaped */ } }
+  }
+});
+
+test("output callback failures reject after reaping the managed worker", async () => {
+  const failure = new Error("observer failed");
+  let workerPid;
+  const listeners = [process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")];
+  await assert.rejects(runProcess([process.execPath, "-e", "console.log(process.pid); setInterval(() => {}, 1000)"], process.cwd(), 5_000,
+    (_stream, chunk) => { workerPid = Number(chunk.trim()); throw failure; }), (error) => error === failure);
+  assert.ok(workerPid > 0);
+  assert.throws(() => process.kill(workerPid, 0));
+  assert.deepEqual([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")], listeners);
+});
+
+test("process registration callback failures clean up signal listeners", async () => {
+  const failure = new Error("registration failed");
+  const listeners = [process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")];
+  await assert.rejects(runProcess([process.execPath, "-e", "setInterval(() => {}, 1000)"], process.cwd(), 5_000,
+    undefined, () => { throw failure; }), (error) => error === failure);
+  assert.deepEqual([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")], listeners);
+});
+
+test("early stopping cannot become success through a graceful zero exit", async () => {
+  const script = "process.on('SIGTERM', () => process.exit(0)); console.log(JSON.stringify({step:1,accuracy:0.1})); setInterval(() => {}, 1000);";
+  const result = await runProcess([process.execPath, "-e", script], process.cwd(), 5_000, undefined, undefined, undefined, {
+    enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 1, patience: 1, minimumImprovement: 0.01,
+    reference: [{ step: 1, metric: 0.9 }],
+  });
+  assert.notEqual(result.exitCode, 0);
+  assert.match(result.stderr, /Early stopped by Evidra/);
+});
+
+test("process capture decodes UTF-8 split across output chunks", async () => {
+  const script = "const value=Buffer.from('evidence: 🧪'); process.stdout.write(value.subarray(0,value.length-2)); setTimeout(() => process.stdout.write(value.subarray(value.length-2)), 50);";
+  const result = await runProcess([process.execPath, "-e", script], process.cwd(), 5_000);
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, "evidence: 🧪");
+});
+
 test("normal process completion cleans up launcher descendants", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-process-cleanup-"));
   const pidFile = join(root, "worker.pid");
@@ -9354,6 +11519,24 @@ test("normal process completion cleans up launcher descendants", async () => {
     }
     assert.throws(() => process.kill(workerPid, 0));
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("launcher exit cleans up descendants holding inherited output pipes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-process-pipes-"));
+  const pidFile = join(root, "worker.pid");
+  try {
+    const workerScript = "process.on('SIGTERM', () => {}); process.stdout.write('worker-ready\\n'); setInterval(() => {}, 30000)";
+    const launcherScript = `const { spawn } = require('node:child_process'); const { writeFileSync } = require('node:fs'); const worker = spawn(process.execPath, ['-e', ${JSON.stringify(workerScript)}], { stdio: ['ignore', 'pipe', 'inherit'] }); writeFileSync(process.argv[1], String(worker.pid)); worker.stdout.once('data', chunk => { process.stdout.write(chunk); process.exit(0); });`;
+    const result = await runProcess([process.execPath, "-e", launcherScript, pidFile], root, 5_000);
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /worker-ready/);
+    assert.ok(result.durationMs < 3_000, "cleanup must not wait for the command timeout");
+  } finally {
+    if (existsSync(pidFile)) {
+      try { process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL"); } catch { /* already cleaned up */ }
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("long-running execution emits durable run heartbeats", async () => {
@@ -9383,7 +11566,7 @@ test("execution heartbeat records liveness before the first interval", async () 
 
 test("missing process executables reject without retaining the timeout", async () => {
   const started = Date.now();
-  await assert.rejects(() => runProcess(["evidra-command-that-does-not-exist"], process.cwd(), 30_000));
+  await assert.rejects(() => runProcess(["evidra-command-that-does-not-exist"], process.cwd(), 30_000), (error) => error instanceof ProcessStartError && error.code === "ENOENT");
   assert(Date.now() - started < 2_000);
 });
 
@@ -9392,6 +11575,15 @@ test("process output capture is bounded while retaining the tail", async () => {
   assert.ok(Buffer.byteLength(result.stdout) <= 16 * 1024 * 1024 + 200);
   assert.match(result.stdout, /output truncated by Evidra/);
   assert.match(result.stdout, /FINAL_METRIC=0\.123/);
+});
+
+test("non-ASCII process logs obey the byte cap and retain final metric evidence", async () => {
+  const result = await runProcess([process.execPath, "-e", "process.stdout.write('🧪'.repeat(5 * 1024 * 1024)); process.stdout.write('FINAL_METRIC=0.123')"], process.cwd(), 35_000);
+  assert.equal(result.exitCode, 0);
+  assert.ok(Buffer.byteLength(result.stdout) <= 16 * 1024 * 1024);
+  assert.match(result.stdout, /output truncated by Evidra/);
+  assert.match(result.stdout, /FINAL_METRIC=0\.123/);
+  assert.ok(!result.stdout.includes('\uFFFD'), "capture previews must not split Unicode code points");
 });
 
 test("process early stopping terminates a persistently underperforming worker", async () => {
@@ -10435,6 +12627,108 @@ test("early stopping requires persistent underperformance against a reference cu
   ]), [{ step: 1, metric: 0.7 }, { step: 2, metric: 0.78 }]);
 });
 
+test("early stopping discards oversized records without parsing their metric suffix", () => {
+  const config = { enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 0, patience: 2, minimumImprovement: 0 };
+  const monitor = new EarlyStoppingMonitor(config, [{ step: 1, metric: 0.9 }]);
+  monitor.observe('{"step":1,"accuracy":0.1}\n');
+  for (let index = 0; index < 100; index += 1) monitor.observe("x".repeat(4_096));
+  assert.equal(monitor.observe(' step=2 accuracy=0.1\n').stop, false, "an oversized record must not contribute a point");
+  assert.equal(monitor.observe('{"step":3,"accuracy":0.1}\n').stop, false);
+  assert.equal(monitor.observe('{"step":4,"accuracy":0.1}\n').stop, true);
+  assert.ok(JSON.stringify(monitor).length < MAX_PROGRESS_LINE_CHARS + 1_000);
+});
+
+test("early stopping enforces line limits across single and fragmented chunks", () => {
+  const config = { enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 0, patience: 2, minimumImprovement: 0 };
+  const reference = [{ step: 1, metric: 0.9 }];
+  const record = '{"step":1,"accuracy":0.1}';
+  const boundary = record + " ".repeat(MAX_PROGRESS_LINE_CHARS - record.length);
+  const oversized = "x".repeat(MAX_PROGRESS_LINE_CHARS + 1) + ' step=2 accuracy=0.1';
+  for (const chunkSize of [1_023, MAX_PROGRESS_LINE_CHARS * 2]) {
+    const monitor = new EarlyStoppingMonitor(config, reference);
+    const stream = boundary + "\n" + oversized + "\n" + '{"step":3,"accuracy":0.1}\n';
+    let decision;
+    for (let offset = 0; offset < stream.length; offset += chunkSize) decision = monitor.observe(stream.slice(offset, offset + chunkSize));
+    assert.equal(decision.stop, false);
+    assert.equal(decision.underperformingPoints, 1);
+    assert.deepEqual(parseLearningCurve(boundary + "\n" + oversized + "\n", "accuracy"), [{ step: 1, metric: 0.1 }]);
+  }
+});
+
+test("verbose worker output cannot trigger early stopping from an oversized suffix", async () => {
+  const script = "console.log(JSON.stringify({step:1,accuracy:0.1})); process.stdout.write('x'.repeat(128*1024) + ' step=2 accuracy=0.1\\n', () => console.log('worker-completed'));";
+  const result = await runProcess([process.execPath, "-e", script], process.cwd(), 5_000, undefined, undefined, undefined, {
+    enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 0, patience: 2, minimumImprovement: 0,
+    reference: [{ step: 1, metric: 0.9 }],
+  });
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /worker-completed/);
+  assert.doesNotMatch(result.stderr, /Early stopped/);
+});
+
+test("early stopping retains constant telemetry state during long worker streams", () => {
+  const config = { enabled: true, metric: "loss", direction: "minimize", warmupSteps: 0, patience: 3, minimumImprovement: 0 };
+  const monitor = new EarlyStoppingMonitor(config, [{ step: 1, metric: 0.5 }]);
+  for (let step = 1; step <= 10_000; step += 1) assert.equal(monitor.observe(JSON.stringify({ step, loss: 0.1 }) + "\n").stop, false);
+  assert.ok(JSON.stringify(monitor).length < 2_000, "telemetry retention must not grow with the number of progress points");
+  assert.equal(monitor.observe('{"step":10001,"loss":0.9}\n').stop, false);
+  assert.equal(monitor.observe('{"step":10002,"loss":0.9}\n').stop, false);
+  assert.equal(monitor.observe('{"step":10003,"loss":0.9}\n').stop, true);
+});
+
+test("streaming early stopping matches batch decisions for ordered chunked telemetry", () => {
+  for (const direction of ["minimize", "maximize"]) {
+    const config = { enabled: true, metric: "quality", direction, warmupSteps: 3, patience: 4, minimumImprovement: 0.01 };
+    const reference = [{ step: 12, metric: 0.7 }, { step: 1, metric: 0.5 }, { step: 5, metric: 0.6 }];
+    const monitor = new EarlyStoppingMonitor(config, reference);
+    const points = [];
+    for (let step = 1; step <= 30; step += 1) {
+      const point = { step, metric: step % 7 < 2 ? 0.8 : 0.2 };
+      points.push(point);
+      const record = JSON.stringify({ step, quality: point.metric }) + "\n";
+      for (let offset = 0; offset < record.length - 1; offset += 1) monitor.observe(record[offset]);
+      assert.deepEqual(monitor.observe("\n"), assessEarlyStopping(points, reference, config));
+    }
+  }
+});
+
+test("early stopping rebuilds patience after corrected or out-of-order steps", () => {
+  const config = { enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 0, patience: 3, minimumImprovement: 0 };
+  const reference = [{ step: 1, metric: 0.9 }];
+  const monitor = new EarlyStoppingMonitor(config, reference);
+  monitor.observe('{"step":1,"accuracy":0.1}\n');
+  monitor.observe('{"step":2,"accuracy":0.1}\n');
+  assert.equal(monitor.observe('{"step":1,"accuracy":0.95}\n').stop, false);
+  assert.equal(monitor.observe('{"step":3,"accuracy":0.1}\n').stop, false);
+  assert.equal(monitor.observe('{"step":3,"accuracy":0.95}\n').stop, false);
+  for (let index = 0; index < 10; index += 1) assert.equal(monitor.observe('{"step":4,"accuracy":0.1}\n').stop, false);
+  assert.equal(monitor.observe('{"step":5,"accuracy":0.1}\n').stop, false);
+  assert.equal(monitor.observe('{"step":6,"accuracy":0.1}\n').stop, true);
+  assert.equal(assessEarlyStopping(Array.from({ length: 10 }, () => ({ step: 1, metric: 0.1 })), reference, config).stop, false);
+});
+
+test("progress parsing treats metric metacharacters literally and rejects infinities", () => {
+  assert.deepEqual(parseLearningCurve('epoch=1 loss[eval]=0.25\nepoch=2 lossXeval=0.99\nepoch=3 loss[eval]=1e999\n', "loss[eval]"), [{ step: 1, metric: 0.25 }]);
+  assert.deepEqual(parseLearningCurve('step=1 quality(held.out)+=0.125\n', "quality(held.out)+"), [{ step: 1, metric: 0.125 }]);
+});
+
+test("early stopping rejects blank numeric telemetry instead of treating it as zero", () => {
+  assert.deepEqual(parseLearningCurve('{"step":"","accuracy":0.1}\n{"step":1,"accuracy":" "}\n{"step":"2","accuracy":"0.2"}\n', "accuracy"), [{ step: 2, metric: 0.2 }]);
+  const config = { enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 0, patience: 2, minimumImprovement: 0 };
+  const monitor = new EarlyStoppingMonitor(config, [{ step: 1, metric: 0.9 }]);
+  assert.equal(monitor.observe('{"step":1,"accuracy":""}\n{"step":2,"accuracy":" "}\n').stop, false);
+});
+
+test("early stopping snapshots the declared policy and historical reference", () => {
+  const config = { enabled: true, metric: "accuracy", direction: "maximize", warmupSteps: 0, patience: 2, minimumImprovement: 0 };
+  const reference = [{ step: 1, metric: 0.9 }];
+  const monitor = new EarlyStoppingMonitor(config, reference);
+  config.enabled = false;
+  reference[0].metric = 0;
+  monitor.observe('{"step":1,"accuracy":0.1}\n');
+  assert.equal(monitor.observe('{"step":2,"accuracy":0.1}\n').stop, true);
+});
+
 test("successive halving budgets cheap screens and promotes only measured survivors", () => {
   const plan = planSuccessiveHalving([
     { id: "a", costMinutes: 10 },
@@ -11259,6 +13553,69 @@ test("doctor exposes a bounded machine-readable diagnostics contract", () => {
   assert.doesNotMatch(output, /sk-[A-Za-z0-9]{12,}|Bearer\s+[A-Za-z0-9._-]+/i);
 });
 
+test("Modal credential diagnostics match SDK configuration rules without invoking authentication", () => {
+  const output = execFileSync("python3", ["-c", `
+import runpy,sys,types
+worker=runpy.run_path(sys.argv[1])
+sys.modules['modal']=types.ModuleType('modal')
+values={}
+sys.modules['modal.config']=types.SimpleNamespace(config=values)
+for configured, expected in [({},False),({'token_id':'id'},False),({'token_id':'id','token_secret':'secret'},True),({'oauth_refresh_token':'refresh','oauth_client_id':'client'},False),({'oauth_refresh_token':'refresh','oauth_client_id':'client','oauth_client_secret':'secret'},True),({'token_id':'id','token_secret':'secret','oauth_refresh_token':'refresh'},False),({'token_id':'id','oauth_refresh_token':'refresh','oauth_client_id':'client','oauth_client_secret':'secret'},False)]:
+    values.clear();values.update(configured)
+    assert worker['credentials_configured']() is expected
+print('credential checks passed')
+`, join(process.cwd(), "modal_reconcile.py")], { encoding: "utf8", timeout: 3000 });
+  assert.equal(output.trim(), "credential checks passed");
+});
+
+test("doctor checks Modal runtime and inspector before reporting configured credentials", () => {
+  for (const mode of ["healthy", "broken-cli", "missing-sdk", "malformed-sdk", "missing-credentials"]) {
+    const root = mkdtempSync(join(tmpdir(), "evidra-doctor-modal-"));
+    try {
+      writeFileSync(join(root, "which"), `#!${process.execPath}
+        if(process.argv[2]==='modal'){console.log(${JSON.stringify(join(root, "modal"))});process.exit(0);}process.exit(1);
+      `, { mode: 0o755 });
+      writeFileSync(join(root, "modal"), `#!${process.execPath}
+        if(!process.argv.includes('--version')){require('node:fs').writeFileSync(${JSON.stringify(join(root, "unexpected-command"))},'yes');process.exit(9);}
+        if(${JSON.stringify(mode)}==='broken-cli'){console.error('broken modal module');process.exit(1);}console.log('modal client version 1.6.1');
+      `, { mode: 0o755 });
+      const inspector = join(root, "sdk-python");
+      if (mode !== "missing-sdk") writeFileSync(inspector, `#!${process.execPath}
+        if(!process.argv.includes('--check-runtime')||!process.argv.includes('--check-credentials'))process.exit(9);
+        require('node:fs').writeFileSync(${JSON.stringify(join(root, "inspector-called"))},'yes');
+        if(${JSON.stringify(mode)}==='malformed-sdk'){console.log('not capability JSON');process.exit(0);}
+        console.log(JSON.stringify({ready:true,credentialsConfigured:${JSON.stringify(mode !== "missing-credentials")}}));
+      `, { mode: 0o755 });
+      const output = execFileSync(process.execPath, [join(process.cwd(), "dist/cli.js"), "doctor", "--json"], { encoding: "utf8", timeout: 30_000, env: { ...process.env, PATH: root, EVIDRA_MODAL_PYTHON: inspector, EVIDRA_CODEX_BIN: "missing-codex", OLLAMA_HOST: "http://127.0.0.1:1/api/chat", MODAL_TOKEN_ID: "test-token-id", MODAL_TOKEN_SECRET: "test-token-secret" } });
+      const report = JSON.parse(output);
+      assert.equal(report.executors.modal.runtime, mode !== "broken-cli");
+      assert.equal(report.executors.modal.allocationInspector, ["healthy", "missing-credentials"].includes(mode));
+      assert.equal(report.executors.modal.credentialsConfigured, mode === "healthy");
+      assert.equal(report.executors.modal.configured, mode === "healthy");
+      assert.equal(report.executors.modal.authenticationVerified, false);
+      assert.equal(existsSync(join(root, "unexpected-command")), false);
+      assert.equal(existsSync(join(root, "inspector-called")), !["broken-cli", "missing-sdk"].includes(mode));
+      assert.doesNotMatch(output, /test-token-id|test-token-secret/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test("doctor reports missing optional backends and required tools without crashing", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidra-doctor-missing-tools-"));
+  try {
+    writeFileSync(join(root, "which"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const environment = { ...process.env, PATH: root, EVIDRA_CODEX_BIN: "evidra-missing-codex", OLLAMA_HOST: "http://127.0.0.1:1/api/chat" };
+    delete environment.MODAL_TOKEN_ID;
+    delete environment.MODAL_TOKEN_SECRET;
+    const result = execFileSync(process.execPath, [join(process.cwd(), "dist", "cli.js"), "doctor", "--json"], { encoding: "utf8", env: environment, timeout: 30_000 });
+    const report = JSON.parse(result);
+    assert.equal(report.ready, false);
+    assert.deepEqual(report.requiredTools, { git: false, rg: false });
+    assert.equal(report.checks.find((check) => check.name === "modal").status, "missing");
+    assert.equal(report.checks.find((check) => check.name === "modal-auth").status, "unavailable");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("dashboard read model is bounded and secret-redacted", () => {
   const root = mkdtempSync(join(tmpdir(), "evidra-dashboard-"));
   try {
@@ -11910,4 +14267,685 @@ test("benchmark protocol rejects mismatched task provenance", () => {
   ]);
   assert.equal(result.valid, false);
   assert.ok(result.issues.some((issue) => issue.field === "taskMetadata"));
+});
+
+test('Modal journals app allocation before a call receipt without releasing receipt-less work', async () => {
+  const previousPath = process.env.PATH;
+  try {
+    for (const mode of ['app-only', 'bound', 'changed', 'duplicated', 'reordered', 'wrong-submission']) {
+      const root = mkdtempSync(join(tmpdir(), 'evidra-modal-app-allocation-'));
+      const bin = join(root, 'bin'); mkdirSync(bin); installModalAllocationFixture(bin, 'completed');
+      try {
+        writeFileSync(join(bin, 'modal'), `#!${process.execPath}
+          if(process.argv.includes('--version')){console.log('fixture');process.exit(0);}
+          const mode=${JSON.stringify(mode)}, submissionId=process.argv[process.argv.indexOf('--submission-id')+1];
+          const app='[evidra-app] '+JSON.stringify({submissionId:mode==='wrong-submission'?'wrong':submissionId,appId:'ap-contract'});
+          const call='[evidra-call] '+JSON.stringify({submissionId,callId:'fc-contract',appId:mode==='changed'?'ap-other':'ap-contract'});
+          if(mode==='reordered')console.log(call);
+          console.log(app);
+          if(mode==='duplicated')console.log(app);
+          if(mode==='app-only')process.exit(1);
+          if(mode!=='reordered')console.log(call);
+          console.log(JSON.stringify({exitCode:0,stdout:'accuracy=1',stderr:'',artifacts:{}}));
+        `, {mode:0o755});
+        process.env.PATH = bin + ':' + previousPath;
+        const manifest = {id:mode,resources:{executor:'modal',timeoutMinutes:1},evaluation:{requiredArtifacts:[]}};
+        const db = join(root, 'state.sqlite'), store = new ResearchStore(db);
+        store.saveExperiment({id:mode,payload:{...manifest,status:'running'}});
+        store.reserveComputeBudget({experimentId:mode,budgetGpuHours:1,usedGpuHours:0,requestedGpuHours:1,gpu:'T4'});
+        const result = await new ModalExecutor(root,event=>store.appendEvent('run.remote.'+event.phase,event)).run(manifest,root,['train'],undefined,'accuracy');
+        const allocated=store.eventsByType('run.remote.allocated');
+        assert.equal(allocated.length,['reordered','wrong-submission'].includes(mode)?0:1,mode);
+        if(allocated.length)assert.equal(allocated[0].payload.appId,'ap-contract');
+        assert.equal(result.status,mode==='bound'?'completed':'failed',mode);
+        if(mode!=='bound')assert.deepEqual(result.metrics,{});
+        store.saveExperiment({id:mode,payload:{...manifest,status:result.status}});
+        store.close();
+        const reopened=new ResearchStore(db);
+        try {
+          assert.equal(reopened.remoteExecutionState(mode).confirmed,mode==='bound',mode);
+          assert.equal(reopened.reservedComputeGpuHours(),mode==='bound'?0:1,mode);
+          if(mode==='app-only') {
+            assert.equal(reopened.eventsByType('run.remote.submitted').length,0);
+            assert.equal(reopened.eventsByType('run.remote.allocated').length,1);
+            assert.equal(reopened.reconcileRemoteExperiment(mode),false);
+          }
+        } finally {reopened.close();}
+      } finally {rmSync(root,{recursive:true,force:true});}
+    }
+  } finally {if(previousPath===undefined)delete process.env.PATH;else process.env.PATH=previousPath;}
+});
+
+test('Modal durable ownership rejects contradictory app allocation journals after reopen', async () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-modal-durable-app-'));
+  try {
+    for(const mode of ['valid','legacy','duplicate','changed','before-intent','after-receipt','wrong-phase','wrong-name','wrong-executor','json-disabled','migrated-index']) {
+      const db=join(root,mode+'.sqlite'),id=mode,nonce='12345678-1234-1234-1234-123456789abc';
+      let store=new ResearchStore(db);
+      const common={executor:'modal',protocol:'modal-call-v1',experimentId:id,submissionId:nonce,allocationName:'evidra-'+nonce,appName:'evidra-'+nonce};
+      const app={...common,phase:'allocated',appId:mode==='changed'?'ap-other':'ap-owned'};
+      if(mode==='wrong-phase')app.phase='submitted';
+      if(mode==='wrong-name')app.appName='other';
+      if(mode==='wrong-executor')app.executor='container';
+      store.saveExperiment({id,payload:{id,status:'running',resources:{executor:'modal'}}});
+      store.reserveComputeBudget({experimentId:id,budgetGpuHours:1,usedGpuHours:0,requestedGpuHours:1,gpu:'T4'});
+      if(mode==='before-intent')store.appendEvent('run.remote.allocated',app);
+      store.appendEvent('run.remote.submitting',{...common,phase:'submitting'});
+      if(!['legacy','before-intent','after-receipt'].includes(mode))store.appendEvent('run.remote.allocated',app);
+      if(mode==='duplicate')store.appendEvent('run.remote.allocated',app);
+      store.appendEvent('run.remote.submitted',{...common,phase:'submitted',callId:'fc-owned',appId:'ap-owned'});
+      if(mode==='after-receipt')store.appendEvent('run.remote.allocated',app);
+      store.appendEvent('run.remote.terminal',{...common,phase:'terminal',callId:'fc-owned',appId:'ap-owned',appState:'STOPPED',runningTasks:0,state:'COMPLETED',exitCode:0,completionEvidence:'sdk-result'});
+      if(mode==='migrated-index') {
+        store.db.exec("DROP INDEX IF EXISTS idx_events_remote_submission_identity_v2; CREATE INDEX IF NOT EXISTS idx_events_remote_submission_identity ON events(type, json_extract(payload_json, '$.experimentId'), json_extract(payload_json, '$.submissionId'), id) WHERE type IN ('run.remote.submitted', 'run.remote.terminal', 'run.remote.allocation.terminal')");
+      }
+      store.close();store=new ResearchStore(db);
+      try {
+        if(mode==='migrated-index')assert(store.db.prepare("SELECT name FROM sqlite_master WHERE name = 'idx_events_remote_submission_identity_v2'").get());
+        if(mode==='json-disabled') { const prepare=store.db.prepare.bind(store.db);store.db.prepare=sql=>{if(sql.includes('json_extract'))throw Error('JSON1 unavailable');return prepare(sql);}; }
+        const valid=['valid','legacy','json-disabled','migrated-index'].includes(mode);
+        assert.equal(store.modalCallOwnershipConfirmed(id,nonce,'fc-owned'),valid,mode);
+        assert.equal(store.modalAppOwnershipConfirmed(id,nonce,'ap-owned'),valid,mode);
+        assert.equal(store.remoteExecutionState(id).confirmed,valid,mode);
+        store.saveExperiment({id,payload:{id,status:'failed',resources:{executor:'modal'}}});
+        assert.equal(store.reservedComputeGpuHours(),valid?0:1,mode);
+      } finally {store.close();}
+      if(!['valid','legacy','json-disabled','migrated-index'].includes(mode)) {
+        assert.deepEqual(await reconcileRemoteExperiment(db,root,id,{cancelModal:true}),{released:false,queried:0},mode);
+      }
+    }
+  } finally {rmSync(root,{recursive:true,force:true});}
+});
+
+test('SQLite backups publish privately and preserve an existing snapshot on failure', async () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-private-backup-'));
+  const store=new ResearchStore(join(root,'source.sqlite'));
+  const {statSync,readdirSync,linkSync}=await import('node:fs');
+  try {
+    const destination=join(root,'backup.sqlite');
+    store.appendEvent('before.backup',{value:1});
+    await store.backup(destination);
+    if(process.platform!=='win32')assert.equal(statSync(destination).mode & 0o777,0o600);
+    const prior=readFileSync(destination);
+    const backup=store.db.backup.bind(store.db);
+    store.db.backup=async path=>{
+      assert.notEqual(path,destination);
+      if(process.platform!=='win32')assert.equal(statSync(join(path,'..')).mode & 0o777,0o700);
+      writeFileSync(path,'incomplete SQLite output');
+      throw new Error('injected backup interruption');
+    };
+    await assert.rejects(store.backup(destination),/injected backup interruption/);
+    assert.deepEqual(readFileSync(destination),prior);
+    assert.equal(readdirSync(root).some(name=>name.startsWith('.evidra-backup-')),false);
+    store.db.backup=backup;
+    await assert.rejects(store.backup(store.db.name),/live database/);
+    const alias=join(root,'source-alias.sqlite');linkSync(store.db.name,alias);
+    await assert.rejects(store.backup(alias),/alias of the live database/);
+    store.appendEvent('after.backup',{value:2});
+    await store.backup(destination);
+    const restored=new ResearchStore(destination);
+    try {assert.equal(restored.verifyEventChain().status,'valid');assert.equal(restored.eventsByType('after.backup').length,1);}
+    finally {restored.close();}
+  } finally {store.close();rmSync(root,{recursive:true,force:true});}
+});
+
+test('SQLite backup replacement refuses active and leftover destination journals', async () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-backup-journals-'));
+  const source=new ResearchStore(join(root,'source.sqlite'));
+  try {
+    const destination=join(root,'backup.sqlite');
+    await source.backup(destination);
+    const opened=new ResearchStore(destination);
+    try {
+      opened.appendEvent('existing.snapshot.private',{value:1});
+      await assert.rejects(source.backup(destination),/SQLite journal files/);
+      assert.equal(opened.eventsByType('existing.snapshot.private').length,1);
+      assert.equal(opened.verifyEventChain().status,'valid');
+    } finally {opened.close();}
+    for(const suffix of ['-wal','-shm','-journal']) {
+      writeFileSync(destination+suffix,'leftover SQLite state');
+      const before=readFileSync(destination);
+      await assert.rejects(source.backup(destination),/SQLite journal files/);
+      assert.deepEqual(readFileSync(destination),before);
+      rmSync(destination+suffix);
+    }
+    const backup=source.db.backup.bind(source.db);
+    source.db.backup=async path=>{const result=await backup(path);writeFileSync(destination+'-wal','appeared during snapshot');return result;};
+    const before=readFileSync(destination);
+    await assert.rejects(source.backup(destination),/SQLite journal files/);
+    assert.deepEqual(readFileSync(destination),before);
+    rmSync(destination+'-wal');source.db.backup=backup;
+    await source.backup(destination);
+  } finally {source.close();rmSync(root,{recursive:true,force:true});}
+});
+
+test('backup CLI refuses workspace symlink escapes before creating destination directories', () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-backup-cli-boundary-')),outside=mkdtempSync(join(tmpdir(),'evidra-backup-outside-'));
+  try {
+    const cli=join(process.cwd(),'dist','cli.js');
+    const init=spawnSync(process.execPath,[cli,'init','local-research'],{cwd:root,encoding:'utf8'});
+    assert.equal(init.status,0,init.stderr);
+    symlinkSync(outside,join(root,'redirect'),'dir');
+    const escaped=spawnSync(process.execPath,[cli,'backup','redirect/new/state.sqlite'],{cwd:root,encoding:'utf8'});
+    assert.notEqual(escaped.status,0);
+    assert.match(escaped.stderr,/parent resolves outside/);
+    assert.equal(existsSync(join(outside,'new')),false);
+    mkdirSync(join(root,'safe'));
+    symlinkSync(join(root,'safe'),join(root,'internal'),'dir');
+    const allowed=spawnSync(process.execPath,[cli,'backup','internal/nested/state.sqlite'],{cwd:root,encoding:'utf8'});
+    assert.equal(allowed.status,0,allowed.stderr);
+    const restored=new ResearchStore(join(root,'safe','nested','state.sqlite'));
+    try{assert.equal(restored.verifyEventChain().status,'valid');}finally{restored.close();}
+  } finally{rmSync(root,{recursive:true,force:true});rmSync(outside,{recursive:true,force:true});}
+});
+
+test('autonomous Git push is rejected behind global options and launch wrappers', () => {
+  for(const argv of [['git','-C','.','push'],['git','-c','user.name=fixture','push'],['git','--git-dir=.git','push'],['git','-C.','--no-pager','push'],['env','git','--work-tree','.','push'],['timeout','10','git','-C','.','push'],['git','--unknown-option','value','push']])assert.equal(guardAutonomousCommand(argv).allowed,false,JSON.stringify(argv));
+  for(const argv of [['git','-C','.','status'],['git','-c','user.name=push','log'],['git','--no-pager','diff'],['git','log','--grep','push']])assert.equal(guardAutonomousCommand(argv).allowed,true,JSON.stringify(argv));
+});
+
+test('SAFE ripgrep inspection rejects executable hooks but permits literal option patterns', () => {
+  for(const argv of [['rg','--pre','worker','needle','input'],['rg','--pre=worker','needle','input'],['/usr/bin/rg','--hostname-bin','worker','needle'],['rg','--hostname-bin=worker','needle']])assert.equal(guardReadOnlyInspection(argv).allowed,false,JSON.stringify(argv));
+  for(const argv of [['rg','--files'],['rg','--pre-glob=*.txt','needle'],['rg','--','--pre=literal-pattern'],['rg','--','--hostname-bin']])assert.equal(guardReadOnlyInspection(argv).allowed,true,JSON.stringify(argv));
+});
+
+test('SAFE inspection requires sed sandbox and rejects awk and find mutation actions', () => {
+  for(const argv of [['sed','1w marker','input'],['sed','e touch marker','input'],['sed','-n','1p','input'],['sed','--','--sandbox'],['sed','--sandbox','-i','1p','input'],['awk','BEGIN { print "x" > "marker" }'],['awk','BEGIN { "touch marker" | getline }']])assert.equal(guardReadOnlyInspection(argv).allowed,false,JSON.stringify(argv));
+  for(const action of ['-exec','-execdir','-ok','-okdir','-delete','-fprint','-fprint0','-fprintf','-fls'])assert.equal(guardReadOnlyInspection(['find','.',action,'marker']).allowed,false,action);
+  assert.equal(guardReadOnlyInspection(['sed','--sandbox','-n','1,80p','input']).allowed,true);
+  assert.equal(guardReadOnlyInspection(['find','.','-type','f','-print']).allowed,true);
+});
+
+test('autonomous workspace guard rejects file and directory symlink escapes', () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-inspection-symlink-')),outside=mkdtempSync(join(tmpdir(),'evidra-inspection-outside-'));
+  try {
+    writeFileSync(join(outside,'fixture'),'private fixture');
+    symlinkSync(join(outside,'fixture'),join(root,'linked-file'));
+    symlinkSync(outside,join(root,'linked-directory'),'dir');
+    mkdirSync(join(root,'safe'));writeFileSync(join(root,'safe','fixture'),'allowed fixture');symlinkSync(join(root,'safe'),join(root,'internal'),'dir');
+    for(const executable of ['head','tail','rg','grep','find','sed','du','file','wc','sha256sum']) {
+      for(const path of ['linked-file','linked-directory/fixture','linked-directory/missing'])assert.equal(guardWorkspaceCommand([executable,path],root).allowed,false,executable+':'+path);
+      assert.equal(guardWorkspaceCommand([executable,'internal/fixture'],root).allowed,true,executable);
+      assert.equal(guardWorkspaceCommand([executable,'safe/missing'],root).allowed,true,executable);
+    }
+  }finally{rmSync(root,{recursive:true,force:true});rmSync(outside,{recursive:true,force:true});}
+});
+
+test('workspace inspection validates attached path options and directory listings', () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-option-paths-')),outside=mkdtempSync(join(tmpdir(),'evidra-options-outside-'));
+  try {
+    symlinkSync(outside,join(root,'external'),'dir');mkdirSync(join(root,'safe'));
+    for(const [executable,option] of [['grep','--file='],['grep','-f'],['sed','--file='],['rg','--ignore-file='],['grep','--exclude-from='],['du','--files0-from='],['file','--magic-file='],['git','--git-dir='],['git','--work-tree='],['git','-C']]) {
+      for(const path of [join(outside,'fixture'),'external/fixture','../outside'])assert.equal(guardWorkspaceCommand([executable,option+path],root).allowed,false,executable+':'+option+path);
+      assert.equal(guardWorkspaceCommand([executable,option+'safe/fixture'],root).allowed,true,executable+':'+option);
+    }
+    assert.equal(guardWorkspaceCommand(['ls',outside],root).allowed,false);
+    assert.equal(guardWorkspaceCommand(['ls','external'],root).allowed,false);
+    assert.equal(guardWorkspaceCommand(['ls','safe'],root).allowed,true);
+  }finally{rmSync(root,{recursive:true,force:true});rmSync(outside,{recursive:true,force:true});}
+});
+
+test('autonomous shell paths apply the structured sensitive-file policy including aliases', async () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-sensitive-inspection-'));
+  try {
+    writeFileSync(join(root,'.env'),'private disposable fixture');writeFileSync(join(root,'notes.txt'),'ordinary fixture');symlinkSync(join(root,'.env'),join(root,'alias'));
+    for(const path of ['.env','.env.local','credentials.json','id_rsa','private.pem','alias']) {
+      for(const argv of [['head',path],['grep','--file='+path,'notes.txt'],['rg','-f'+path,'notes.txt']])assert.equal(guardWorkspaceCommand(argv,root).allowed,false,JSON.stringify(argv));
+    }
+    assert.equal(guardWorkspaceCommand(['head','notes.txt'],root).allowed,true);
+    const result=await executeResearchTool({name:'shell.exec',arguments:{command:['head','alias']}},{root,storePath:join(root,'state.sqlite'),autonomy:'safe'});
+    assert.equal(result.ok,false);assert.match(result.error,/sensitive workspace/);
+    assert.equal(JSON.stringify(result).includes('private disposable fixture'),false);
+  }finally{rmSync(root,{recursive:true,force:true});}
+});
+
+test('sensitive path policy protects default controller state and hidden credentials', async () => {
+  const root=mkdtempSync(join(tmpdir(),'evidra-controller-private-paths-'));
+  try {
+    const privatePaths=['.sota/database.sqlite','.sota/database.sqlite-wal','.sota/database.sqlite-shm','.sota/database.sqlite-journal','.sota/backups/snapshot.sqlite','.credentials','.credentials.json','.secret','id_ed25519','id_ecdsa'];
+    for(const path of privatePaths) {
+      assert.equal(isSensitiveWorkspacePath(path),true,path);
+      assert.equal(guardWorkspaceCommand(['head',path],root).allowed,false,path);
+      const result=await executeResearchTool({name:'workspace.read',arguments:{path}},{root,storePath:join(root,'test-state.sqlite'),autonomy:'safe'});
+      assert.equal(result.ok,false,path);assert.match(result.error,/sensitive workspace path/);
+    }
+    mkdirSync(join(root,'.sota'),{recursive:true});writeFileSync(join(root,'.sota','database.sqlite'),'private controller fixture');symlinkSync(join(root,'.sota','database.sqlite'),join(root,'db-alias'));
+    assert.equal(guardWorkspaceCommand(['head','db-alias'],root).allowed,false);
+    for(const path of ['.sota/reports/research.md','.sota/experiment-config.json','datasets/database.sqlite','src/model.py'])assert.equal(isSensitiveWorkspacePath(path),false,path);
+  }finally{rmSync(root,{recursive:true,force:true});}
+});
+
+test('harness revision feedback remains bounded and excludes declared held-out traces', async () => {
+  const {formatHarnessFeedback}=await import('../dist/core/harness-feedback.js');
+  const records=[{adaptationRole:'held_out',protocolFingerprint:'hidden-evaluator',trials:[{task:'hidden-task',candidateMetric:1}],runs:[{result:{stderr:'hidden-answer'}}]},...Array.from({length:5},(_,index)=>({adaptationRole:index===4?'feedback':'selection',protocolFingerprint:'revision-'+index,trials:Array.from({length:30},()=>({harness:'challenger',task:'😀'.repeat(5000),candidateMetric:0.5,validRun:false,failureClass:'parse'})),runs:Array.from({length:30},()=>({harness:'challenger',result:{exitCode:1,stdout:'gold-answer',stderr:'é'.repeat(5000)+'\nAPI_KEY=fixture-secret'}}))}))];
+  const formatted=formatHarnessFeedback(records),packet=JSON.parse(formatted);
+  assert(Buffer.byteLength(formatted,'utf8')<=8000);assert.equal(packet.omittedHeldOut,1);assert(packet.omittedReports>=2);
+  assert(!formatted.includes('hidden-evaluator'));assert(!formatted.includes('hidden-answer'));assert(!formatted.includes('gold-answer'));assert(!formatted.includes('fixture-secret'));
+  assert(packet.reports.some(report=>report.protocolFingerprint==='revision-4'));
+  assert(formatted.includes('[REDACTED]'));
+  assert.equal(packet.reports.filter(report=>report.role==='selection').flatMap(report=>report.runs).some(run=>'stderrExcerpt' in run),false);
+  const unclassified=JSON.parse(formatHarnessFeedback([{runs:[{result:{stderr:'unclassified-trace'}}]}]));
+  assert.equal(unclassified.reports[0].role,'unclassified');assert(!JSON.stringify(unclassified).includes('unclassified-trace'));
+  const stored=JSON.parse(formatHarnessFeedback([{protocolFingerprint:'stored',scorecards:[{harness:'candidate',competitiveScore:42,failureProfile:{parse:3}}],comparisons:[{incumbent:'baseline',challengerWins:false,reason:'needs retest'}]}]));
+  assert.equal(stored.reports[0].scorecards[0].failureProfile.parse,3);assert.equal(stored.reports[0].comparisons[0].incumbent,'baseline');
+});
+
+test('benchmark feedback roles validate before execution and held-out evidence cannot create retests', async () => {
+  const {parseHarnessFeedbackRole}=await import('../dist/core/harness-feedback.js');
+  assert.equal(parseHarnessFeedbackRole(undefined),'unclassified');
+  for(const role of ['feedback','selection','held_out','unclassified'])assert.equal(parseHarnessFeedbackRole(role),role);
+  for(const role of ['test',null,{},1])assert.throws(()=>parseHarnessFeedbackRole(role),/adaptationRole/);
+  const plan={schemaVersion:1,challenger:'evidra',incumbents:['baseline'],claimStatus:'not_proven',interventions:[{id:'failure',kind:'reliability',priority:'high',target:'runtime',observedGap:'failure',prediction:'improve',action:'fix',acceptance:'retest'}],retest:{preserve:[],requiredTasks:1,minimumCoverage:1,independentRepetitions:1,noMetricOrBudgetChanges:true}};
+  assert.equal(materializeHarnessRetestTask(plan,'revision',{adaptationRole:'held_out'}),undefined);
+  assert.equal(materializeHarnessRetestTask(plan,'revision',{adaptationRole:'feedback'}).payload.benchmarkEvidence.adaptationRole,'feedback');
+  const root=mkdtempSync(join(tmpdir(),'evidra-benchmark-role-'));
+  try {
+    const cli=join(process.cwd(),'dist','cli.js');
+    const init=spawnSync(process.execPath,[cli,'init','local-research'],{cwd:root,encoding:'utf8'});assert.equal(init.status,0,init.stderr);
+    const input=join(root,'protocol.json'),out=join(root,'report.json');
+    const arms=[{harness:'evidra',task:'fixture',arm:'default',seed:1,model:'fixture',budgetMinutes:1,direction:'maximize',baselineMetric:0,metric:'score',command:[process.execPath,'-e','console.log("score=0.5")']}];
+    writeFileSync(input,JSON.stringify({adaptationRole:'invalid',arms}));
+    const invalid=spawnSync(process.execPath,[cli,'benchmark','run',input,'--out',out],{cwd:root,encoding:'utf8'});assert.notEqual(invalid.status,0);assert.match(invalid.stderr,/adaptationRole/);assert.equal(existsSync(out),false);
+    writeFileSync(input,JSON.stringify({adaptationRole:'held_out',arms}));
+    const executed=spawnSync(process.execPath,[cli,'benchmark','run',input,'--out',out],{cwd:root,encoding:'utf8'});
+    assert(existsSync(out),executed.stderr);assert.equal(JSON.parse(readFileSync(out,'utf8')).adaptationRole,'held_out');
+    const store=new ResearchStore(join(root,'.sota','database.sqlite'));
+    try {
+      assert.equal(store.eventsByType('harness.benchmark.completed').at(-1).payload.adaptationRole,'held_out');
+      store.enqueueTask({id:'heldout-retest',kind:'harness.retest',priority:1,payload:{challenger:'evidra',benchmarkProtocol:arms,benchmarkEvidence:{adaptationRole:'held_out'}}});
+    }finally{store.close();}
+    const refused=spawnSync(process.execPath,[cli,'benchmark','retest','heldout-retest'],{cwd:root,encoding:'utf8'});
+    assert.notEqual(refused.status,0);assert.match(refused.stderr,/Held-out benchmark evidence/);
+    const reopened=new ResearchStore(join(root,'.sota','database.sqlite'));
+    try {const queued=reopened.queueTasks().find(task=>task.id==='heldout-retest');assert.equal(queued.status,'queued');assert.equal(queued.attempts,0);}finally{reopened.close();}
+  }finally{rmSync(root,{recursive:true,force:true});}
+});
+
+test('feedback benchmark events retain bounded redacted failure traces only for feedback roles', async () => {
+  const {projectHarnessFailureFeedback,formatHarnessFeedback}=await import('../dist/core/harness-feedback.js');
+  const source=[{harness:'successful',result:{exitCode:0,stdout:'successful-answer',stderr:'successful-private'}},...Array.from({length:20},(_,index)=>({harness:'failed-'+index,failureClass:'execution',result:{exitCode:1,stdout:'failed-answer',stderr:'😀'.repeat(10000)+'\nAPI_KEY=fixture-secret'}}))];
+  const projected=projectHarnessFailureFeedback(source),serialized=JSON.stringify(projected);
+  assert(Buffer.byteLength(serialized,'utf8')<=4096);assert(projected.runs.length<=6);assert.equal(projected.totalRunCount,21);assert.equal(projected.omittedFailureRuns,20-projected.runs.length);
+  assert(!serialized.includes('successful-private'));assert(!serialized.includes('failed-answer'));assert(!serialized.includes('fixture-secret'));assert(serialized.includes('[REDACTED]'));
+  const formatted=formatHarnessFeedback([{adaptationRole:'feedback',...projected}]);assert(formatted.includes('failed-19'));assert(formatted.includes('[REDACTED]'));
+  const root=mkdtempSync(join(tmpdir(),'evidra-feedback-trace-cli-'));
+  try {
+    const cli=join(process.cwd(),'dist','cli.js'),input=join(root,'protocol.json'),output=join(root,'report.json');
+    const init=spawnSync(process.execPath,[cli,'init','local-research'],{cwd:root,encoding:'utf8'});assert.equal(init.status,0,init.stderr);
+    for(const role of ['feedback','selection','held_out']) {
+      writeFileSync(input,JSON.stringify({adaptationRole:role,arms:[{harness:'evidra',task:'fixture',arm:'default',seed:1,model:'fixture',budgetMinutes:1,direction:'maximize',baselineMetric:0,metric:'score',command:[process.execPath,'-e','console.error("API_KEY=fixture-secret; parsing failed");process.exit(1)']}]}));
+      const execution=spawnSync(process.execPath,[cli,'benchmark','run',input,'--out',output],{cwd:root,encoding:'utf8'});assert(existsSync(output),execution.stderr);
+      const store=new ResearchStore(join(root,'.sota','database.sqlite'));
+      try {
+        const event=store.eventsByType('harness.benchmark.completed').at(-1).payload;
+        assert.equal(event.adaptationRole,role);
+        if(role==='feedback'){assert.equal(event.runs.length,1);assert(event.runs[0].result.stderr.includes('parsing failed'));assert(!JSON.stringify(event.runs).includes('fixture-secret'));assert(formatHarnessFeedback([event]).includes('parsing failed'));}
+        else assert.equal(event.runs,undefined);
+      }finally{store.close();}
+      rmSync(output);
+    }
+  }finally{rmSync(root,{recursive:true,force:true});}
+});
+
+test("claude provider maps routes, permissions, and headless stream output", async () => {
+  const { claudeHeadlessArgs, effectiveClaudeModel, DEFAULT_CLAUDE_MODEL, runClaudeHeadless } = await import("../dist/agents/claude-exec.js");
+  const { isToolCapableProvider, shouldUseLocalFallback, ProviderUsageLimitError } = await import("../dist/agents/codex-exec.js");
+  assert.equal(effectiveClaudeModel("default"), DEFAULT_CLAUDE_MODEL);
+  assert.equal(effectiveClaudeModel(DEFAULT_CODEX_MODEL), DEFAULT_CLAUDE_MODEL, "a Codex default is never sent to Claude");
+  assert.equal(effectiveClaudeModel("claude-sonnet-5-5"), "claude-sonnet-5-5");
+  assert.equal(isToolCapableProvider("claude"), true);
+  assert.equal(isToolCapableProvider("local"), false);
+  assert.equal(shouldUseLocalFallback(new Error("usage limit reached"), { provider: "claude", limitPolicy: "auto" }, "auto"), true);
+
+  const readOnly = claudeHeadlessArgs({ provider: "claude", model: "m", cwd: ".", webSearchMode: "disabled" }, "read-only", "m");
+  assert.equal(readOnly[readOnly.indexOf("--permission-mode") + 1], "dontAsk");
+  assert.equal(readOnly.includes("Bash"), false, "read-only roles never receive shell");
+  assert.equal(readOnly.includes("WebSearch"), false, "disabled web search is not granted");
+  assert.equal(readOnly[readOnly.indexOf("--setting-sources") + 1], "", "ambient user settings never shape a run");
+  const writable = claudeHeadlessArgs({ provider: "claude", model: "m", cwd: ".", threadId: "s-1", reasoningEffort: "minimal" }, "workspace-write", "m", "{}");
+  assert.equal(writable[writable.indexOf("--permission-mode") + 1], "bypassPermissions");
+  assert.equal(writable[writable.indexOf("--resume") + 1], "s-1");
+  assert.equal(writable[writable.indexOf("--effort") + 1], "low");
+  assert.equal(writable[writable.indexOf("--json-schema") + 1], "{}");
+
+  const dir = mkdtempSync(join(tmpdir(), "evidra-claude-"));
+  const fake = join(dir, "claude");
+  const previous = process.env.EVIDRA_CLAUDE_BIN;
+  process.env.EVIDRA_CLAUDE_BIN = fake;
+  try {
+    const events = [
+      { type: "system", subtype: "init", session_id: "sess-1" },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "a" }] } },
+      { type: "result", subtype: "success", is_error: false, result: "{\"ok\":true}", structured_output: { ok: true }, usage: { input_tokens: 3, cache_read_input_tokens: 10, cache_creation_input_tokens: 2, output_tokens: 5 } },
+    ];
+    writeFileSync(fake, `#!/bin/sh\ncat >/dev/null\ncat <<'JSON'\n${events.map((event) => JSON.stringify(event)).join("\n")}\nJSON\n`);
+    chmodSync(fake, 0o755);
+    const activity = [];
+    let thread;
+    const result = await runClaudeHeadless("hi", { provider: "claude", model: "default", cwd: dir, onActivity: (_source, line) => activity.push(line), onThread: (id) => { thread = id; } }, undefined, undefined, "{}");
+    assert.equal(result.provider, "claude");
+    assert.equal(result.model, DEFAULT_CLAUDE_MODEL);
+    assert.equal(result.threadId, "sess-1");
+    assert.equal(thread, "sess-1");
+    assert.deepEqual(JSON.parse(result.output), { ok: true });
+    assert.deepEqual(result.usage, { inputTokens: 15, outputTokens: 5, cachedInputTokens: 10, cacheWriteInputTokens: 2, reasoningOutputTokens: undefined });
+    assert.equal(activity.some((line) => line.includes("Bash: ls")), true);
+
+    writeFileSync(fake, `#!/bin/sh\ncat >/dev/null\necho '${JSON.stringify({ type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: Math.floor(Date.now() / 1000) + 600 } })}'\necho '${JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true, result: "limit" })}'\n`);
+    await assert.rejects(runClaudeHeadless("hi", { provider: "claude", model: "default", cwd: dir }), (error) => error instanceof ProviderUsageLimitError && error.retryAfterMs > 0);
+  } finally {
+    if (previous === undefined) delete process.env.EVIDRA_CLAUDE_BIN; else process.env.EVIDRA_CLAUDE_BIN = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("provider transcripts capture prompt, raw events, and outcome; evidence pack bundles them", async () => {
+  const { openTranscript } = await import("../dist/agents/transcripts.js");
+  const { packEvidence } = await import("../dist/core/evidence-pack.js");
+  const { ResearchStore: Store } = await import("../dist/core/store.js");
+  const dir = mkdtempSync(join(tmpdir(), "evidra-transcript-"));
+  const previous = process.env.EVIDRA_TRANSCRIPT_DIR;
+  process.env.EVIDRA_TRANSCRIPT_DIR = join(dir, ".sota", "transcripts");
+  try {
+    const writer = openTranscript({ role: "experiment engineer", provider: "claude", model: "m", cwd: dir, prompt: "build the model" });
+    writer.event({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "ls" } }] } });
+    writer.end({ ok: true, output: "done" });
+    const lines = readFileSync(writer.path, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(lines.map((line) => line.type), ["turn.start", "provider.event", "turn.end"]);
+    assert.equal(lines[0].prompt, "build the model");
+
+    execFileSync("git", ["init", "-q"], { cwd: dir });
+    writeFileSync(join(dir, "competition.json"), "{}\n");
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "add", "competition.json"], { cwd: dir });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"], { cwd: dir });
+    const store = new Store(join(dir, ".sota", "database.sqlite"));
+    store.appendEvent("baseline.completed", { metric: 1 });
+    const result = packEvidence({ store, stateDirectory: join(dir, ".sota"), projectRoot: dir, evidraRoot: dir, evidraVersion: "test", competitionPath: join(dir, "competition.json"), output: join(dir, "evidence") });
+    store.close();
+    assert.equal(result.transcripts, 1);
+    assert.equal(result.prompts, 1);
+    assert.deepEqual(result.files.map((file) => file.name).sort(), ["harness.tar.gz", "prompts.jsonl.gz", "trajectory.tar.gz"]);
+    const listing = execFileSync("tar", ["-tzf", join(dir, "evidence", "trajectory.tar.gz")], { encoding: "utf8" });
+    assert.match(listing, /transcripts\//);
+    assert.match(listing, /events\.export\.jsonl/);
+
+    // A past campaign is packed with the code it ran under, not today's HEAD.
+    const locked = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+    execFileSync("git", ["tag", "lock-1"], { cwd: dir });
+    writeFileSync(join(dir, "competition.json"), "{\"changed\": true}\n");
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "later"], { cwd: dir });
+    const pastStore = new Store(join(dir, ".sota", "database.sqlite"));
+    packEvidence({ store: pastStore, stateDirectory: join(dir, ".sota"), projectRoot: dir, evidraRoot: dir, evidraVersion: "test", competitionPath: join(dir, "competition.json"), output: join(dir, "evidence-past"), evidraRef: "lock-1", projectRef: "lock-1" });
+    pastStore.close();
+    execFileSync("tar", ["-xzf", join(dir, "evidence-past", "harness.tar.gz"), "-C", join(dir, "evidence-past")]);
+    const lock = JSON.parse(readFileSync(join(dir, "evidence-past", "harness", "lock.json"), "utf8"));
+    assert.equal(lock.evidraRef, "lock-1");
+    assert.equal(lock.evidraCommit, locked);
+    assert.equal(lock.projectCommit, locked);
+    assert.equal(readFileSync(join(dir, "evidence-past", "harness", "competition.json"), "utf8"), "{}\n");
+    assert.throws(() => packEvidence({ store: new Store(join(dir, ".sota", "database.sqlite")), stateDirectory: join(dir, ".sota"), projectRoot: dir, evidraRoot: dir, evidraVersion: "test", output: join(dir, "evidence-bad"), evidraRef: "no-such-ref" }), /cannot resolve git ref/);
+  } finally {
+    if (previous === undefined) delete process.env.EVIDRA_TRANSCRIPT_DIR; else process.env.EVIDRA_TRANSCRIPT_DIR = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("claude turn completes on its result even if background jobs keep the CLI alive", async () => {
+  const { runClaudeHeadless } = await import("../dist/agents/claude-exec.js");
+  const dir = mkdtempSync(join(tmpdir(), "evidra-claude-bg-"));
+  const fake = join(dir, "claude");
+  const previous = process.env.EVIDRA_CLAUDE_BIN;
+  process.env.EVIDRA_CLAUDE_BIN = fake;
+  try {
+    const result = { type: "result", subtype: "success", is_error: false, result: "done", usage: { input_tokens: 1, output_tokens: 1 } };
+    writeFileSync(fake, `#!/bin/sh\ncat >/dev/null\necho '${JSON.stringify({ type: "system", subtype: "init", session_id: "s" })}'\necho '${JSON.stringify(result)}'\nsleep 60\n`);
+    chmodSync(fake, 0o755);
+    const started = Date.now();
+    const out = await runClaudeHeadless("hi", { provider: "claude", model: "default", cwd: dir, timeoutMs: 120_000 });
+    assert.equal(out.output, "done");
+    assert.ok(Date.now() - started < 30_000, "a finished turn must not wait for lingering background jobs");
+  } finally {
+    if (previous === undefined) delete process.env.EVIDRA_CLAUDE_BIN; else process.env.EVIDRA_CLAUDE_BIN = previous;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a stalled Claude stream is stopped and the same session resumed, but a long tool is not a stall", async () => {
+  const { runClaudeHeadless } = await import("../dist/agents/claude-exec.js");
+  const dir = mkdtempSync(join(tmpdir(), "evidra-claude-stall-"));
+  const fake = join(dir, "claude");
+  const calls = join(dir, "calls.log");
+  const previous = { bin: process.env.EVIDRA_CLAUDE_BIN, idle: process.env.EVIDRA_CLAUDE_IDLE_MINUTES };
+  process.env.EVIDRA_CLAUDE_BIN = fake;
+  process.env.EVIDRA_CLAUDE_IDLE_MINUTES = "0.02";
+  const line = (value) => `echo '${JSON.stringify(value)}'`;
+  const result = (text) => line({ type: "result", subtype: "success", is_error: false, result: text, usage: { input_tokens: 1, output_tokens: 1 } });
+  try {
+    // First call stalls after init; a call with --resume finishes.
+    writeFileSync(fake, [
+      "#!/bin/sh", "cat >/dev/null", `echo "$*" >> ${calls}`,
+      'case "$*" in *--resume*) ' + line({ type: "system", subtype: "init", session_id: "s1" }) + "; " + result("resumed") + "; exit 0;; esac",
+      line({ type: "system", subtype: "init", session_id: "s1" }), "sleep 30", "",
+    ].join("\n"));
+    chmodSync(fake, 0o755);
+    const out = await runClaudeHeadless("work", { provider: "claude", model: "default", cwd: dir, timeoutMs: 120_000 });
+    assert.equal(out.output, "resumed");
+    const invoked = readFileSync(calls, "utf8").trim().split("\n");
+    assert.equal(invoked.length, 2);
+    assert.match(invoked[1], /--resume s1/);
+
+    // Silence while a tool runs is not a stall.
+    rmSync(calls, { force: true });
+    writeFileSync(fake, [
+      "#!/bin/sh", "cat >/dev/null", `echo "$*" >> ${calls}`,
+      line({ type: "system", subtype: "init", session_id: "s2" }),
+      line({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "evaluate" } }] } }),
+      "sleep 4",
+      line({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] } }),
+      result("tool done"), "",
+    ].join("\n"));
+    const toolOut = await runClaudeHeadless("work", { provider: "claude", model: "default", cwd: dir, timeoutMs: 120_000 });
+    assert.equal(toolOut.output, "tool done");
+    assert.equal(readFileSync(calls, "utf8").trim().split("\n").length, 1);
+  } finally {
+    if (previous.bin === undefined) delete process.env.EVIDRA_CLAUDE_BIN; else process.env.EVIDRA_CLAUDE_BIN = previous.bin;
+    if (previous.idle === undefined) delete process.env.EVIDRA_CLAUDE_IDLE_MINUTES; else process.env.EVIDRA_CLAUDE_IDLE_MINUTES = previous.idle;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("goal progress flags a plateau far from the target and drives an exploration pivot", () => {
+  const at = (index) => new Date(Date.UTC(2026, 9, 13, 0, index)).toISOString();
+  const flat = [151.8, 153.6, 152.1, 153.6, 154.9, 153.6, 152.0, 153.1, 154.2, 153.9].map((metric, index) => ({ createdAt: at(index), metric }));
+  const stalled = assessGoalProgress({ direction: "maximize", baseline: 151.7, target: 210, runs: flat });
+  assert.equal(stalled.plateau, true);
+  assert.equal(stalled.pivotRequired, true);
+  assert.match(stalled.directive, /structurally different/);
+  // A run that jumps by several progress units inside the window is progress.
+  const moving = assessGoalProgress({ direction: "maximize", baseline: 151.7, target: 210, runs: [...flat.slice(0, 6), { createdAt: at(20), metric: 170 }] , windowRuns: 4 });
+  assert.equal(moving.plateau, false);
+  assert.equal(moving.directive, null);
+  // Too few runs to judge, and near-target plateaus, do not force a pivot.
+  assert.equal(assessGoalProgress({ direction: "maximize", baseline: 151.7, target: 210, runs: flat.slice(0, 3) }).plateau, false);
+  assert.equal(assessGoalProgress({ direction: "maximize", baseline: 100, target: 110, runs: flat.map((run) => ({ ...run, metric: 109 })) }).pivotRequired, false);
+  // Minimisation uses the opposite sign.
+  const loss = assessGoalProgress({ direction: "minimize", baseline: 1, target: 0.5, runs: flat.map((run, index) => ({ ...run, metric: 0.99 - index * 0.0001 })) });
+  assert.equal(loss.pivotRequired, true);
+  const policy = deriveAdaptivePolicyForPlateau({ autonomy: "yolo", quality: [], metricPlateau: true, budgetRemainingMinutes: 600 });
+  assert.equal(policy.profile, "exploration");
+  assert.equal(policy.preferDiverseSearch, true);
+  assert.ok(policy.reasons.some((reason) => reason.includes("metric plateau")));
+});
+
+test("repeated planning-only pivots escalate to a mandatory experiment", () => {
+  const at = (index) => new Date(Date.UTC(2026, 9, 13, 1, index)).toISOString();
+  const runs = Array.from({ length: 10 }, (_, index) => ({ createdAt: at(index), metric: 153 + (index % 3) }));
+  const event = (index, pivotRequired, count) => ({ createdAt: at(20 + index), payload: { progress: { pivotRequired, runs: count } } });
+  assert.equal(stalledPivotCycles([], 10), 0);
+  assert.equal(stalledPivotCycles([event(0, true, 10), event(1, true, 10)], 10), 2);
+  // A new run since the last pivot resets the count; so does a cycle without a pivot.
+  assert.equal(stalledPivotCycles([event(0, true, 9), event(1, true, 10)], 10), 1);
+  assert.equal(stalledPivotCycles([event(0, true, 10), event(1, false, 10)], 10), 0);
+  const first = assessGoalProgress({ direction: "maximize", baseline: 151.7, target: 215, runs, stalledPivotCycles: 0 });
+  assert.equal(first.pivotRequired, true);
+  assert.equal(first.mustRun, false);
+  assert.doesNotMatch(first.directive, /not acceptable|Decide `run`/);
+  const repeated = assessGoalProgress({ direction: "maximize", baseline: 151.7, target: 215, runs, stalledPivotCycles: 2 });
+  assert.equal(repeated.mustRun, true);
+  assert.match(repeated.directive, /pivot cycle 3 without a new experiment/);
+  assert.match(repeated.directive, /Decide `run` this cycle/);
+});
+
+test("proxy-transfer calibration learns which proxy gains reach the real score", async () => {
+  const { calibrateProxyTransfer, expectedExternalScore, proxyTransferGuidance, appendTransferObservation, readTransferObservations } = await import("../dist/core/proxy-transfer.js");
+  const components = [
+    { proxy: "board_A", external: "A:val", floor: 50, weight: 1 },
+    { proxy: "board_B", external: "B:val", floor: 50, weight: 1 },
+  ];
+  // A gained 5 on the proxy but nothing for real; B's proxy gain transferred in full.
+  const observation = { at: "2026-10-13T00:00:00Z", proxy: { board_A: 55, board_B: 58 }, external: { "A:val": 49.8, "B:val": 58 } };
+  const calibration = calibrateProxyTransfer(components, [observation]);
+  const [a, b] = calibration.components;
+  assert.ok(a.beta < 0.35 && !a.trusted, `A should be untrusted, got ${a.beta}`);
+  assert.ok(b.beta > 0.7 && b.trusted, `B should transfer, got ${b.beta}`);
+  // With no observations every component sits at the neutral prior.
+  assert.equal(calibrateProxyTransfer(components, []).components[0].beta, 0.5);
+  // A candidate that only improves the untrusted component is worth less than one improving the trusted one.
+  const onlyA = expectedExternalScore(components, calibration, { board_A: 60, board_B: 50 });
+  const onlyB = expectedExternalScore(components, calibration, { board_A: 50, board_B: 60 });
+  assert.ok(onlyB > onlyA);
+  assert.equal(expectedExternalScore(components, calibration, { board_A: 60 }), undefined);
+  // A screen that scored only board_A takes board_B from the baseline.
+  assert.equal(expectedExternalScore(components, calibration, { board_A: 60 }, { board_A: 50, board_B: 50 }), expectedExternalScore(components, calibration, { board_A: 60, board_B: 50 }));
+  assert.match(proxyTransferGuidance(calibration, 101), /UNTRUSTED/);
+  assert.equal(proxyTransferGuidance(calibrateProxyTransfer(components, [])), "");
+  const dir = mkdtempSync(join(tmpdir(), "evidra-transfer-"));
+  try {
+    const path = join(dir, "nested", "transfer.jsonl");
+    appendTransferObservation(path, observation);
+    writeFileSync(path, `${readFileSync(path, "utf8")}not json\n`);
+    assert.equal(readTransferObservations(path).length, 1);
+    assert.deepEqual(readTransferObservations(join(dir, "missing.jsonl")), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("final ranking can use a transfer-adjusted score instead of the raw proxy", async () => {
+  const { rankFinalCandidates } = await import("../dist/core/finalize.js");
+  const { ResearchStore: Store } = await import("../dist/core/store.js");
+  const dir = mkdtempSync(join(tmpdir(), "evidra-final-score-"));
+  try {
+    const store = new Store(join(dir, "db.sqlite"));
+    const add = (id, metrics) => {
+      const worktreePath = join(dir, id);
+      mkdirSync(worktreePath, { recursive: true });
+      store.saveRun({ id: `${id}-run`, experimentId: id, status: "completed", payload: { exitCode: 0, metrics } });
+      return { id, worktreePath };
+    };
+    const a = add("exp-a", { total: 160, board_A: 60, board_B: 50 });
+    const b = add("exp-b", { total: 158, board_A: 50, board_B: 58 });
+    for (const entry of [a, b]) store.saveExperiment({ id: entry.id, payload: { runId: `${entry.id}-run`, worktreePath: entry.worktreePath } });
+    const byProxy = rankFinalCandidates(store, "total", "maximize", undefined, 2);
+    const byScore = rankFinalCandidates(store, "total", "maximize", undefined, 2, (metrics) => 0.1 * metrics.board_A + 1 * metrics.board_B);
+    store.close();
+    assert.equal(byProxy[0].experimentId, "exp-a");
+    assert.equal(byScore[0].experimentId, "exp-b");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("campaign lessons are computed from recorded outcomes and reach the next campaign's guidance", async () => {
+  const { distilCampaignLessons } = await import("../dist/core/campaign-lessons.js");
+  const run = (experimentId, total, a, b, status = "completed") => ({ experimentId, status, createdAt: "2026-10-13T12:00:00Z", metrics: { total, a, ...(b === undefined ? {} : { b }) } });
+  const text = distilCampaignLessons({
+    label: "trial-x",
+    metric: { name: "total", direction: "maximize" },
+    components: ["a", "b"],
+    baseline: 150,
+    runs: [run("e1", 154, 52, 50), run("e1r", 157, 55, 50), run("e2", 152, 50, 50), run("e3", 160, 60), { experimentId: "e4", status: "failed", createdAt: "2026-10-13T12:00:00Z", metrics: {} }],
+    experiments: [{ id: "e1", hypothesisId: "h1" }, { id: "e1r", hypothesisId: "h1" }, { id: "e2", hypothesisId: "h2" }, { id: "e3", hypothesisId: "h3" }],
+    hypotheses: [{ id: "h1", title: "Field re-pairing", formulationFamily: "repair" }, { id: "h2", title: "Bures transport", formulationFamily: "transport" }],
+    goalProgress: [{ pivotRequired: false, runs: 2 }, { pivotRequired: true, runs: 3 }, { pivotRequired: true, runs: 3 }, { pivotRequired: true, runs: 3 }],
+    failures: ["Modal timeout", "Modal  timeout"],
+  });
+  assert.match(text, /3 full evaluations, 1 partial screens, 1 failed/);
+  assert.match(text, /Best total: 157 \(\+7 over baseline 150\), from "Field re-pairing" \[repair\]/);
+  assert.match(text, /median of 3/);
+  assert.match(text, /- repair: best 157, \+7 vs baseline over 2 run\(s\)/);
+  assert.match(text, /No experiment moved these by even 0\.5: b\./);
+  assert.match(text, /2 ended without a new run\. Too many cycles only planned/);
+  assert.equal(text.match(/Modal timeout/g)?.length, 1);
+
+  const { loadProjectGuidance } = await import("../dist/core/project-guidance.js");
+  const root = mkdtempSync(join(tmpdir(), "evidra-lessons-"));
+  try {
+    writeFileSync(join(root, "EVIDRA.md"), "brief");
+    mkdirSync(join(root, ".evidra", "lessons"), { recursive: true });
+    for (const name of ["t1.md", "t2.md", "t3.md"]) writeFileSync(join(root, ".evidra", "lessons", name), `lessons ${name}`);
+    const guidance = loadProjectGuidance(root);
+    assert.equal(guidance?.paths.filter((path) => path.startsWith(".evidra/lessons/")).length, 2);
+    assert.equal(guidance?.paths[0], "EVIDRA.md");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+
+test("provider failure preserves partial implementation hashes durably without completion", async () => {
+  const root=mkdtempSync(join(tmpdir(), "evidra-interrupted-implementation-"));
+  const failure=new Error("provider quota reached");
+  try {
+    const database=join(root,"state.sqlite");
+    await assert.rejects(preserveInterruptedImplementation(async()=>{
+      writeFileSync(join(root,"candidate.py"),"partial draft\n");
+      throw failure;
+    },{worktree:root,paths:async()=>["candidate.py"],record:payload=>{
+      const store=new ResearchStore(database);
+      try {store.appendEvent("experiment.implementation.interrupted",{experimentId:"interrupted",...payload});}
+      finally {store.close();}
+    }}),error=>error===failure);
+    const store=new ResearchStore(database);
+    try {
+      const event=store.eventsByType("experiment.implementation.interrupted")[0];
+      assert.equal(event.payload.guardsCompleted,false);
+      assert.deepEqual(verifyImplementationSnapshot(event.payload.snapshot),[]);
+      assert.equal(store.eventsByType("experiment.implementation.completed").length,0);
+      writeFileSync(join(root,"candidate.py"),"later changed draft\n");
+      assert.notDeepEqual(verifyImplementationSnapshot(event.payload.snapshot),[]);
+    }finally {store.close();}
+  }finally {rmSync(root,{recursive:true,force:true});}
+});
+
+test("interruption journaling reports absent source and redacts errors without accepting a draft", async () => {
+  const root=mkdtempSync(join(tmpdir(), "evidra-interrupted-empty-"));
+  let saved;const failure=new Error("token=do-not-record-this quota reached");
+  try {
+    await assert.rejects(preserveInterruptedImplementation(async()=>{throw failure;},
+      {worktree:root,paths:async()=>[],record:payload=>{saved=payload;}}),error=>error===failure);
+    assert.equal(saved.snapshot,undefined);assert.match(saved.snapshotError,/no existing source files/);
+    assert.equal(saved.guardsCompleted,false);assert.doesNotMatch(saved.error,/do-not-record-this/);
+    let records=0;
+    assert.equal(await preserveInterruptedImplementation(async()=>42,
+      {worktree:root,paths:async()=>[],record:()=>{records++;}}),42);
+    assert.equal(records,0);
+  }finally {rmSync(root,{recursive:true,force:true});}
+});
+
+test("competition source changes are detected and force re-orientation only for rule changes", () => {
+  const before = "Validation leaderboard is open. Daily quota is eight submissions per task.";
+  const after = "P3 is open: the test leaderboard is open. Daily quota is eight submissions per task. Validation answers are available by opt-in.";
+  assert.deepEqual(competitionSourceChange(undefined, after), { changed: false, added: [], removedCount: 0 });
+  assert.equal(competitionSourceChange(before, before).changed, false);
+  const change = competitionSourceChange(before, after);
+  assert.equal(change.changed, true);
+  assert.equal(change.removedCount, 1);
+  assert.ok(change.added.some((sentence) => sentence.startsWith("P3 is open")));
+  const at = "2026-10-27T16:00:00Z";
+  const rules = competitionChangeGuidance([{ url: "https://example.org/timeline", channelKind: "rules", added: change.added, removedCount: 1, at }]);
+  assert.match(rules, /^COMPETITION CONTEXT CHANGED/);
+  assert.match(rules, /P3 is open/);
+  const board = competitionChangeGuidance([{ url: "https://example.org/lb", channelKind: "leaderboard", added: ["Team X 230."], removedCount: 0, at }]);
+  assert.doesNotMatch(board, /COMPETITION CONTEXT CHANGED/);
+  assert.equal(competitionChangeGuidance([]), "");
 });

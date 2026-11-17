@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "at": "2026-10-11T18:30:33.553229+00:00",
+  "modalVersion": "1.6.1",
+  "pythonVersion": "3.14.6",
+  "workerSourceSha256": "11f67bb83ba10b5e7dca7de876f9311b676d9a1363671c14337e234cccd4e59b",
+  "sdkMountSourceSha256": "6257241175d97366a69a4303dd8c9b9ed9c7ba6db3d4a4ff49377ef92be02eb4",
+  "includedPaths": [
+    ".sota/experiment-config.json",
+    "allowed-link.py",
+    "src/.hidden/module.py",
+    "train.py"
+  ],
+  "symlinkedConfigRejected": true,
+  "fixtureRootInsideControllerState": true,
+  "remoteCalls": 0,
+  "scope": "Local upload enumeration; remote mounting, authentication, cancellation, and live worker execution are unverified."
+}

@@ -42,3 +42,63 @@ export function competitionResearchSources(config: CompetitionConfig): Competiti
   }
   return [...unique.values()];
 }
+
+export interface CompetitionSourceChange {
+  changed: boolean;
+  /** Sentences present now but absent from the prior snapshot, in page order. */
+  added: string[];
+  /** Count of prior sentences no longer present. */
+  removedCount: number;
+}
+
+function sourceSentences(text: string): string[] {
+  return text
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9"'(])/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length >= 12);
+}
+
+/**
+ * Compare two snapshots of a mutable competition channel. Rules, timelines and
+ * leaderboards change mid-campaign (a new phase, a new quota, released data); a
+ * campaign that only re-reads them as claims never notices that its objective moved.
+ */
+export function competitionSourceChange(priorText: string | undefined, currentText: string, maxAdded = 12): CompetitionSourceChange {
+  if (priorText === undefined) return { changed: false, added: [], removedCount: 0 };
+  const prior = sourceSentences(priorText);
+  const current = sourceSentences(currentText);
+  const priorSet = new Set(prior);
+  const currentSet = new Set(current);
+  const added = [...new Set(current.filter((sentence) => !priorSet.has(sentence)))];
+  const removedCount = new Set(prior.filter((sentence) => !currentSet.has(sentence))).size;
+  return { changed: added.length > 0 || removedCount > 0, added: added.slice(0, maxAdded), removedCount };
+}
+
+export interface CompetitionChangeEvent {
+  url: string;
+  channelKind: string;
+  added: string[];
+  removedCount: number;
+  at: string;
+}
+
+/**
+ * Directive for the next cycle after a competition channel changed. Leaderboards
+ * change constantly, so only rule, timeline and documentation changes force a
+ * re-orientation; leaderboard changes are reported as context.
+ */
+export function competitionChangeGuidance(changes: CompetitionChangeEvent[], maxChars = 2_400): string {
+  if (!changes.length) return "";
+  const structural = changes.filter((change) => change.channelKind !== "leaderboard" && change.channelKind !== "discussion");
+  const lines: string[] = [];
+  for (const change of changes) {
+    lines.push(`- ${change.channelKind} ${change.url} changed at ${change.at} (${change.added.length} new, ${change.removedCount} removed sentences)`);
+    for (const sentence of change.added.slice(0, 4)) lines.push(`    + ${sentence.slice(0, 240)}`);
+  }
+  const head = structural.length
+    ? "COMPETITION CONTEXT CHANGED. Official rules, timeline or documentation differ from the snapshot this campaign planned against. Before spending compute, re-read the changed pages, check whether the phase, scored boards, submission limits, deadlines or allowed data changed, and re-plan the objective and evaluator if they did. Record what changed and what you decided."
+    : "Competition standings or discussion changed since the last snapshot; use as context only.";
+  const text = `${head}\n${lines.join("\n")}`;
+  return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+}

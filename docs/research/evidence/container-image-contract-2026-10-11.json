@@ -1,0 +1,40 @@
+{
+  "verifiedAt": "2026-10-11T07:09:32.830Z",
+  "nodeVersion": "v24.21.0",
+  "executorSourceSha256": "0865365f49288d4375e433e9f15932071f396361ee8f6bce0499933e58be8a7f",
+  "daemonVersion": "29.8.1",
+  "command": [
+    "/bin/sh",
+    "-c",
+    "printf \"%s\\n\" \"$1\"; sleep 3; echo accuracy=0.9",
+    "probe",
+    "literal spaces; $(echo unexpected)"
+  ],
+  "observed": {
+    "containerId": "fcf4cd6f969c8b1aa685faaf02cbbfe8bc1eeee0a25f834a2581410623472867",
+    "entrypoint": [
+      "/bin/sh"
+    ],
+    "argv": [
+      "-c",
+      "printf \"%s\\n\" \"$1\"; sleep 3; echo accuracy=0.9",
+      "probe",
+      "literal spaces; $(echo unexpected)"
+    ],
+    "healthcheck": [
+      "NONE"
+    ],
+    "volumes": [
+      "f45fd93e53c597e27188dff50afd655bf066948d2e5c2fcf42bb8eecee6d529c"
+    ]
+  },
+  "status": "completed",
+  "exitCode": 0,
+  "durationSeconds": 3.288,
+  "entrypointMarkerAbsent": true,
+  "healthcheckMarkerAbsent": true,
+  "independentContainerQuery": "absent",
+  "independentVolumeQueries": "absent",
+  "scope": "Local Docker image hooks, argv preservation, and anonymous-volume cleanup. No Podman or restart claim.",
+  "probeDockerfile": "FROM postgres:16-alpine\nENTRYPOINT [\"/bin/sh\", \"-c\", \"touch /workspace/image-entrypoint-ran; exit 9\"]\nCMD [\"image-default-command\"]\nHEALTHCHECK --interval=1s --timeout=1s CMD touch /workspace/image-healthcheck-ran\n"
+}

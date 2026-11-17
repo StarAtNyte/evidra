@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+/** Allow complete multi-module implementations while keeping provider payloads bounded. */
+export const MAX_IMPLEMENTATION_ARTIFACTS = 64;
+
 /** Bounded environment overrides for reproducible experiments; secrets use dedicated secret refs instead. */
 export const ExperimentEnvironmentSchema = z.record(z.string(), z.string().max(4096)).default({}).superRefine((environment, context) => {
   const entries = Object.entries(environment);
@@ -37,7 +40,24 @@ export const CompetitionConfigSchema = z.object({
   metric: z.object({
     name: z.string(),
     direction: z.enum(["minimize", "maximize"]),
+    /** Value the campaign is trying to reach; drives goal-progress plateau detection. */
+    target: z.number().finite().optional(),
+    /** Recent completed runs that must fail to move the best result before the method family counts as plateaued. */
+    plateauWindowRuns: z.number().int().min(3).max(50).optional(),
+    /** Smallest improvement of the best result that counts as progress (defaults to 5% of the baseline-to-target distance). */
+    minimumProgress: z.number().positive().optional(),
   }),
+  /** Map proxy metric components to the real evaluator's scores so real feedback can calibrate the proxy. */
+  proxyTransfer: z.object({
+    /** JSONL of {at, label?, proxy: {metric: value}, external: {score: value}}, relative to the project root. */
+    observationsPath: z.string().min(1),
+    components: z.array(z.object({
+      proxy: z.string().min(1),
+      external: z.string().min(1),
+      floor: z.number().finite(),
+      weight: z.number().finite().positive(),
+    })).min(1),
+  }).optional(),
   /** Optional non-primary objectives; promotion can require they do not regress. */
   secondaryMetrics: z.array(z.object({
     name: z.string().min(1),
@@ -48,6 +68,9 @@ export const CompetitionConfigSchema = z.object({
   evaluator: z.object({
     command: z.array(z.string()),
     estimatorPath: z.string(),
+    /** Optional evaluator on data the agents never see. A run becomes the champion only if
+     * it improves the primary metric and does not regress on this holdout. */
+    holdoutCommand: z.array(z.string()).min(1).optional(),
   }),
   workspacePath: z.string().optional(),
   baselineCommand: z.array(z.string()).optional(),
@@ -75,6 +98,12 @@ export const CompetitionConfigSchema = z.object({
     /** Name of an environment variable holding the bearer token; never store the token itself. */
     authEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(),
     fileField: z.string().min(1).max(80).default("file").optional(),
+    /** Run inside the best validated experiment's worktree when a campaign ends, so the
+     * autonomous run itself writes the final submission files. */
+    finalizeCommand: z.array(z.string().min(1)).min(1).optional(),
+    finalizeTimeoutMinutes: z.number().positive().finite().default(120).optional(),
+    /** How many leading candidates to re-score with the current evaluator before choosing the final one. */
+    finalizeRescoreTop: z.number().int().min(1).max(10).default(3).optional(),
   }).optional(),
   submissionPolicy: z.object({
     requireHumanApproval: z.boolean().default(true),
@@ -100,6 +129,9 @@ export const CompetitionConfigSchema = z.object({
     verificationCommand: z.array(z.string()).min(1).optional(),
     verificationCommands: z.array(z.array(z.string()).min(1)).min(1).optional(),
     requiredArtifacts: z.array(z.string()).default([]),
+    /** Experiments that may run at once; set when the evaluator offloads compute to a remote
+     * backend, so a local executor is not the bottleneck. Defaults to the executor's ceiling. */
+    maxParallelExperiments: z.number().int().min(1).max(8).optional(),
     /** Workspace-relative datasets staged into isolated experiment worktrees. */
     dataPaths: z.array(z.string().min(1)).default([]),
     /** Immutable workspace-local files needed by evaluators but absent from Git worktrees. */
@@ -135,6 +167,11 @@ export type Hypothesis = z.infer<typeof HypothesisSchema>;
 export const ResearchHypothesisSchema = z.object({
   title: z.string().min(1),
   formulationFamily: z.string().min(1).max(80).default("unspecified"),
+  /** Self-declared design contrast, used for exploration scheduling, never proof. */
+  architectureChange: z.object({
+    baseline: z.object({ representation: z.string().trim().min(1).max(500), predictionMechanism: z.string().trim().min(1).max(500), learningObjective: z.string().trim().min(1).max(500), generalizationAssumption: z.string().trim().min(1).max(500) }),
+    proposed: z.object({ representation: z.string().trim().min(1).max(500), predictionMechanism: z.string().trim().min(1).max(500), learningObjective: z.string().trim().min(1).max(500), generalizationAssumption: z.string().trim().min(1).max(500) }),
+  }).optional(),
   outcomeType: z.enum(["metric", "artifact", "proof", "behavior", "system", "other"]).default("metric"),
   implementationMode: z.enum(["modify", "verify"]).default("modify"),
   /** Secret-free per-experiment parameter overrides passed to the isolated executor. */
@@ -165,7 +202,7 @@ export const ResearchHypothesisSchema = z.object({
     targetPath: z.string().trim().min(1).max(1_000).nullable().optional(),
   }).nullable().optional(),
   /** Additional immutable inputs needed to implement a hypothesis, staged only by exact hash. */
-  implementationArtifacts: z.array(ImplementationArtifactSchema).max(8).default([]).superRefine((artifacts, context) => {
+  implementationArtifacts: z.array(ImplementationArtifactSchema).max(MAX_IMPLEMENTATION_ARTIFACTS).default([]).superRefine((artifacts, context) => {
     const targets = new Set<string>();
     for (const [index, artifact] of artifacts.entries()) {
       const normalized = artifact.targetPath.replaceAll("\\", "/").replace(/\/+$/, "");

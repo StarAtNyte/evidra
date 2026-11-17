@@ -22,6 +22,32 @@ You bring the question, workspace, or challenge. Evidra coordinates the loop, ke
 | A general harness for metrics, artifacts, proofs, behavior, and system properties | A Kaggle-only automation script |
 | A reproducible experiment and evidence ledger | A promise that model output is ground truth |
 
+### How the search loop works
+
+The core loop takes its shape from [autoresearch](https://github.com/karpathy/autoresearch): try an idea, run the
+locked evaluator, keep it if it beats the best result so far, and otherwise discard it.
+
+- **Experiments compound.** Every completed run that beats the champion becomes the new champion, and the
+  next experiment's worktree starts from the champion's implementation.
+- **Attempts are cheap; claims are reviewed.** The director can run any concrete idea, from tuning to a new
+  algorithm or architecture, without first justifying it. The critic and semantic auditor review only claims
+  that the goal is met. Validation, replication, and submission gates apply to promotion, never to trying.
+- **New ideas get their own line.** Every hypothesis names its method family, and each family keeps its own
+  best. An attempt starts from the best of its family (a new family starts from the champion), so a new
+  architecture is refined over several attempts instead of being discarded for losing its first run to a
+  tuned champion. One attempt in three goes to a new or young family (fewer than 3 attempts), enforced by
+  the controller.
+- **A hidden holdout catches overfitting.** Set `evaluator.holdoutCommand` in `competition.json` to an
+  evaluator over data the agents cannot read. A run becomes champion only if it improves the primary metric
+  and does not regress on the holdout; holdout scores are never shown to the agents.
+- **Five phases, not nine.** New campaigns go orientation → baseline → search → replication → promotion. The
+  controller still runs the data audit itself; it is no longer a phase the director has to work through.
+- **Any workspace, any goal.** Without a real evaluator (the `local-research` default is `true`), the director
+  is told to build a scorer as its first experiment, or to produce the deliverable (a design, report, or
+  dataset) as a verified artifact, instead of auditing while it waits for a metric.
+- **The director sees the results log.** Each cycle it receives the champion and the recent attempts (idea,
+  method family, metric, kept or not), so it can refine what works and switch families when one stalls.
+
 ## At a glance
 
 | Need | Evidra gives you |
@@ -53,7 +79,10 @@ The model proposes. Evidra measures, records, verifies, and decides whether the 
 
 ### Install globally
 
-Requires Node.js 22.19.0 or newer:
+Requires Node.js 22.19.0 or newer, Git, and ripgrep (`rg`) on PATH. Git owns
+isolated experiment worktrees; ripgrep powers workspace inventory and search.
+`evidra doctor --json` reports required tooling separately from optional providers
+and execution backends. Modal diagnostics separately check CLI health, the SDK allocation inspector, and credential configuration; local configuration does not verify authentication.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/StarAtNyte/evidra/master/install.sh | sh
@@ -283,6 +312,12 @@ Runtime history is context-aware: local, container, and Modal observations are k
 Search rewards are now context-aware and cost-aware as well. Autonomous experiment rewards retain provider, model, executor, and phase provenance; repeated local evidence is combined with global history through conservative shrinkage, and the operator rank includes a bounded reward-per-minute bonus. A policy can specialize to a Modal/GPU or validation context without trusting a tiny lucky sample or spending the whole budget on a slow operator.
 
 Harness benchmarking is closed-loop: `benchmark run` records matched outcomes and emits a durable adaptive retest agenda. Losses are classified into reliability, recovery, alignment, efficiency, search, or coverage interventions with falsifiable predictions and acceptance criteria. The next retest preserves task, model, seed, evaluator, metric, and budget, so Evidra is optimized to beat incumbents by improving the harness rather than by changing the comparison.
+
+Benchmark protocol JSON may declare `adaptationRole` as `feedback`, `selection`,
+`held_out`, or `unclassified` (the default). The role persists in reports and
+retests. Held-out records do not drive automatic revision guidance, change
+retention, or adaptive retests. Declaring a role does not establish task
+independence; transfer claims still require the task-disjoint holdout checks.
 
 When a benchmark exposes a credible harness weakness, Evidra materializes one durable `harness.retest` task. A research or challenge campaign can execute that task automatically after the candidate implementation succeeds; operators can inspect the same queue with `evidra queue status` and run a specific task manually:
 
@@ -686,7 +721,7 @@ evidra event serve --port 4311 --token "$EVIDRA_EVENT_TOKEN" \
 - experiment proposals receive an explainable novelty score against prior directions, reducing redundant hypothesis families while preserving probability-of-success, information-value, risk, and compute-cost ranking;
 - ensemble proposals are durable, checksummed candidate artifacts with member-file checksums, provenance, and explicit candidate/validated/promoted/rejected status; source mutation blocks validation, and creating a blend never silently promotes or submits it;
 - local-model experiment implementation through bounded unified-diff proposals, checked and applied only inside the experiment worktree;
-- Modal execution mounts the exact isolated experiment worktree and accepts either Modal CLI profiles or environment credentials;
+- Modal workers enable [restricted Modal resource access](https://modal.com/docs/guide/restricted-access) and single-use containers. Modal execution resolves its default worker from the installed Evidra package, mounts the isolated experiment worktree, excludes controller/Git state and environment directories, and permits only the root `.sota/experiment-config.json` contract. Upload filtering rejects external or excluded-target file aliases and nonregular files. It accepts either Modal CLI profiles or environment credentials; call IDs are recorded before waiting for completion. Custom `EVIDRA_MODAL_ENTRYPOINT` implementations must accept `--config-sha256`, reject missing or changed prepared configuration before starting experiment code, accept `--submission-id`, and emit `[evidra-call] {"submissionId":"...","callId":"fc-..."}` before their result. Each execution must own an ephemeral Modal app that is closed before the CLI returns. `experiment reconcile <id> --cancel-modal` can stop only an app whose unique recorded identity and SDK name match its submission tag; deployed, shared, or older untagged apps are refused. Plain reconciliation remains read-only. Missing or conflicting receipts, active apps, or unknown container state retain the compute and replay fence. `experiment reconcile` polls recorded calls using `EVIDRA_MODAL_PYTHON` (default `python3`, with the Modal SDK installed; also required for successful-execution allocation verification); completed calls release quarantine only after the SDK binds the call to a stopped app with zero running containers, without importing measurements. If the worker envelope is unavailable, `ALLOCATION_STOPPED` / `sdk-allocation` records allocation termination with sentinel 125 for unknown worker outcome; it never claims worker success;
 - Docker/Podman execution mounts only the exact isolated experiment worktree, uses a network-disabled container, and keeps the same artifact, metric, retry, and evidence gates;
 - Codex-backed experiment engineers honor the configured entitlement policy: they switch to an installed local fallback in `auto`/`fallback` mode, or wait durably when `wait` is selected, instead of silently abandoning an authorized campaign;
 - shell and autonomy safety guards.
@@ -1117,9 +1152,18 @@ learning-curve stop policy in `resources.earlyStopping`:
 
 Workers can emit JSON progress lines such as `{"step": 200, "validation_score": 0.51}`.
 Evidra stops only after persistent underperformance against the comparable reference curve;
-one noisy observation cannot discard a run. The result is recorded as `early_stopped`, preserving
+the configured patience counts distinct increasing progress steps. The result is recorded as `early_stopped`, preserving
 the progress log and the reason for the decision. A missing reference curve disables the policy,
 so an uncalibrated controller never stops work merely because a model guessed poorly.
+
+Live telemetry retains only the latest point, a streak counter, the immutable
+reference curve, and at most 65,536 characters of an unfinished line. Oversized
+records are discarded in full, including later suffixes. Late or corrected steps
+break the streak and require fresh progress before stopping; identical repeats
+of the latest point do not add patience evidence. Metric names are literal and
+numeric records must be finite and nonblank. The full learning-curve extractor
+also rejects oversized records; complete captured output remains available
+under the process-log byte cap for audit.
 
 ## State and provenance
 
@@ -1247,6 +1291,8 @@ The provider is an implementation detail behind the same research protocol:
   still be selected explicitly; an explicit Astra selection is never silently
   rewritten to the Luna default.
 - **Local:** Ollama's local chat endpoint and the selected installed model.
+  Requires a stable 0.x server version at least 0.40.3 for explicit context
+  truncation/shifting controls; unsupported versions fail before inference.
 
 Competition manifests may additionally declare typed `researchChannels` such as
 `rules`, `discussion`, `leaderboard`, `documentation`, `paper`, or `repository`.
@@ -1260,6 +1306,9 @@ The director can request a configured channel directly with the bounded
 Evidra never extracts subscription tokens or implements unofficial ChatGPT API calls. Provider availability is checked before work begins, and local fallback is used only for configured `auto`/`fallback` policies when a local model is available and the Codex failure is classified as safely route-changeable.
 
 ## Development
+
+The current release boundaries, paper alignment, verification commands, and
+remaining production gates are tracked in [Production readiness](docs/production-readiness.md).
 
     npm install
     npm run check       # TypeScript type-check only
@@ -1320,6 +1369,11 @@ Use `evidra backup [workspace-relative-path]` or `/backup [path]` before risky m
 environment changes, or long campaigns. The backup is created through SQLite's consistent
 backup API while the live controller remains open, and can be reopened as an independent
 Evidra store for recovery verification.
+Backups are built in a private staging directory and published atomically with
+owner-only file permissions. Failed creation preserves an existing destination;
+the live database and its filesystem aliases cannot be backup destinations.
+Replacement is refused when the destination has SQLite journal files; close
+or recover that snapshot database before reusing its path.
 Autonomous research and challenge starts also create a timestamped controller-start backup
 after the integrity check and before lease acquisition.
 

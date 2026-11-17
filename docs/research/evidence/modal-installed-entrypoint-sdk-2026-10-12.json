@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "workerSourceSha256": "11f67bb83ba10b5e7dca7de876f9311b676d9a1363671c14337e234cccd4e59b",
+  "executorSourceSha256": "abc29244ca1319a031932eb34a18da9a3eab4aac8765325b8c5b056680773f13",
+  "sdkVersion": "modal client version: 1.6.1",
+  "shippedWorkerResolvedOutsidePackage": true,
+  "workspaceDecoyIgnored": true,
+  "actualSdkCliHelpVerified": true,
+  "remoteCalls": 0,
+  "scope": "Installed package path resolution and optional SDK CLI loading; live remote execution is unverified."
+}

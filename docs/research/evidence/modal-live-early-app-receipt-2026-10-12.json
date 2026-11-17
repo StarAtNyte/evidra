@@ -1,0 +1,196 @@
+{
+  "at": "2026-10-12T06:26:35.127Z",
+  "gpuRequested": false,
+  "receipts": {
+    "target": {
+      "callId": "fc-01M4QCKXHXEDSQWBGCS9X74PN9",
+      "appId": "ap-P6Jw67HPtNLdxNSk9FJJW4",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "target",
+      "submissionId": "39aa1973-4784-467b-9e2f-24aea203b8d1",
+      "allocationName": "evidra-39aa1973-4784-467b-9e2f-24aea203b8d1",
+      "appName": "evidra-39aa1973-4784-467b-9e2f-24aea203b8d1",
+      "phase": "submitted",
+      "at": "2026-10-12T06:25:50.317Z"
+    },
+    "peer": {
+      "callId": "fc-01M4QCKXN46GJS8YQP5T0CS88G",
+      "appId": "ap-mlJOfaGTvD7xXXl7NJXlri",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "peer",
+      "submissionId": "31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "allocationName": "evidra-31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "appName": "evidra-31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "phase": "submitted",
+      "at": "2026-10-12T06:25:50.420Z"
+    }
+  },
+  "targetResult": {
+    "runId": "target-1791786352511",
+    "status": "failed",
+    "exitCode": 1,
+    "durationSeconds": 7.584,
+    "metrics": {},
+    "metricsByFold": {},
+    "learningCurve": [],
+    "subgroupDeltas": [],
+    "artifacts": {},
+    "stdout": "[client diagnostics omitted]",
+    "stderr": "Modal worker completion is unconfirmed; reconcile before replay.",
+    "command": [
+      "python",
+      "probe.py"
+    ],
+    "cwd": "/tmp/evidra-modal-concurrent-e7Qu1w/target",
+    "failureClass": "unknown"
+  },
+  "peerResult": {
+    "runId": "peer-1791786395124",
+    "status": "completed",
+    "exitCode": 0,
+    "durationSeconds": 50.191,
+    "metrics": {
+      "accuracy": 1
+    },
+    "metricsByFold": {},
+    "learningCurve": [],
+    "subgroupDeltas": [],
+    "artifacts": {
+      "result.json": "/tmp/evidra-modal-concurrent-e7Qu1w/peer/result.json"
+    },
+    "stdout": "accuracy=1.0\n",
+    "stderr": "",
+    "command": [
+      "python",
+      "probe.py"
+    ],
+    "cwd": "/tmp/evidra-modal-concurrent-e7Qu1w/peer"
+  },
+  "cancellationAttempts": [
+    {
+      "released": true,
+      "queried": 1
+    }
+  ],
+  "events": [
+    {
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "target",
+      "submissionId": "39aa1973-4784-467b-9e2f-24aea203b8d1",
+      "allocationName": "evidra-39aa1973-4784-467b-9e2f-24aea203b8d1",
+      "appName": "evidra-39aa1973-4784-467b-9e2f-24aea203b8d1",
+      "phase": "submitting",
+      "at": "2026-10-12T06:25:44.917Z"
+    },
+    {
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "peer",
+      "submissionId": "31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "allocationName": "evidra-31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "appName": "evidra-31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "phase": "submitting",
+      "at": "2026-10-12T06:25:44.930Z"
+    },
+    {
+      "appId": "ap-P6Jw67HPtNLdxNSk9FJJW4",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "target",
+      "submissionId": "39aa1973-4784-467b-9e2f-24aea203b8d1",
+      "allocationName": "evidra-39aa1973-4784-467b-9e2f-24aea203b8d1",
+      "appName": "evidra-39aa1973-4784-467b-9e2f-24aea203b8d1",
+      "phase": "allocated",
+      "at": "2026-10-12T06:25:49.987Z"
+    },
+    {
+      "appId": "ap-mlJOfaGTvD7xXXl7NJXlri",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "peer",
+      "submissionId": "31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "allocationName": "evidra-31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "appName": "evidra-31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "phase": "allocated",
+      "at": "2026-10-12T06:25:50.093Z"
+    },
+    {
+      "callId": "fc-01M4QCKXHXEDSQWBGCS9X74PN9",
+      "appId": "ap-P6Jw67HPtNLdxNSk9FJJW4",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "target",
+      "submissionId": "39aa1973-4784-467b-9e2f-24aea203b8d1",
+      "allocationName": "evidra-39aa1973-4784-467b-9e2f-24aea203b8d1",
+      "appName": "evidra-39aa1973-4784-467b-9e2f-24aea203b8d1",
+      "phase": "submitted",
+      "at": "2026-10-12T06:25:50.317Z"
+    },
+    {
+      "callId": "fc-01M4QCKXN46GJS8YQP5T0CS88G",
+      "appId": "ap-mlJOfaGTvD7xXXl7NJXlri",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "peer",
+      "submissionId": "31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "allocationName": "evidra-31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "appName": "evidra-31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "phase": "submitted",
+      "at": "2026-10-12T06:25:50.420Z"
+    },
+    {
+      "callId": "fc-01M4QCKXN46GJS8YQP5T0CS88G",
+      "appId": "ap-mlJOfaGTvD7xXXl7NJXlri",
+      "appState": "STOPPED",
+      "runningTasks": 0,
+      "completionEvidence": "client-envelope",
+      "state": "COMPLETED",
+      "exitCode": 0,
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "peer",
+      "submissionId": "31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "allocationName": "evidra-31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "appName": "evidra-31969523-5fa3-4d64-9481-4afad4ccd9bd",
+      "phase": "terminal",
+      "at": "2026-10-12T06:26:35.122Z"
+    }
+  ],
+  "cleanup": [
+    {
+      "type": "run.remote.cleanup.requested",
+      "payload": {
+        "executor": "modal",
+        "experimentId": "target",
+        "submissionId": "39aa1973-4784-467b-9e2f-24aea203b8d1",
+        "callId": "fc-01M4QCKXHXEDSQWBGCS9X74PN9",
+        "appId": "ap-P6Jw67HPtNLdxNSk9FJJW4",
+        "appName": "evidra-39aa1973-4784-467b-9e2f-24aea203b8d1",
+        "requestId": "a4eec4aa-7587-4929-a7ca-bb0943d7244a",
+        "at": "2026-10-12T06:25:52.547Z"
+      },
+      "createdAt": "2026-10-12T06:25:52.547Z",
+      "eventHash": "e1aceb1fb89d45e8c0cd9639ab2ce1a7a61677166dea9440d7c5d61782108fba"
+    },
+    {
+      "type": "run.remote.cleanup.observed",
+      "payload": {
+        "executor": "modal",
+        "experimentId": "target",
+        "submissionId": "39aa1973-4784-467b-9e2f-24aea203b8d1",
+        "callId": "fc-01M4QCKXHXEDSQWBGCS9X74PN9",
+        "appId": "ap-P6Jw67HPtNLdxNSk9FJJW4",
+        "requestId": "a4eec4aa-7587-4929-a7ca-bb0943d7244a",
+        "exitCode": 0,
+        "verifiedStopped": true,
+        "at": "2026-10-12T06:26:04.801Z"
+      },
+      "createdAt": "2026-10-12T06:26:04.802Z",
+      "eventHash": "7ac2219d164ab960f0ef7e6ba25ab5e0a6094d2612d418a627d3934d008be06e"
+    }
+  ],
+  "scope": "Distinct apps in one store; no shared-input or GPU claim."
+}

@@ -58,6 +58,296 @@ external evaluator.
 
 ## Latest repository state
 
+- Modal now runs a bounded, interruptible CLI version preflight before recording
+  launch intent. Broken/missing clients, interrupted checks and preflight
+  timeouts create no allocation ledger or GPU charge. Verified spawn failures
+  after a successful probe still use NOT_STARTED evidence; post-launch errors
+  remain fenced. Tests cover preflight failures and probe/launch races.
+
+- Process launch errors now preserve OS proof that the runtime client did not start. Modal
+  records ordered NOT_STARTED evidence for verified spawn failures, allowing
+  reservations to release without pretending a remote call ran. Post-launch
+  errors still retain the fence, even if their message/code says ENOENT.
+  Tests cover missing and non-executable clients, callback errors and restart.
+
+- Modal ownership checks now use a partial call-ID index and read at most two
+  matching receipts. SQLite without JSON1 streams receipts and stops at the
+  second match instead of materializing history. Regression tests verify the
+  query plan and both paths against unrelated history and aliased ownership.
+
+- Modal call IDs now require one receipt owner across the durable store before
+  querying or recording completion, and before releasing a fence. Reused IDs
+  across launch intents or experiments retain reservations even if each copied
+  ledger appears complete. Recovery and ledger tests cover both aliasing and
+  copied terminal proofs. Live Modal recovery/cancellation remain unverified.
+
+- Modal reconciliation now polls recorded call IDs with SDK `get(timeout=0)`
+  through a packaged Python helper. Completed valid worker envelopes produce
+  idempotent terminal evidence and release quarantine without importing metrics
+  or artifacts. Pending, expired, malformed, missing-receipt and failed queries
+  stay fenced. Set `EVIDRA_MODAL_PYTHON` to the Python interpreter with Modal
+  installed. Tests run the actual helper with a stub SDK; live RPC and remote
+  cancellation remain unverified. Temporary SDK installation was not completed.
+  Source: https://modal.com/docs/sdk/py/latest/FunctionCall.
+
+- Modal now spawns a call and emits its SDK call ID before waiting for results.
+  The controller persists streamed receipts linked to the prelaunch intent;
+  new completion evidence must match that call ID. Missing, duplicate or
+  mismatched receipts cannot confirm completion. Call cancellation, live SDK
+  verification and recovery of submissions lost before receipt remain open.
+  API contract: https://modal.com/docs/sdk/py/latest/FunctionCall.
+
+- Modal stdout or stderr capture overflow now returns an explicit failed result
+  (65) with no metrics or artifacts. A metric in the retained prefix cannot
+  survive discarded later evidence. Python tests cover either stream overflowing
+  and exactly-at-limit output remaining valid. Live Modal recovery remains open.
+
+- Modal completion-envelope limits now apply inside the remote worker before
+  returning over RPC, as well as in the local entrypoint. Direct worker tests
+  reject oversized escaped output and artifacts before transport; valid results
+  preserve their worker exit status. Live Modal RPC limits remain unverified.
+
+- Modal bounds aggregate artifact capture at 64 MiB and serialized completion
+  envelopes at 7 MiB so terminal evidence fits the controller's retained tail.
+  Exceeding either returns a small failed-result envelope (65) with no metrics
+  or artifacts, avoiding false success or an unparseable completion. Tests cover
+  aggregate exhaustion and JSON escaping/Unicode expansion. Large-artifact
+  transport remains unimplemented; oversized results are explicitly rejected.
+
+- Modal artifact collection now walks workspace-relative directory descriptors
+  with no-follow opens, rejects special files, reads at most the per-file cap
+  plus one byte, and rejects files that change during capture. Python tests
+  cover normal, missing, oversized, FIFO, symlink, parent-symlink and mutated
+  files. Large-artifact transport remains follow-up work.
+
+- Modal forwards the declared timeout to the Python subprocess worker, which
+  enforces a monotonic deadline even after both output pipes close. Each command
+  gets a new process group, killed during cleanup on success or failure.
+  Timeout exceptions emit no completion envelope and preserve reconciliation
+  fences. Tests execute sleeping workers, closed pipes and inherited child
+  pipes. Detached sessions, live Modal RPC cancellation and orphan discovery
+  remain unverified; process-group cleanup is not full remote termination proof.
+
+- Modal worker output now uses bounded 64 KiB pipe reads instead of blocking
+  line reads. Capture is limited before decoding, UTF-8 streaming preserves
+  fragmented characters, and invalid bytes become replacement characters.
+  Progress frames cannot merge unterminated output with the final envelope.
+  Actual Python subprocess tests cover partial lines with saturated stderr,
+  capture bounds, fragmented Unicode and invalid bytes; live RPC remains open.
+
+- The actual Modal Python entrypoint now returns client success after emitting
+  a valid worker envelope, even for failed workers. RPC errors still propagate;
+  signal termination becomes portable exit status 128+signal. Python execution
+  tests with a stubbed Modal SDK verify real subprocess and entrypoint behavior;
+  they do not certify live Modal RPC termination or orphan cancellation.
+
+- Modal now persists a launch intent before starting the runtime client and
+  records synchronous completion evidence only after a successful client exit
+  and valid worker envelope. Uncertain failures, timeouts, interruptions and
+  missing envelopes retain compute reservations and block replay across restart.
+  Legacy completion receipts are local invocation evidence; new launches also
+  record SDK call IDs. Discovering and cancelling orphaned Modal calls remains
+  unimplemented.
+
+- Modal completion parsing now rejects duplicate envelopes, malformed terminal
+  evidence in either order, and noncanonical artifact base64 instead of falling
+  back to an earlier success. Ordinary progress logs remain accepted. This does
+  not establish remote cancellation or durable allocation identity.
+
+- Modal now requires a successful runtime-client exit and valid worker envelope
+  before parsing worker metrics or importing artifacts. Printed success cannot
+  overwrite client failure, timeout, or interruption; unconfirmed outcomes keep
+  raw output as diagnostics and return nonretryable unknown failure. Tests cover
+  graceful-zero termination, missing envelopes, and confirmed worker failures.
+  Live Modal call identity verification, remote cancellation and orphan recovery remain
+  open gates. No live Ollama server was reachable for runner-overflow trials.
+
+- Local health and every generation now probe the server version and require
+  a stable 0.x release at least 0.40.3, conservatively verified against released
+  Ollama request/handler source. Unsupported or unknown versions cannot reach
+  inference; deadlines, interruption, byte bounds, and proxy routing remain
+  enforced. HTTP regressions cover accepted versions, malformed/prerelease/
+  old/unknown-major versions, stalled metadata, and cancellation.
+  Live runner/proxy conformance, tokenizer budgets, and transcript growth
+  remain open gates; self-reported version is not an execution attestation.
+
+- Local chat requests now send `truncate: false` and `shift: false`, following
+  Ollama request/handler source pinned at
+  `eab97e9f92b9a25c2d52d2cc6c1b1c99bd9fae21`. HTTP regressions preserve the full
+  objective/schema and reject context exhaustion without assistant emission;
+  generation-error usage is retained when reported. Live runner conformance,
+  tokenizer budgeting, and provider
+  transcript growth remain open release gates.
+
+- Local calls now request a finite output-token limit (4096 by default), with
+  validated environment/adapter overrides from 1 to 65536. Reported output
+  above the limit is rejected after usage attribution. Tests cover precedence,
+  invalid configuration, bounds, and rejection without assistant emission.
+  Input tokenizer budgeting, context/output headroom, live server conformance,
+  unknown usage, and provider transcript growth remain open release gates.
+
+- Local Ollama transport now enforces 1 MiB serialized request, 4 MiB decoded
+  response/metadata, and 16 KiB error-diagnostic byte limits. Oversized input
+  never reaches HTTP; oversized streams are cancelled and error text redacted.
+  Regressions cover chunked/compressed bodies, Unicode, JSON escaping, and
+  metadata probes. Model token-window budgeting, output headroom, provider
+  transcript growth, and inference-budget coverage remain open gates.
+
+- `experiment reconcile <id> --cancel-container` now supports explicit removal
+  of unresolved owned Docker workers after controller loss. It persists the
+  receipt and cleanup request before the exact-ID RPC, then verifies removal
+  and daemon identity before releasing compute. Default reconciliation remains
+  read-only. Failure and ownership regressions plus a live SIGKILL/cancellation
+  probe cover the boundary; evidence is in
+  `docs/research/evidence/container-orphan-cancellation-2026-10-11.json`.
+  Podman, live alternate-daemon verification, automatic orphan cancellation,
+  cleanup of already reconciled containers, and campaign soaks remain open.
+
+- Docker recovery now matches the daemon ID recorded before launch, exact
+  worker identity and ownership label, and stopped state with restart disabled.
+  It can recover a missing receipt from the durable worker name, or prove a
+  known full ID absent. Queries are read-only and bounded; ambiguous/running
+  workers remain fenced. Receipts and proofs are idempotent across observers.
+  A live controller SIGKILL probe verified running-worker quarantine followed
+  by exited-worker recovery without validating the measurement; evidence is in
+  `docs/research/evidence/container-crash-recovery-2026-10-11.json`.
+  Podman, live alternate-daemon verification, automatic orphan cancellation,
+  and long campaign soak tests remain open release gates.
+
+- Container execution now persists unique launch intent before the runtime
+  RPC and records full-ID receipts and verified absence proof. CLI/TUI share
+  this mandatory ledger. Unconfirmed cleanup or durability failures keep
+  compute reserved and block replay even without a controller restart.
+  A SIGKILL regression verifies recovery of the durable worker name; live
+  Docker normal-finalization evidence is recorded in
+  `docs/research/evidence/container-ledger-2026-10-11.json`.
+  Container reconciliation accepts durable cleanup proof; newer Docker intents
+  also support daemon-matched recovery queries as described above.
+
+- Slurm recovery now rejects out-of-order lifecycle evidence and malformed
+  cluster identities; expanded ledger regressions verify that compute remains
+  reserved for these cases. Live Slurm cluster recovery remains an open gate.
+
+- Container execution now bypasses image entrypoints, disables image health
+  checks, preserves the declared argv, and rejects implicit default commands.
+  Cleanup removes anonymous image-created volumes with the exact container.
+  A local Docker image with observable startup hooks verified direct command
+  execution, absent hook markers, and container/volume removal; evidence is in
+  `docs/research/evidence/container-image-contract-2026-10-11.json`.
+  Podman live verification and orphaned-container reconciliation remain open.
+- Exact container cleanup at `5a33e02` passed hosted CI on both Node versions,
+  including package checks: run 38120074055; 707 local tests passed.
+
+- Container launchers now retain full IDs in private receipt files and await
+  exact-ID removal plus daemon-side absence verification. Missing receipts or
+  failed/nonempty daemon queries fail conservatively and cannot auto-retry;
+  timeout/interruption remain truthful, including cleanup runtime. Mock tests
+  cover cleanup failures. Local Docker 29.8.1 probes independently verified
+  completion, timeout, and interruption cleanup; recorded evidence is in
+  `docs/research/evidence/container-cleanup-2026-10-11.json`. Podman, durable
+  container crash recovery, and unconfirmed-outcome compute fencing remain open.
+- Slurm live-query protocol at `2d9c20d` passed hosted CI on both Node versions,
+  including package checks: run 38119441467; 706 tests passed locally.
+
+- Slurm uses a UUID-based allocation name in lifecycle evidence. Normal and
+  post-restart accounting query duplicates and require job-ID/name agreement.
+  `experiment reconcile` now queries known unresolved allocations on the
+  recorded cluster with a bounded query budget, appends idempotent terminal
+  proof, and releases only complete identity-checked evidence. Legacy identity
+  gaps, ambiguous receipts, active jobs, and failed queries remain fenced.
+  Fake-CLI tests cover reuse, duplicates, terminal failures, absent evidence,
+  and timeouts; no live cluster recovery claim is made.
+- Active reservation fencing at `1b3b758` passed hosted CI on both Node
+  versions, including package checks: run 38118811473; 705 local tests passed.
+
+- Normal Slurm finalization now consults allocation evidence as well as restart
+  flags. Unconfirmed outcomes cannot release compute, replay, or claim success;
+  failed terminal updates materialize a durable quarantine with the requested
+  outcome preserved. Indexed ledger queries avoid loading unrelated allocation
+  history. Regressions cover active-controller failure, reservation recovery,
+  budget exclusion, database reopen, and release after terminal reconciliation.
+- Allocation-ledger work at `749e46c` passed hosted CI on both Node versions,
+  including package checks: run 38118505961; all 704 local tests passed.
+
+- Slurm execution now persists unique submission intents before launch,
+  accepted allocation/cluster receipts before polling, and exact terminal
+  accounting afterward. CLI/TUI wire mandatory ledger persistence. The
+  `experiment reconcile <id>` command releases a restart fence only with a
+  valid event chain and complete matching evidence for every intent, without
+  promoting a measurement. Live post-restart cluster queries, ambiguous
+  submissions, and container/Modal reconciliation remain required follow-up.
+- Restart quarantine at `d8a3198` passed hosted CI on both Node versions,
+  including package checks: run 38118010430; all 701 local tests passed.
+
+- Restart recovery quarantines stale container/Modal/Slurm work instead of
+  treating controller loss as a retryable failure. Durable reconciliation flags
+  block replay and normal reschedule/completion updates, and retain compute
+  reservations across terminal-looking edits and database reopen. A SIGKILL
+  regression verifies this fence; local stale retries remain available.
+  Backend allocation identity, terminal reconciliation, and verified quarantine
+  release remain required follow-up work, not an achieved recovery gate.
+- Provider probe hardening at `ed8e32d` passed hosted CI on both Node versions,
+  including package checks: run 38117528116; all 700 local tests passed.
+
+- Local provider discovery and model-health probes now retain a bounded
+  deadline through headers and JSON body decoding, honor caller interruption,
+  and validate inventory/metadata. Startup and fallback selection pass caller
+  timeout/signal options through; an interrupted fallback is not converted
+  back into a provider-reset wait. HTTP regressions stall headers, inventory
+  bodies, and model-health bodies, and verify pre-aborted calls send nothing.
+- Local request-contract changes at `efce265` passed hosted CI on both Node
+  versions, including package checks: run 38117242384; 699 tests passed locally.
+
+- Local Ollama requests now share endpoint resolution across discovery/health/
+  generation, forward structured output schemas, reject partial or truncated
+  replies, and report valid inference usage even for rejected completions.
+  Pre-aborted requests and callback failures clean up without sending work.
+  HTTP regressions cover endpoint paths, schemas, completion evidence, usage,
+  cancellation, and listener cleanup. Model-aware input limits and output
+  headroom remain open; this does not claim a token-budget guarantee.
+- Slurm hardening at `3383977` passed hosted CI on Node 22.19.0 and Node 24,
+  including package checks: run 38116795772. All 698 local regressions passed.
+
+- Slurm protocol hardening now uses exact terminal allocation accounting with
+  actual exit status/signals, joined cancellation requests, cluster-aware
+  control commands, and scheduler requeue disabled. Ambiguous outcomes and
+  queue failures cannot trigger automatic retries. Log previews read bounded
+  UTF-8 head/tail evidence and reject symlinks. Ten focused tests pass; live
+  cluster restart fencing, accounting reconciliation, and remote pause/resume
+  remain open. The paper alignment and these limits are recorded in
+  `production-readiness.md`.
+- Hosted CI at `ffc4b7e` passed all 689 tests on Node 22.19.0 and Node 24,
+  including production package checks; see run 38115887237. This closes the
+  runner compatibility failures below for that commit.
+
+- Hosted verification of `6d66564` exposed missing `rg` on the runner and an
+  optional Modal-profile spawn failure in `doctor`. Git/ripgrep are now explicit
+  required tooling, the installer rejects missing ripgrep before downloading,
+  CI provisions it, and doctor readiness includes required-tool health while
+  absent optional backends remain structured unavailable diagnostics. A
+  minimal-PATH CLI regression exercises the failure mode independently of the
+  developer machine's installed backends.
+
+- The 2026-10-11 production audit maps the user's harness-design paper to actual
+  Evidra boundaries and keeps the remaining gates explicit in
+  [`production-readiness.md`](production-readiness.md). Execution now waits for
+  process-group cleanup, preserves timeout/interruption/early-stop outcomes
+  through graceful zero exits, drains shutdown evidence, and cleans up callback
+  failures. Captured Unicode logs obey the byte cap. Context packing accounts
+  for serialized JSON and bounded report metadata; current steering, phase
+  state, and recent failure/trust metadata survive bulk history. Provider
+  prompts use the counted compact representation, and lane directives enter
+  packing before provider submission. Early-stopping telemetry now retains a
+  bounded line and constant progress state, rejects oversized suffixes and
+  nonfinite/blank numbers, and rebuilds patience after stale or corrected steps.
+  Its declared policy/reference are immutable launch snapshots, and ordered
+  decisions match the batch rule in both directions. The final local tree
+  passed 687 tests on both Node 22.19.0 and Node 24.21.0, nine safety probes,
+  typechecking/build, and a fresh production-only package install with event
+  verification and an independently reopened backup. Full provider token
+  budgets, live backend recovery, soak/restart evidence, hosted CI, and matched
+  external runs remain open.
+
 - The Paperclip-inspired campaign organization projection is now durable and shared across the dashboard, CLI, and TUI. `evidra organization --json` and `/organization` expose the mission, active campaign phases, reporting lines, queue ownership, specialist directives, and bounded accountability signals. The projection respects deterministic campaign/mode goal-set identity: foreign phases are not presented as current work, and live work is separately classified as ownerless, unscoped, mis-scoped, or unbudgeted. Mis-scoped work is critical operator attention; ordinary missing ownership or task budgets remain warnings so intentionally scheduler-owned work is not blocked.
 - Custom/external roles now have an explicit admission boundary. Built-in roles are approved by their durable contract; dynamic roles appear as `review` and cannot start an external running heartbeat until an operator approves them with `evidra agents approve <role>` or `/agents approve <role>`. Revocation is durable and auditable via `evidra agents revoke <role>`.
 - Queue bridges enforce the same boundary: `/tasks/claim` requires a fresh accepted heartbeat for an admitted role, so a worker token alone cannot silently acquire research tickets.
@@ -839,7 +1129,310 @@ external evaluator.
   the current public checkout normalizes 36 valid task contracts without
   executing Harbor or claiming benchmark performance.
 
+- Modal launch now binds the prepared experiment config to its SHA-256 digest.
+  The worker validates a bounded regular-file snapshot and strict metadata,
+  folds/seeds, matrix flag, and declared environment before starting commands.
+  Missing, altered, malformed, oversized, or symlinked contracts return failed
+  completion without measurements. Safe declared variables reach the worker;
+  private HOME and experiment metadata remain authoritative. Actual Python
+  subprocess regressions verify rejection before command execution; live Modal
+  mounting and SDK integration remain separate validation gates.
+
+- Modal upload filtering now preserves leading dots and applies the contract
+  exception only at the worktree root. Resolved file targets must also remain
+  inside the worktree and pass exclusions; config aliases and special files
+  are excluded. A repeatable SDK probe (`scripts/probe-modal-workspace-mount.py`)
+  verified the actual Modal 1.6.1 local enumerator in an isolated virtualenv;
+  evidence is in `docs/research/evidence/modal-workspace-mount-sdk-2026-10-12.json`.
+  This proves local upload selection, not live remote mounting or cancellation.
+
+- The default Modal entrypoint now resolves from the installed package rather
+  than the caller's workspace. Explicit custom entrypoints remain unchanged.
+  CI exercises the installed executor from an unrelated workspace with a decoy
+  worker file. A local SDK probe verifies all shipped CLI flags through Modal
+  1.6.1's `run --help`, without launching remote compute; evidence is recorded
+  in `docs/research/evidence/modal-installed-entrypoint-sdk-2026-10-12.json`.
+
+- A live Modal 1.6.1 CPU worker completed the bounded smoke experiment, verified
+  dataset/split/declared environment/private HOME and source exclusions, returned
+  accuracy=1, and restored its declared JSON artifact. The real call receipt
+  preceded completion. A separate reopened store deliberately omitted the
+  successful client's terminal event; read-only SDK recovery released its
+  quarantine without importing any measurements. Evidence and probe source:
+  `docs/research/evidence/modal-live-cpu-and-recovery-2026-10-12.json`.
+  This is a recovery simulation against a real completed call, not a real
+  client-crash/cancellation/GPU/concurrency test; those gates remain open.
+
+- A real Modal CLI SIGKILL after its durable call receipt preserved quarantine
+  and rejected measurements; reopening and SDK polling confirmed successful call
+  completion without importing measurements. However, live app inspection then
+  showed one container still alive. Explicit stop of the probe's own app yielded
+  stopped state and zero tasks. Evidence:
+  `docs/research/evidence/modal-live-client-crash-2026-10-12.json`.
+  **Previously observed Modal compute recovery gap (fixed below):** completed calls alone do not
+  prove allocation quiescence after client loss. Retain app/allocation identity
+  and require termination proof before releasing compute; do not treat the
+  current successful SDK poll as closure of this gate.
+
+- Modal compute recovery now requires SDK-bound app identity, stopped state,
+  and zero running containers; call completion alone is insufficient. New
+  receipts record app IDs, successful execution verifies allocation teardown
+  within a bounded wait, and older terminal records require a separate causal
+  allocation proof. Missing/active/mismatched/ambiguous apps retain quarantine
+  and compute reservations. SDK inspection is preflighted before launch.
+  Actual CPU execution and a real CLI SIGKILL verified the fix: a completed call
+  with an active app stayed fenced, then explicit stop of the probe's own app
+  enabled read-only recovery with no imported measurements. Evidence:
+  `docs/research/evidence/modal-live-allocation-quiescence-2026-10-12.json`.
+  This supersedes the compute-release gap above. Pending-call cancellation,
+  GPU workloads, concurrency and live nondefault environments remain open.
+
+- Modal workers now enable restricted resource access and single-use containers.
+  SDK preflight requires both isolation options before launching remote compute.
+  A live CPU probe using the wrapper's SDK context received AuthError for a
+  noncreating Queue lookup; the unrestricted control reached the lookup and
+  received NotFoundError. Both returned their normal metrics/artifacts and
+  stopped with zero containers. Evidence:
+  `docs/research/evidence/modal-restricted-resource-access-2026-10-12.json`.
+  Other resource types, adversarial subprocess credential recovery and network
+  egress remain separate verification gates.
+
+- Modal recovery can now release a verified stopped app with zero containers
+  when worker output is expired, malformed, canceled, or unavailable. Such
+  records use ALLOCATION_STOPPED / sdk-allocation with sentinel 125 for unknown
+  worker outcome; no metrics are imported or worker success inferred. Older
+  worker-result records remain immutable and gain only allocation evidence.
+  Active/missing/mismatched apps and local process interruption remain fenced.
+  A live missing-executable CPU probe failed before emitting an envelope, then
+  recovered after reopening its store using the stopped allocation proof:
+  `docs/research/evidence/modal-live-allocation-only-recovery-2026-10-12.json`.
+
+- A live pending CPU call was confirmed with SDK get(timeout=0), then canceled
+  with terminate_containers=True after an actual local-client SIGKILL. The
+  cancellation acknowledgment was followed by another TimeoutError, and
+  read-only recovery correctly retained quarantine while the app was active.
+  Explicit stop of the probe's owned app enabled stopped/zero-container recovery
+  with ALLOCATION_STOPPED and no imported measurements. Evidence:
+  `docs/research/evidence/modal-live-pending-cancellation-2026-10-12.json`.
+  A user-facing Modal cancellation command, GPU cancellation and concurrent-input
+  cancellation remain open; this probe does not establish those capabilities.
+
+- Added `experiment reconcile <id> --cancel-modal`. New default workers name
+  their ephemeral app with the unique submission tag. Cancellation requires a
+  single recorded app owner, SDK call/app/tag binding, one input and ephemeral
+  lifecycle; deployed, shared and older untagged apps are refused. Requests and
+  observations are durable, failed SDK diagnostics are bounded/redacted, and
+  compute is released only on stopped state with zero containers. Plain
+  reconciliation remains read-only. Live CLI evidence:
+  `docs/research/evidence/modal-live-cancel-command-2026-10-12.json` and
+  `docs/research/evidence/modal-live-cancel-command-pending-2026-10-12.json`.
+  The first pending probe retained quarantine on a transient STOPPING state.
+  Diagnostics identified that transition; bounded verification now waits through
+  it. A fresh live pending-call CLI probe stopped the owned app and released only
+  after zero-container proof, with no imported measurements. GPU/concurrent
+  cancellation remains unverified.
+
+- `doctor --json` now exposes Modal CLI health, SDK allocation-inspector
+  availability, credential configuration and an explicit unverified-authentication
+  flag. A selected profile or credential environment no longer masks a broken
+  CLI or inspector. Capability checks are bounded and local, matching SDK token
+  and OAuth configuration rules without exposing values or contacting Modal.
+  Existing local-provider readiness remains independent of optional Modal.
+
+- Two simultaneous live Modal CPU executions shared one controller store with
+  distinct tagged apps. Killing the target client and canceling its owned app
+  preserved the peer's normal completion, accuracy smoke metric and artifact.
+  The first cancellation observation retained quarantine; a retry established
+  stopped/zero-container termination. Both durable allocations are confirmed,
+  and no peer cleanup was requested or campaign measurements imported. Evidence:
+  `docs/research/evidence/modal-live-concurrent-cancellation-2026-10-12.json`.
+  This proves isolation between two apps; shared-app inputs and GPU cancellation
+  remain unverified.
+  Reproduce with `npm run build`, then
+  `node scripts/probe-modal-concurrent-cancellation.mjs /absolute/sdk/bin/python /absolute/sdk/bin/modal`.
+  This launches two live CPU jobs using configured credentials. It prints and
+  retains its state directory, bounds receipt waits, records each cancellation
+  attempt and waits for executor callbacks before closing SQLite on failures.
+  A `recovery.json` report survives assertion failures and summarizes both
+  executor outcomes and durable allocation state without retaining raw client
+  output. An unavailable-SDK probe verified nonzero failure and report creation
+  without remote execution.
+
 ## Immediate next work
+
+Explicit feedback benchmarks and eligible retests now persist redacted failure
+stderr excerpts for revision prompts. The projection caps itself at 4096 UTF-8
+bytes and six recent failures, retains total-run and omitted-failure counts,
+and excludes stdout and successful-run diagnostics. Selection and held-out
+events omit traces. CLI regressions verify actual failing benchmark events
+feed diagnostic text into the bounded revision packet without fixture secrets.
+
+Benchmark protocol JSON accepts validated adaptationRole values: feedback,
+selection, held_out or unclassified (the legacy default). Reports and durable
+events retain the role. Retests preserve eligible roles; held-out tasks are
+refused before claiming, and held-out evidence cannot materialize adaptive
+retests or drive automatic revision guidance/change retention. Tests exercise
+actual CLI execution and queued-task refusal. Roles are declared provenance;
+they do not prove task disjointness or prevent independent workspace-file reads.
+
+Harness-revision prompts now use a valid JSON feedback packet capped at 8000
+UTF-8 bytes rather than cutting a raw benchmark dump. Packets retain protocol
+identity, bounded scorecard/comparison diagnostics and available trial/run
+failures, prioritizing recent records. Explicitly held_out reports are omitted;
+stderr excerpts require an explicit feedback role and are redacted. Unclassified
+and selection records expose no raw traces, and stdout is excluded. Immutable
+benchmark events and retest contracts retain their full controller evidence.
+This filters prompt feedback; benchmark producers still need validated split
+provenance and classification before claiming full held-out isolation.
+
+The shared sensitive-path policy now protects the default .sota controller
+database and its SQLite journals, backup directory, hidden credential/secret
+filenames and additional SSH key names. Structured reads and explicit shell
+paths refuse these names and resolved aliases. Research reports, experiment
+configuration and unrelated dataset SQLite files remain outside this denylist.
+Custom controller-state locations, recursive tool reads and hard links still
+need confinement beyond these explicit path checks.
+
+Autonomous shell inspection now applies the existing structured-read sensitive
+path policy to lexical and resolved paths. Dotenv, credentials, private keys
+and aliases to those files are refused, including attached file options. A
+SAFE shell tool regression verifies refusal without fixture content disclosure.
+This covers explicit path arguments, not recursive searches, hard-link aliases
+or raw controller-state files outside that existing sensitive-name policy.
+
+Workspace inspection now checks attached file-list, pattern/script-file,
+ignore-file and magic-file option paths, plus attached Git directory options
+and ls listing paths. Absolute/traversing paths and symlinked outside parents
+are rejected, including missing leaves. Regressions cover recognized option
+forms; this is not a complete parser for every tool option or implicit read.
+
+Autonomous workspace path checks now resolve existing file targets and the
+nearest existing parent of missing targets. Relative file or directory symlinks
+that lead outside the workspace are refused; internal symlinks remain usable.
+Regressions cover the inspection tools across file, directory and missing-leaf
+escapes. This checks explicit path arguments, not every tool's implicit reads
+or concurrent symlink replacement.
+
+SAFE shell inspection requires sed --sandbox, refuses awk, and rejects find
+execution/confirmation, deletion and file-output actions. Installed GNU sed
+was tested with a disposable file: unsandboxed w wrote the marker, sandboxed
+w failed without creating it, and sandboxed printing retained the expected
+output. Guard regressions and safety probes cover these surfaces. Platforms
+without sed sandbox support can use ripgrep or structured workspace tools.
+
+SAFE inspection refuses ripgrep `--pre` and `--hostname-bin` executable hooks
+in separate or equals forms. Ordinary search and literal option-looking
+patterns after `--` remain allowed. The installed ripgrep help confirms both
+options execute external programs; the safety benchmark now includes a
+preprocessing-hook rejection probe. Environment-configured ripgrep hooks and
+other inspection-tool execution surfaces still require audit.
+A disposable integration probe confirmed ambient RIPGREP_CONFIG_PATH is
+removed by the existing SAFE research-tool worker environment. Direct ripgrep
+executed the configured fixture hook; SAFE shell.exec returned the expected
+match without executing it. Evidence:
+`docs/research/evidence/ripgrep-config-safe-inspection-2026-10-12.json`.
+This covers the ambient config path for that tool launch, not explicitly
+declared experiment environments or other executable hooks.
+
+The autonomous Git mutation guard now parses supported global options before
+checking the subcommand. Push through `git -C`, `-c`, repository/worktree
+options and transparent launch wrappers is refused; unknown global options
+fail closed. Harmless inspection and version/help commands remain supported.
+The default safety benchmark includes a global-option push probe. This is an
+argv guard regression, not proof that arbitrary interpreted code is sandboxed.
+
+Controller backups now stage SQLite output in a private directory (0700),
+flush the completed snapshot, set owner-only permissions (0600), then publish
+by rename on the destination filesystem. Failure preserves an existing backup
+and removes staging files. Live database paths and inode aliases are refused;
+the CLI closes its store on backup failures. Focused fault-injection tests
+verify these behaviors, and actual live Modal probe state reopened from a
+private backup with valid event and allocation evidence.
+Backup publication also checks destination WAL, shared-memory and rollback
+journals before creation and immediately before rename. Active or leftover
+journals refuse replacement while preserving the previous snapshot. Tests
+cover an open writable destination, each journal suffix and a journal created
+during backup staging. This is journal detection, not a cross-process lock.
+The CLI also resolves the nearest existing destination parent before creating
+directories. Symlinked parents outside the physical workspace are rejected;
+internal workspace symlinks remain supported. A CLI regression verifies both
+paths, no outside directory creation and restored-backup event integrity.
+The same workspace backup-path helper is now used by the terminal UI command,
+which also closes its store after failures. Automatic startup snapshots retain
+the explicit EVIDRA_BACKUP_DIR separate-volume override; interactive commands
+remain workspace-contained.
+An actual child-process SIGKILL after real SQLite snapshot completion but before
+publication preserved the destination hash and its prior event history; the
+live source retained newer events with valid integrity. The unpublished
+staging directory remained private (0700). Evidence:
+`docs/research/evidence/backup-sigkill-before-publication-2026-10-12.json`.
+Automatic orphan cleanup, power-loss durability and full campaign restoration
+remain unverified.
+Reproduce the publication-interruption gate with
+`node scripts/probe-backup-publication-crash.mjs` after building. It uses only
+disposable local state, retains fixtures for inspection and runs in CI on both
+supported Node versions. A fresh local run passed all integrity, permission
+and old/new snapshot assertions.
+
+The default Modal local entrypoint now prints its app identity before spawning
+the function call. The controller journals a causal `run.remote.allocated`
+event and requires the later call receipt to match that app. Duplicate,
+reordered, malformed and mismatched app records fail closed. An app-only
+failure retains quarantine and its reservation across database reopening.
+This narrows identity loss after entrypoint startup; image/build rejection
+before the entrypoint (including the rejected GPU probe) remains unresolved.
+App-only recovery is not yet authorized by the reconciliation proof model.
+A live two-app CPU probe verified submitting/allocated/submitted ordering and
+matching app identities for both jobs; target cancellation preserved peer
+completion. Evidence: `docs/research/evidence/modal-live-early-app-receipt-2026-10-12.json`.
+Durable call ownership now checks any recorded app allocation against the
+single ordered intent and receipt. Contradictory, duplicate, reordered or
+malformed records refuse terminal writes, cancellation and budget release,
+including after reopening and without SQLite JSON1. Older receipts without
+an app allocation remain supported. A NOT_STARTED spawn proof cannot override
+a recorded allocation. Recovery still requires a call receipt and stopped-app
+proof; the early app record alone never authorizes release.
+The tightened durable binding checks passed a fresh live two-app CPU
+cancellation probe: the target was reconciled and its peer completed with the
+smoke metric and artifact. A consistent SQLite backup taken while the peer was
+unresolved reopened independently with valid event integrity and both call/app
+bindings preserved; the snapshot retained the peer's unconfirmed state.
+Evidence: `docs/research/evidence/modal-live-durable-binding-2026-10-12.json`
+and `docs/research/evidence/modal-live-backup-binding-2026-10-12.json`.
+This proves snapshot consistency, not controller takeover, full campaign
+restoration or artifact backup.
+The same restored snapshot subsequently passed stale recovery and read-only
+SDK reconciliation of its unresolved peer. One query confirmed stopped-app
+termination, cleared quarantine and retained failed experiment status with
+zero measurements and no peer cleanup request. Evidence:
+`docs/research/evidence/modal-live-backup-recovery-2026-10-12.json`.
+This verifies allocation recovery from that backup; full campaign takeover,
+artifact restoration and live reservation retention remain unverified.
+
+The bounded live T4 probe (`scripts/probe-modal-gpu.mjs`, SDK Python and CLI
+paths as arguments) was rejected because the configured Modal account requires
+a payment method for GPU functions. No call receipt or measurements were
+produced; quarantine remained. A read-only SDK listing found its uniquely
+tagged app STOPPED with zero containers, but name-only observation is not
+accepted as durable reconciliation proof. Evidence:
+`docs/research/evidence/modal-gpu-submission-rejected-2026-10-12.json`.
+GPU execution and cancellation remain unverified; retry requires account GPU
+availability. The probe retains its database, events and result on failure.
+The actual receipt-less submission database was reopened and audited with both
+plain reconciliation and `cancelModal`: each returned released=false, queried=0.
+Replacement with scheduled/running/completed status was rejected, quarantine
+survived reopen, and no cleanup requests or measurements were recorded. Evidence:
+`docs/research/evidence/modal-receiptless-recovery-audit-2026-10-12.json`.
+This verifies the retry guard, not successful recovery. No compute reservation
+existed in the direct-executor probe, so live budget retention remains untested.
+
+The offline `scripts/probe-modal-worker-isolation.py` probe imports the shipped
+worker with Modal 1.6.1 and checks actual SDK registration metadata: restricted
+Modal access, single-use containers, no attached secrets and no requested GPU.
+It verifies subprocess environment filtering with disposable sentinel values.
+Evidence: `docs/research/evidence/modal-worker-isolation-registration-2026-10-12.json`.
+Network access is enabled. This adds registration evidence, not server enforcement
+or adversarial credential-recovery proof; those isolation gates remain open.
 
 1. Add/maintain real matched external benchmark adapters and run actual trials
    when runnable harness commands and credentials are available; never fabricate

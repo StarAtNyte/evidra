@@ -1,0 +1,80 @@
+{
+  "verifiedAt": "2026-10-11T07:02:18.969Z",
+  "nodeVersion": "v24.21.0",
+  "executorSourceSha256": "88927b7e66080df65814470a157eb515b9138eee3c23a6004b3308d101e4ea7e",
+  "image": "postgres:16-alpine",
+  "imageId": "sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
+  "daemonVersion": "29.8.1",
+  "scope": "Local Docker daemon completion, timeout, and interruption. No controller-crash recovery or Podman claim.",
+  "evidence": [
+    {
+      "kind": "completed",
+      "command": [
+        "/bin/sh",
+        "-c",
+        "echo accuracy=0.9"
+      ],
+      "timeoutMinutes": 1,
+      "status": "completed",
+      "exitCode": 0,
+      "durationSeconds": 0.395,
+      "containerId": "a0ccc4104a9971d49d56557021e1f2421cc71d7e215b05aa9b1604f110c86d29",
+      "independentDaemonQuery": [
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        "id=a0ccc4104a9971d49d56557021e1f2421cc71d7e215b05aa9b1604f110c86d29",
+        "--format",
+        "{{.ID}}"
+      ],
+      "daemonQueryOutput": ""
+    },
+    {
+      "kind": "timeout",
+      "command": [
+        "/bin/sh",
+        "-c",
+        "echo ready; trap \"exit 0\" TERM; sleep 10; echo accuracy=0.9"
+      ],
+      "timeoutMinutes": 0.03,
+      "status": "failed",
+      "exitCode": 124,
+      "durationSeconds": 3.458,
+      "containerId": "3c24bc54ea38283c6e655b03ebff50fc5a32cb12f0181196c30393bb210e939b",
+      "independentDaemonQuery": [
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        "id=3c24bc54ea38283c6e655b03ebff50fc5a32cb12f0181196c30393bb210e939b",
+        "--format",
+        "{{.ID}}"
+      ],
+      "daemonQueryOutput": ""
+    },
+    {
+      "kind": "interrupted",
+      "command": [
+        "/bin/sh",
+        "-c",
+        "echo ready; trap \"exit 0\" TERM; sleep 10; echo accuracy=0.9"
+      ],
+      "timeoutMinutes": 1,
+      "status": "failed",
+      "exitCode": 130,
+      "durationSeconds": 3.148,
+      "containerId": "7505aa47944d18fcad404a8a8486bd86594615b25f7459b47f64e1ef2f55b3a8",
+      "independentDaemonQuery": [
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        "id=7505aa47944d18fcad404a8a8486bd86594615b25f7459b47f64e1ef2f55b3a8",
+        "--format",
+        "{{.ID}}"
+      ],
+      "daemonQueryOutput": ""
+    }
+  ]
+}

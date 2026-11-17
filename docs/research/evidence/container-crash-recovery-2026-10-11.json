@@ -1,0 +1,89 @@
+{
+  "verifiedAt": "2026-10-11T11:52:30.714Z",
+  "nodeVersion": "v24.21.0",
+  "dockerVersion": "29.8.1",
+  "sourceSHA256": {
+    "executors": "1e1469854d42cc3cb9fe159c51c194947e97b7c8e97e9896c298a91bd0334a41",
+    "store": "d553cc7f2ca431e6ee1e0c589f915efe635de7de0341149429378e7c483a5835",
+    "remote-reconciliation": "41c4f94e91131815edb40820630456d7e67f7e2b79d381a5e5988c9f591d9ebe"
+  },
+  "image": "postgres:16-alpine",
+  "command": [
+    "/bin/sh",
+    "-c",
+    "sleep 4; echo accuracy=0.9"
+  ],
+  "controllerSignal": "SIGKILL",
+  "runningSnapshotBeforeCrash": [
+    "dfac89c42787f1851be5f1594f854391c73ebe634a67bae373e541eae1fc9ec8",
+    "/evidra-1e84c634-6684-4551-bffd-bc1b0af1a042",
+    true
+  ],
+  "reservedGpuHoursAfterCrash": 2,
+  "initialRecovery": {
+    "released": false,
+    "queried": 2
+  },
+  "recovery": {
+    "released": true,
+    "queried": 3
+  },
+  "ledger": [
+    {
+      "type": "run.remote.submitting",
+      "payload": {
+        "executor": "container",
+        "experimentId": "live-crash",
+        "submissionId": "1e84c634-6684-4551-bffd-bc1b0af1a042",
+        "allocationName": "evidra-1e84c634-6684-4551-bffd-bc1b0af1a042",
+        "runtime": "docker",
+        "daemonId": "67ee11a9-8cbb-4e4a-9288-8b9dca8bd292",
+        "phase": "submitting",
+        "at": "2026-10-11T11:52:26.087Z"
+      }
+    },
+    {
+      "type": "run.remote.submitted",
+      "payload": {
+        "experimentId": "live-crash",
+        "submissionId": "1e84c634-6684-4551-bffd-bc1b0af1a042",
+        "allocationName": "evidra-1e84c634-6684-4551-bffd-bc1b0af1a042",
+        "runtime": "docker",
+        "daemonId": "67ee11a9-8cbb-4e4a-9288-8b9dca8bd292",
+        "containerId": "dfac89c42787f1851be5f1594f854391c73ebe634a67bae373e541eae1fc9ec8",
+        "at": "2026-10-11T11:52:30.668Z",
+        "recovered": true,
+        "executor": "container",
+        "phase": "submitted"
+      }
+    },
+    {
+      "type": "run.remote.terminal",
+      "payload": {
+        "experimentId": "live-crash",
+        "submissionId": "1e84c634-6684-4551-bffd-bc1b0af1a042",
+        "allocationName": "evidra-1e84c634-6684-4551-bffd-bc1b0af1a042",
+        "runtime": "docker",
+        "daemonId": "67ee11a9-8cbb-4e4a-9288-8b9dca8bd292",
+        "containerId": "dfac89c42787f1851be5f1594f854391c73ebe634a67bae373e541eae1fc9ec8",
+        "at": "2026-10-11T11:52:30.668Z",
+        "state": "EXITED",
+        "exitCode": 0,
+        "executor": "container",
+        "phase": "terminal"
+      }
+    }
+  ],
+  "independentTerminalSnapshot": [
+    "dfac89c42787f1851be5f1594f854391c73ebe634a67bae373e541eae1fc9ec8",
+    "exited",
+    false,
+    "no"
+  ],
+  "reservedGpuHoursAfterRecovery": 0,
+  "measurementStatus": "failed",
+  "runRecords": 0,
+  "eventChain": "valid",
+  "scope": "Live Docker controller SIGKILL with missing receipt, name/label adoption and read-only exited-state recovery. No Podman or cross-host certification.",
+  "probeCleanupVerified": true
+}

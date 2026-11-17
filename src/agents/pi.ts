@@ -1,6 +1,7 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { AgentResult, AgentTask, ResearchAgent } from "../core/types.js";
+import { serializeResearchContext } from "../core/context-budget.js";
 
 function textFromMessage(message: unknown): string {
   if (!message || typeof message !== "object" || !("content" in message)) return "";
@@ -50,7 +51,7 @@ export class PiResearchAgent implements ResearchAgent {
       }
     });
 
-    await agent.prompt(`${task.objective}\n\nResearch context:\n${JSON.stringify(task.context, null, 2)}\n\n` +
+    await agent.prompt(`${task.objective}\n\nResearch context:\n${serializeResearchContext(task.context)}\n\n` +
       "Return a structured answer. Do not edit files or run experiments in this planning call.");
 
     if (!finalText) {

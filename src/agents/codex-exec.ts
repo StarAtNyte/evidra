@@ -7,8 +7,34 @@ import type { AgentResult, AgentTask } from "../core/types.js";
 import type { ProcessControl } from "../core/process.js";
 import { redactSecrets } from "../core/redaction.js";
 import { evidraVersion } from "../version.js";
+import { serializeResearchContext } from "../core/context-budget.js";
+import { boundedLocalResponseText, LOCAL_REQUEST_MAX_BYTES, LOCAL_ERROR_MAX_BYTES } from "./local-http.js";
+import { claudeIsLoggedInAsync, runClaudeHeadless } from "./claude-exec.js";
+import { openTranscript } from "./transcripts.js";
 
-export type AgentProvider = "codex" | "local";
+export type AgentProvider = "codex" | "claude" | "local";
+export const AGENT_PROVIDERS: readonly AgentProvider[] = ["codex", "claude", "local"];
+
+export function isAgentProvider(value: unknown): value is AgentProvider {
+  return typeof value === "string" && (AGENT_PROVIDERS as readonly string[]).includes(value);
+}
+
+/** Remote providers run a native tool loop that can edit files and run shell;
+ * the local Ollama route only returns text. */
+export function isToolCapableProvider(provider: AgentProvider | string): boolean {
+  return provider === "codex" || provider === "claude";
+}
+
+/** Share one base URL across discovery, health checks, and generation. */
+export function ollamaEndpoint(endpoint: "tags" | "show" | "chat" | "version"): string {
+  const url = new URL(process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434");
+  if (!["http:", "https:"].includes(url.protocol)) throw new Error("OLLAMA_HOST must use HTTP or HTTPS.");
+  const base = url.pathname.replace(/\/+$/, "").replace(/\/api\/(?:tags|show|chat|version)$/, "");
+  url.pathname = `${base}/api/${endpoint}`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
 
 /** Cost-conscious Codex default used by the CLI, TUI, and autonomous tests. */
 export const DEFAULT_CODEX_MODEL = "gpt-6-luna";
@@ -151,6 +177,8 @@ export interface ExecAgentOptions {
   onThread?: (threadId: string) => void;
   limitPolicy?: "auto" | "wait" | "fallback" | "stop";
   timeoutMs?: number;
+  /** Finite Ollama generation limit; defaults to 4096 tokens. */
+  localMaxOutputTokens?: number;
   /** Abort autonomous turns that repeat the exact same shell command. Zero disables it. */
   maxRepeatedCommands?: number;
   /** Abort autonomous turns after this many consecutive failed shell commands. Zero disables it. */
@@ -162,6 +190,8 @@ export interface ExecAgentOptions {
   onUsage?: (usage: AgentResult["usage"], provider: string, model: string, role: string) => void;
   /** Abort the provider turn and any entitlement-reset wait immediately. */
   interruptSignal?: AbortSignal;
+  /** Receive every raw provider event, unredacted and unbounded, for the turn transcript. */
+  onRawEvent?: (event: unknown) => void;
 }
 
 export interface CodexExecDependencies {
@@ -205,7 +235,7 @@ export function isRetryableAgentError(error: unknown): boolean {
 
 /** Decide whether an active Codex failure may change to the configured local route. */
 export function shouldUseLocalFallback(error: unknown, options: Pick<ExecAgentOptions, "provider" | "limitPolicy">, fallbackModel?: string): boolean {
-  return options.provider === "codex"
+  return isToolCapableProvider(options.provider)
     && Boolean(fallbackModel)
     && (options.limitPolicy === "auto" || options.limitPolicy === "fallback")
     && isProviderFallbackEligible(error);
@@ -525,19 +555,66 @@ export async function resolveCodexModel(preferred = "default"): Promise<string> 
   return selected.id;
 }
 
-export async function listLocalModels(): Promise<AvailableModel[]> {
-  const response = await fetch(`${process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434"}/api/tags`);
-  if (!response.ok) throw new Error(`Local Ollama is unavailable (${response.status}). Start Ollama and try again.`);
-  const payload = await response.json() as { models?: Array<{ name?: string; model?: string; details?: { parameter_size?: string } }> };
-  return (payload.models ?? []).map((entry) => {
-    const id = entry.name ?? entry.model ?? "";
-    return { id, displayName: id, description: entry.details?.parameter_size ? `Ollama · ${entry.details.parameter_size}` : "Ollama local model" };
-  }).filter((model) => model.id);
+export interface ProviderProbeOptions {
+  timeoutMs?: number;
+  interruptSignal?: AbortSignal;
+}
+
+/** Keep the deadline active through body decoding, not only response headers. */
+async function probeOllama(endpoint: "tags" | "show" | "version", options: ProviderProbeOptions = {}, model?: string): Promise<Record<string, unknown>> {
+  const abort = new AbortController();
+  const duration = Math.max(1, Math.min(10_000, Number.isFinite(options.timeoutMs) ? options.timeoutMs! : 10_000));
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; abort.abort(); }, duration);
+  const interrupt = (): void => abort.abort();
+  options.interruptSignal?.addEventListener("abort", interrupt, { once: true });
+  try {
+    if (options.interruptSignal?.aborted) abort.abort();
+    if (model && Buffer.byteLength(model, "utf8") > LOCAL_REQUEST_MAX_BYTES) throw new Error(`Local Ollama request exceeds the ${LOCAL_REQUEST_MAX_BYTES}-byte limit.`);
+    const body = model ? JSON.stringify({ name: model }) : undefined;
+    if (body && Buffer.byteLength(body, "utf8") > LOCAL_REQUEST_MAX_BYTES) throw new Error(`Local Ollama request exceeds the ${LOCAL_REQUEST_MAX_BYTES}-byte limit.`);
+    const response = await fetch(ollamaEndpoint(endpoint), {
+      ...(body ? { method: "POST", headers: { "content-type": "application/json" }, body } : {}),
+      signal: abort.signal,
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`Local Ollama ${endpoint} probe failed its health check (${response.status}).`);
+    }
+    const payload: unknown = JSON.parse(await boundedLocalResponseText(response));
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || "error" in payload) throw new Error(`Local Ollama ${endpoint} returned invalid health metadata.`);
+    return payload as Record<string, unknown>;
+  } catch (error) {
+    if (abort.signal.aborted) throw new Error(timedOut ? "Local Ollama probe timed out." : "Local Ollama probe interrupted.");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    options.interruptSignal?.removeEventListener("abort", interrupt);
+  }
+}
+
+/** Conservative verified release floor, not an assertion about earlier releases. */
+async function requireOllamaContextControls(options: ProviderProbeOptions): Promise<void> {
+  const payload = await probeOllama("version", options);
+  const version = typeof payload.version === "string" ? payload.version.match(/^0\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/) : undefined;
+  const minor = Number(version?.[1]), patch = Number(version?.[2]);
+  if (!version || !Number.isSafeInteger(minor) || !Number.isSafeInteger(patch) || minor < 40 || minor === 40 && patch < 3) throw new Error("Local Ollama requires a stable 0.x release at least 0.40.3 for context controls. Upgrade Ollama or select another provider.");
+}
+
+export async function listLocalModels(options: ProviderProbeOptions = {}): Promise<AvailableModel[]> {
+  const payload = await probeOllama("tags", options);
+  if (!Array.isArray(payload.models)) throw new Error("Local Ollama returned invalid model inventory.");
+  return payload.models.flatMap((entry: unknown) => {
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as { name?: unknown; model?: unknown; details?: { parameter_size?: unknown } };
+    const id = typeof item.name === "string" ? item.name : typeof item.model === "string" ? item.model : "";
+    return id.trim() ? [{ id, displayName: id, description: typeof item.details?.parameter_size === "string" ? `Ollama · ${item.details.parameter_size}` : "Ollama local model" }] : [];
+  });
 }
 
 /** Pick an installed local fallback without assuming one exact Ollama tag. */
-export async function resolveLocalFallbackModel(preferred = "auto"): Promise<string> {
-  const models = await listLocalModels();
+export async function resolveLocalFallbackModel(preferred = "auto", options: ProviderProbeOptions = {}): Promise<string> {
+  const models = await listLocalModels(options);
   if (!models.length) throw new Error("No local Ollama models are installed. Install a Qwen model or set EVIDRA_FALLBACK_MODEL.");
   if (preferred !== "auto" && models.some((model) => model.id === preferred)) return preferred;
   if (preferred !== "auto") throw new Error(`Local fallback model '${preferred}' is not installed. Available models: ${models.map((model) => model.id).join(", ")}`);
@@ -549,24 +626,18 @@ export async function checkProvider(options: ExecAgentOptions): Promise<void> {
     if (!await codexIsLoggedInAsync()) throw new Error("Codex is not logged in. Use /login codex to sign in with your ChatGPT subscription.");
     return;
   }
-
-  const response = await fetch(`${process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434"}/api/tags`);
-  if (!response.ok) throw new Error(`Local Ollama is unavailable (${response.status}). Start Ollama and try again.`);
-  const payload = await response.json() as { models?: Array<{ name?: string; model?: string }> };
-  const models = payload.models ?? [];
-  if (!models.some((entry) => entry.name === options.model || entry.model === options.model)) {
-    const available = models.map((entry) => entry.name ?? entry.model).filter(Boolean).join(", ");
-    throw new Error(`Local model '${options.model}' is not installed. Available models: ${available || "none"}.`);
+  if (options.provider === "claude") {
+    if (!await claudeIsLoggedInAsync()) throw new Error("Claude is not logged in. Run `claude` once and sign in, or set ANTHROPIC_API_KEY.");
+    return;
   }
-  // `/api/tags` only proves that Ollama has a registry entry. Probe model
-  // metadata too so corrupt/missing blobs are rejected before an autonomous
-  // campaign commits to the local route.
-  const probe = await fetch(`${process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434"}/api/show`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: options.model }),
-  });
-  if (!probe.ok) throw new Error(`Local model '${options.model}' failed its health check (${probe.status}): ${await probe.text()}`);
+
+  await requireOllamaContextControls(options);
+  const models = await listLocalModels(options);
+  if (!models.some((entry) => entry.id === options.model)) {
+    throw new Error(`Local model '${options.model}' is not installed. Available models: ${models.map((entry) => entry.id).join(", ") || "none"}.`);
+  }
+  // Inventory alone does not prove that model blobs are usable.
+  await probeOllama("show", options, options.model);
 }
 
 /** Validate the requested route, falling back before work starts when policy permits. */
@@ -575,8 +646,11 @@ export async function resolveStartupProvider(options: ExecAgentOptions, fallback
     await checkProvider(options);
     return { provider: options.provider, model: options.model, fallback: false };
   } catch (error) {
-    if (options.provider !== "codex" || !options.limitPolicy || !["auto", "fallback"].includes(options.limitPolicy) || !isProviderFallbackEligible(error)) throw error;
-    const model = await resolveLocalFallbackModel(fallbackModel);
+    if (!isToolCapableProvider(options.provider) || !options.limitPolicy || !["auto", "fallback"].includes(options.limitPolicy) || !isProviderFallbackEligible(error)) throw error;
+    if (options.provider === "claude" && await codexIsLoggedInAsync()) {
+      return { provider: "codex", model: DEFAULT_CODEX_MODEL, fallback: true, reason: error instanceof Error ? error.message : String(error) };
+    }
+    const model = await resolveLocalFallbackModel(fallbackModel, options);
     await checkProvider({ ...options, provider: "local", model });
     return { provider: "local", model, fallback: true, reason: error instanceof Error ? error.message : String(error) };
   }
@@ -586,19 +660,43 @@ export class CodexExecAgent {
   constructor(private readonly options: ExecAgentOptions, private readonly dependencies: CodexExecDependencies = {}) {}
 
   async run(task: AgentTask, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
+    const transcript = openTranscript({ role: task.role, provider: this.options.provider, model: this.options.model, cwd: this.options.cwd, sandbox: this.options.sandbox, prompt: this.renderPrompt(task) });
+    if (!transcript) return await this.runTurn(task, onProgress, onProcess);
+    const previous = this.options.onRawEvent;
+    const recording = new CodexExecAgent({ ...this.options, onRawEvent: (event) => { transcript.event(event); previous?.(event); } }, this.dependencies);
+    try {
+      const result = await recording.runTurn(task, onProgress, onProcess);
+      transcript.end({ ok: true, output: result.output });
+      return result;
+    } catch (error) {
+      transcript.end({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+  }
+
+  /** The exact text sent to the provider for a task; shared by the turn and its transcript. */
+  renderPrompt(task: AgentTask): string {
     const submissionBoundary = task.role === "experiment engineer"
       ? "You may create and validate local experiment outputs and evaluator artifacts required by the task, but never submit externally or expose credentials."
       : "Do not submit anything or expose credentials.";
     const responseInstruction = task.role === "experiment engineer"
       ? "Execute the task through to its required local artifact; only summarize after the artifact and verification are complete."
       : "Return a concise, evidence-oriented answer.";
-    const prompt = `${task.objective}\n\nResearch context:\n${JSON.stringify(task.context, null, 2)}\n\n` +
-      "You are Evidra, the research and experimentation workbench assistant. The selected provider is only an implementation detail; never introduce yourself as Codex, OpenAI, Ollama, or another underlying model. " +
+    return `${task.objective}\n\nResearch context:\n${serializeResearchContext(task.context)}\n\n` +
+      "You are Evidra, the research and experimentation workbench assistant. The selected provider is only an implementation detail; never introduce yourself as Codex, OpenAI, Claude, Anthropic, Ollama, or another underlying model. " +
       (task.role === "research director" ? "Act as Evidra's research director. " : "Act as Evidra's conversational assistant. ") +
       responseInstruction + " " +
       submissionBoundary;
+  }
+
+  private async runTurn(task: AgentTask, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
+    const prompt = this.renderPrompt(task);
     if (this.options.provider === "local") {
-      const result = await this.runOllama(prompt, onProgress, onProcess);
+      const result = await this.runOllama(prompt, onProgress, onProcess, task.outputSchema, task.role);
+      return result;
+    }
+    if (this.options.provider === "claude") {
+      const result = await runClaudeHeadless(prompt, this.options, onProgress, onProcess, task.outputSchema);
       this.options.onUsage?.(result.usage, result.provider, result.model ?? this.options.model, task.role);
       return result;
     }
@@ -701,6 +799,7 @@ export class CodexExecAgent {
       let repeatedCommands = 0;
       let consecutiveFailedCommands = 0;
       for await (const event of stream.events) {
+        this.options.onRawEvent?.(event);
         const value = event as unknown as { type?: string; thread_id?: string; item?: { type?: string; text?: string; command?: string; query?: string; message?: string; exit_code?: number }; usage?: AgentResult["usage"]; message?: string; error?: { message?: string } };
         if (value.type === "item.started" && value.item?.type === "command_execution" && typeof value.item.command === "string") {
           if (value.item.command === lastCommand) repeatedCommands += 1;
@@ -772,7 +871,7 @@ export class CodexExecAgent {
     }
   }
 
-  private async runOllama(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void): Promise<AgentResult> {
+  private async runOllama(prompt: string, onProgress?: (message: string) => void, onProcess?: (control: ProcessControl) => void, outputSchemaText?: string, role = "conversation assistant"): Promise<AgentResult> {
     onProgress?.("Calling local Ollama model...");
     const abort = new AbortController();
     let timedOut = false;
@@ -789,26 +888,57 @@ export class CodexExecAgent {
       terminate: () => abort.abort(),
       get paused() { return paused; },
     };
-    onProcess?.(control);
     try {
-      const response = await fetch(process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434/api/chat", {
+      if (this.options.interruptSignal?.aborted) abort.abort();
+      onProcess?.(control);
+      const configuredOutputLimit = this.options.localMaxOutputTokens ?? process.env.EVIDRA_LOCAL_MAX_OUTPUT_TOKENS;
+      let outputLimit = 4096;
+      if (typeof configuredOutputLimit === "number") outputLimit = configuredOutputLimit;
+      else if (configuredOutputLimit !== undefined) outputLimit = /^[1-9]\d*$/.test(configuredOutputLimit.trim()) ? Number(configuredOutputLimit.trim()) : NaN;
+      if (!Number.isSafeInteger(outputLimit) || outputLimit < 1 || outputLimit > 65_536) throw new Error("Local output token limit must be an integer from 1 to 65536.");
+      if (Buffer.byteLength(prompt, "utf8") > LOCAL_REQUEST_MAX_BYTES || Buffer.byteLength(this.options.model, "utf8") > LOCAL_REQUEST_MAX_BYTES || outputSchemaText && Buffer.byteLength(outputSchemaText, "utf8") > LOCAL_REQUEST_MAX_BYTES) throw new Error(`Local Ollama request exceeds the ${LOCAL_REQUEST_MAX_BYTES}-byte limit.`);
+      let format: unknown;
+      if (outputSchemaText) {
+        try { format = JSON.parse(outputSchemaText); }
+        catch { throw new Error("The configured local output schema is invalid JSON."); }
+        if (!format || typeof format !== "object" || Array.isArray(format)) throw new Error("The configured local output schema must be a JSON object.");
+      }
+      const body = JSON.stringify({
+        model: this.options.model,
+        stream: false,
+        // Preserve the declared input and fail on overflow on supporting servers.
+        truncate: false,
+        shift: false,
+        messages: [{ role: "user", content: prompt }],
+        options: { temperature: 0.2, num_predict: outputLimit },
+        ...(format ? { format } : {}),
+      });
+      if (Buffer.byteLength(body, "utf8") > LOCAL_REQUEST_MAX_BYTES) throw new Error(`Local Ollama request exceeds the ${LOCAL_REQUEST_MAX_BYTES}-byte limit.`);
+      // Use the turn's abort signal so preflight cannot outlive cancellation.
+      await requireOllamaContextControls({ timeoutMs: this.options.timeoutMs, interruptSignal: abort.signal });
+      const response = await fetch(ollamaEndpoint("chat"), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          model: this.options.model,
-          stream: false,
-          messages: [{ role: "user", content: prompt }],
-          options: { temperature: 0.2 },
-        }),
+        body,
         signal: abort.signal,
       });
-      if (!response.ok) throw new Error(`Ollama request failed: ${response.status} ${await response.text()}`);
-      const payload = await response.json() as { message?: { content?: string } };
+      if (!response.ok) throw new Error(`Ollama request failed: ${response.status} ${redactSecrets(await boundedLocalResponseText(response, LOCAL_ERROR_MAX_BYTES))}`);
+      const payloadText = await boundedLocalResponseText(response);
+      this.options.onRawEvent?.({ type: "ollama.response", body: payloadText });
+      const payload = JSON.parse(payloadText) as { done?: boolean; done_reason?: string; error?: unknown; message?: { content?: unknown }; prompt_eval_count?: unknown; eval_count?: unknown; prompt_eval_cached_count?: unknown };
+      const count = (value: unknown): number | undefined => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+      const counts = { inputTokens: count(payload.prompt_eval_count), outputTokens: count(payload.eval_count), cachedInputTokens: count(payload.prompt_eval_cached_count) };
+      const usage = Object.values(counts).some((value) => value !== undefined) ? counts : undefined;
+      // A truncated or failed response still consumed inference budget.
+      this.options.onUsage?.(usage, "local", this.options.model, role);
+      if (counts.outputTokens !== undefined && counts.outputTokens > outputLimit) throw new Error("Ollama exceeded the configured output token limit.");
+      if (payload.error) throw new Error("Ollama returned an error response.");
+      if (payload.done !== true || (payload.done_reason !== undefined && payload.done_reason !== "stop")) throw new Error("Ollama did not complete the response successfully.");
       const text = payload.message?.content;
-      if (!text) throw new Error("Ollama returned no message content.");
+      if (typeof text !== "string" || !text.trim()) throw new Error("Ollama returned no message content.");
       this.options.onAssistant?.("local", text);
       onProgress?.("Completed.");
-      return { provider: "local", model: this.options.model, output: text };
+      return { provider: "local", model: this.options.model, output: text, usage };
     } catch (error) {
       if (abort.signal.aborted) throw new Error(timedOut ? "Local model request timed out." : "Local model request interrupted.");
       throw error;
@@ -832,28 +962,35 @@ export async function runWithLocalFallback(
     return await new CodexExecAgent(options).run(task, onProgress, onProcess);
   } catch (error) {
     const limitReached = isProviderUsageLimit(error);
+    if (options.provider === "claude" && (options.limitPolicy === "auto" || options.limitPolicy === "fallback") && isProviderFallbackEligible(error) && await codexIsLoggedInAsync()) {
+      onProgress?.(`${limitReached ? "Claude usage limit reached" : "Claude route unavailable"}; switching to codex/${DEFAULT_CODEX_MODEL}...`);
+      // Provider sessions are not portable, so the Codex turn starts fresh.
+      return await runWithLocalFallback(task, { ...options, provider: "codex", model: DEFAULT_CODEX_MODEL, threadId: undefined }, fallbackModel, onProgress, onProcess);
+    }
     if (!shouldUseLocalFallback(error, options, fallbackModel)) throw error;
     let localModel: string;
     try {
-      localModel = await resolveLocalFallbackModel(fallbackModel);
+      localModel = await resolveLocalFallbackModel(fallbackModel, options);
     } catch (fallbackError) {
-      if (options.limitPolicy !== "auto") throw fallbackError;
+      if (options.interruptSignal?.aborted || options.limitPolicy !== "auto") throw fallbackError;
       onProgress?.("No healthy local fallback is available; returning to the durable Codex reset policy...");
       // Let the outer campaign controller own the wait. It knows the
       // remaining campaign budget and can persist/stop at the correct
       // boundary; an inner six-hour wait could outlive the campaign.
       throw error;
     }
-    onProgress?.(`${limitReached ? "Codex usage limit reached" : "Codex route unavailable"}; switching to local/${localModel}...`);
+    const routeName = options.provider === "claude" ? "Claude" : "Codex";
+    onProgress?.(`${limitReached ? `${routeName} usage limit reached` : `${routeName} route unavailable`}; switching to local/${localModel}...`);
     try {
-      await checkProvider({ provider: "local", model: localModel, cwd: options.cwd });
+      await checkProvider({ ...options, provider: "local", model: localModel });
       return await new CodexExecAgent({
         ...options,
         provider: "local",
         model: localModel,
+        threadId: undefined,
       }).run(task, onProgress, onProcess);
     } catch (localError) {
-      if (options.limitPolicy !== "auto") throw localError;
+      if (options.interruptSignal?.aborted || options.limitPolicy !== "auto") throw localError;
       const detail = localError instanceof Error ? localError.message : String(localError);
       onProgress?.(`Local fallback is unhealthy (${detail}); returning to the durable Codex reset policy...`);
       throw error;

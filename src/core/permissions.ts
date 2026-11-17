@@ -1,5 +1,6 @@
-import { basename, isAbsolute, relative, resolve } from "node:path";
-import { realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { isSensitiveWorkspacePath } from "./redaction.js";
 
 export type AutonomyLevel = "safe" | "fast" | "yolo";
 
@@ -64,13 +65,29 @@ export function guardCommand(command: string[]): CommandGuard {
  * mode. External state changes must go through Evidra's approval-gated
  * submission and controller paths, never through an arbitrary shell command.
  */
+function autonomousGitSubcommand(command: string[]): string | undefined {
+  const valued = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix"]);
+  const flags = new Set(["--no-pager", "--paginate", "-p", "-P", "--bare", "--no-optional-locks", "--no-replace-objects", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--version", "-v", "--help", "-h"]);
+  for (let index = 1; index < command.length; index += 1) {
+    const argument = command[index];
+    if (!argument.startsWith("-")) return argument.toLowerCase();
+    if (["--version", "-v", "--help", "-h"].includes(argument)) return argument;
+    if (valued.has(argument)) { if (!command[index + 1]) return undefined; index += 1; continue; }
+    if ([...valued].some((option) => argument.startsWith(`${option}=`)) || /^-[Cc].+/.test(argument)) continue;
+    if (!flags.has(argument)) return undefined;
+  }
+  return undefined;
+}
+
 export function guardAutonomousCommand(command: string[]): CommandGuard {
   const base = guardCommand(command);
   if (!base.allowed) return base;
   const normalized = unwrapCommand(command);
   const executable = basename(normalized[0] ?? "").toLowerCase();
   const joined = command.join(" ").toLowerCase();
-  if (/\bgit\s+push\b/.test(joined) || /\bgh\s+(pr|issue)\s+(create|edit)\b/.test(joined)) {
+  const gitSubcommand = executable === "git" ? autonomousGitSubcommand(normalized) : undefined;
+  if (executable === "git" && gitSubcommand === undefined) return { allowed: false, reason: "Refusing autonomous Git commands with unrecognized global options or no subcommand." };
+  if (gitSubcommand === "push" || /\bgit\s+push\b/.test(joined) || /\bgh\s+(pr|issue)\s+(create|edit)\b/.test(joined)) {
     return { allowed: false, reason: "Refusing autonomous external GitHub or repository changes; use an explicit operator command." };
   }
   if ((executable === "kaggle" || executable === "aicrowd" || executable === "whest") && /\b(submit|upload|publish|push)\b/.test(joined)) {
@@ -101,23 +118,36 @@ export function guardWorkspaceCommand(command: string[], root: string): CommandG
   try { rootPath = realpathSync(root); } catch { return { allowed: false, reason: "Workspace root is unavailable." }; }
   const executable = basename(command[0] ?? "").toLowerCase();
   const pathArguments = new Set<number>();
+  const optionPaths: string[] = [];
   if (executable === "git") {
     for (let index = 1; index < command.length - 1; index += 1) if (command[index] === "-C" || command[index] === "--work-tree") pathArguments.add(index + 1);
+    for (const argument of command.slice(1)) {
+      if (argument.startsWith("-C") && argument.length > 2) optionPaths.push(argument.slice(2));
+      for (const option of ["--git-dir=", "--work-tree="]) if (argument.startsWith(option)) optionPaths.push(argument.slice(option.length));
+    }
   }
-  if (["rg", "grep", "find", "sed", "head", "tail", "cat", "du", "file", "wc", "awk", "sha256sum", "shasum", "md5sum"].includes(executable)) {
+  if (["ls", "rg", "grep", "find", "sed", "head", "tail", "cat", "du", "file", "wc", "awk", "sha256sum", "shasum", "md5sum"].includes(executable)) {
     for (let index = 1; index < command.length; index += 1) {
       const value = command[index] ?? "";
       if (!value.startsWith("-")) pathArguments.add(index);
+      for (const option of ["--file=", "--ignore-file=", "--exclude-from=", "--files0-from=", "--magic-file="]) if (value.startsWith(option)) optionPaths.push(value.slice(option.length));
+      if (["rg", "grep", "sed"].includes(executable) && value.startsWith("-f") && value.length > 2) optionPaths.push(value.slice(2));
     }
   }
-  for (const index of pathArguments) {
-    const value = command[index] ?? "";
+  for (const value of [...pathArguments].map((index) => command[index] ?? "").concat(optionPaths)) {
     if (!value || /^https?:\/\//i.test(value)) continue;
     if (value.split(/[\\/]+/).includes("..")) return { allowed: false, reason: `Refusing workspace escape path '${value}'.` };
-    if (!isAbsolute(value)) continue;
-    const target = resolve(value);
+    const target = resolve(rootPath, value);
     const targetRelative = relative(rootPath, target);
     if (targetRelative.startsWith("..") || isAbsolute(targetRelative)) return { allowed: false, reason: `Refusing path outside the workspace: '${value}'.` };
+    if (isSensitiveWorkspacePath(targetRelative)) return { allowed: false, reason: `Refusing sensitive workspace path: '${value}'.` };
+    let ancestor = target;
+    while (!existsSync(ancestor) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor);
+    try {
+      const physicalRelative = relative(rootPath, realpathSync(ancestor));
+      if (physicalRelative === ".." || physicalRelative.startsWith("../") || physicalRelative.startsWith("..\\") || isAbsolute(physicalRelative)) return { allowed: false, reason: `Refusing path that resolves outside the workspace: '${value}'.` };
+      if (isSensitiveWorkspacePath(physicalRelative)) return { allowed: false, reason: `Refusing path resolving to sensitive workspace data: '${value}'.` };
+    } catch { return { allowed: false, reason: `Unable to verify workspace path: '${value}'.` }; }
   }
   return { allowed: true };
 }
@@ -129,7 +159,13 @@ export function guardWorkspaceCommand(command: string[], root: string): CommandG
  */
 export function guardReadOnlyInspection(command: string[]): CommandGuard {
   const executable = basename(command[0] ?? "").toLowerCase();
-  const readOnly = new Set(["true", "pwd", "ls", "find", "rg", "grep", "head", "tail", "sed", "awk", "wc", "du", "file", "which", "sha256sum", "shasum", "md5sum"]);
+  if (executable === "rg") {
+    for (const argument of command.slice(1)) {
+      if (argument === "--") break;
+      if (["--pre", "--hostname-bin"].some((option) => argument === option || argument.startsWith(`${option}=`))) return { allowed: false, reason: "SAFE mode refuses ripgrep options that execute external programs." };
+    }
+  }
+  const readOnly = new Set(["true", "pwd", "ls", "find", "rg", "grep", "head", "tail", "sed", "wc", "du", "file", "which", "sha256sum", "shasum", "md5sum"]);
   if (executable === "git") {
     const allowed = new Set(["status", "rev-parse", "log", "diff", "show", "ls-files", "branch"]);
     if (!allowed.has(command[1]?.toLowerCase() ?? "")) return { allowed: false, reason: "SAFE mode only permits read-only Git inspection commands." };
@@ -156,9 +192,12 @@ export function guardReadOnlyInspection(command: string[]): CommandGuard {
   }
   if (!readOnly.has(executable)) return { allowed: false, reason: `SAFE mode does not permit '${executable}' for autonomous shell work.` };
   const joined = command.join(" ").toLowerCase();
-  if (executable === "find" && /(^|\s)-(exec|execdir|delete)(\s|$)/.test(joined)) return { allowed: false, reason: "SAFE mode refuses find actions that can execute or delete files." };
+  if (executable === "find" && /(^|\s)-(exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)(\s|$)/.test(joined)) return { allowed: false, reason: "SAFE mode refuses find actions that execute programs, delete files, or write output files." };
   if (executable === "sed" && command.some((argument) => argument === "-i" || argument.startsWith("-i"))) return { allowed: false, reason: "SAFE mode refuses in-place sed edits." };
-  if (executable === "awk" && /\bsystem\s*\(/.test(joined)) return { allowed: false, reason: "SAFE mode refuses awk system calls." };
+  if (executable === "sed") {
+    const options = command.slice(1, command.includes("--") ? command.indexOf("--") : undefined);
+    if (!options.includes("--sandbox")) return { allowed: false, reason: "SAFE sed inspection requires --sandbox to disable read/write/execute commands." };
+  }
   return { allowed: true };
 }
 

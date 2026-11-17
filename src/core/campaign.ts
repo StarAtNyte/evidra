@@ -65,7 +65,7 @@ export function withCampaignCheckpoint<T extends object>(campaign: T, step: Camp
  */
 export interface CampaignRuntimeConfig {
   mode: "research" | "challenge";
-  provider: "codex" | "local";
+  provider: "codex" | "claude" | "local";
   model: string;
   /** Optional local Ollama route used when Codex is exhausted or unavailable. */
   fallbackModel?: string;
@@ -143,7 +143,7 @@ export function readCampaignRuntime(value: unknown): CampaignRuntimeConfig | und
   if (!runtime || typeof runtime !== "object" || Array.isArray(runtime)) return undefined;
   const candidate = runtime as Record<string, unknown>;
   if (!(["research", "challenge"] as const).includes(candidate.mode as "research" | "challenge")) return undefined;
-  if (!( ["codex", "local"] as const).includes(candidate.provider as "codex" | "local")) return undefined;
+  if (!( ["codex", "claude", "local"] as const).includes(candidate.provider as "codex" | "claude" | "local")) return undefined;
   if (typeof candidate.model !== "string" || !candidate.model) return undefined;
   if (typeof candidate.thinking !== "string" || !candidate.thinking) return undefined;
   if (typeof candidate.lanes !== "number" || !Number.isInteger(candidate.lanes) || candidate.lanes < 1 || candidate.lanes > 6) return undefined;

@@ -1,0 +1,89 @@
+{
+  "at": "2026-10-11T18:45:28.495Z",
+  "executor": "modal",
+  "gpuRequested": false,
+  "timeoutMinutes": 2,
+  "result": {
+    "runId": "modal-live-cpu-smoke-1791744328495",
+    "status": "completed",
+    "exitCode": 0,
+    "durationSeconds": 17.813,
+    "metrics": {
+      "accuracy": 1
+    },
+    "metricsByFold": {},
+    "learningCurve": [],
+    "subgroupDeltas": [],
+    "artifacts": {
+      "result.json": "/tmp/evidra-live-modal-1caR6L/workspace/result.json"
+    },
+    "stdout": "accuracy=1.0\n",
+    "stderr": "",
+    "command": [
+      "python",
+      "probe.py"
+    ],
+    "cwd": "/tmp/evidra-live-modal-1caR6L/workspace"
+  },
+  "events": [
+    {
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "modal-live-cpu-smoke",
+      "submissionId": "77bad4a7-78ab-42a9-816f-7c4c406730aa",
+      "allocationName": "evidra-77bad4a7-78ab-42a9-816f-7c4c406730aa",
+      "phase": "submitting",
+      "at": "2026-10-11T18:45:10.676Z"
+    },
+    {
+      "callId": "fc-01M4P4H8CNWRW8TGHFXWSX6PXA",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "modal-live-cpu-smoke",
+      "submissionId": "77bad4a7-78ab-42a9-816f-7c4c406730aa",
+      "allocationName": "evidra-77bad4a7-78ab-42a9-816f-7c4c406730aa",
+      "phase": "submitted",
+      "at": "2026-10-11T18:45:21.643Z"
+    },
+    {
+      "callId": "fc-01M4P4H8CNWRW8TGHFXWSX6PXA",
+      "completionEvidence": "client-envelope",
+      "state": "COMPLETED",
+      "exitCode": 0,
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "experimentId": "modal-live-cpu-smoke",
+      "submissionId": "77bad4a7-78ab-42a9-816f-7c4c406730aa",
+      "allocationName": "evidra-77bad4a7-78ab-42a9-816f-7c4c406730aa",
+      "phase": "terminal",
+      "at": "2026-10-11T18:45:28.491Z"
+    }
+  ],
+  "artifact": {
+    "probe": "passed"
+  },
+  "workerSourceSha256": "11f67bb83ba10b5e7dca7de876f9311b676d9a1363671c14337e234cccd4e59b",
+  "recovery": {
+    "simulation": "Locally omitted the successful client terminal event; queried the same actual completed remote call after reopening a separate store.",
+    "released": true,
+    "queried": 1,
+    "terminal": {
+      "experimentId": "modal-live-cpu-smoke",
+      "submissionId": "77bad4a7-78ab-42a9-816f-7c4c406730aa",
+      "allocationName": "evidra-77bad4a7-78ab-42a9-816f-7c4c406730aa",
+      "callId": "fc-01M4P4H8CNWRW8TGHFXWSX6PXA",
+      "state": "COMPLETED",
+      "exitCode": 0,
+      "completionEvidence": "sdk-result",
+      "at": "2026-10-11T18:46:29.905Z",
+      "executor": "modal",
+      "protocol": "modal-call-v1",
+      "phase": "terminal"
+    },
+    "importedRuns": 0,
+    "status": "failed"
+  },
+  "scope": "Live CPU worker config, source exclusions, metric/artifact transport, call receipt and read-only completed-call recovery; real client-crash, cancellation, GPU, and concurrency scenarios remain unverified.",
+  "probeSource": "import os,json,pathlib\nassert os.environ['EVIDRA_EXPERIMENT_ID']=='modal-live-cpu-smoke'\nassert os.environ['EVIDRA_DATASET_VERSION']=='probe-data-v1'\nassert os.environ['EVIDRA_SPLIT_VERSION']=='probe-split-v1'\nassert os.environ['PROBE_VALUE']=='declared'\nassert os.environ['HOME']=='/tmp/evidra-worker-home'\nassert not pathlib.Path('.sota/controller-secret').exists()\nassert not pathlib.Path('.git/config').exists()\npathlib.Path('result.json').write_text(json.dumps({'probe':'passed'}))\nprint('accuracy=1.0')\n",
+  "modalVersion": "1.6.1"
+}

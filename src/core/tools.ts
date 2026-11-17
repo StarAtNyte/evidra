@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, mkdirSync, realpathSync, lstatSync, statSync, openSync, readSync, closeSync, fstatSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { auditData } from "./data-audit.js";
 import { guardAutonomousCommand, guardReadOnlyInspection, guardWorkspaceCommand, type AutonomyLevel } from "./permissions.js";
 import { runProcess, type ProcessControl } from "./process.js";
@@ -220,8 +220,14 @@ export function workspaceSearchFallbackTerms(query: string): { terms: string[]; 
 }
 
 /** Retrieve relevant tool descriptions without changing the full executor registry. */
-export function selectResearchTools(objective: string, limit = 12, additionalTools: ResearchToolSpec[] = []): ResearchToolSpec[] {
-  const registry = [...RESEARCH_TOOLS, ...additionalTools];
+export function selectResearchTools(objective: string, limit = 12, additionalTools: ResearchToolSpec[] = [], allowedNames?: readonly string[]): ResearchToolSpec[] {
+  const allowed = allowedNames === undefined ? undefined : new Set(allowedNames);
+  const seen = new Set<string>();
+  const registry = [...RESEARCH_TOOLS, ...additionalTools].filter(tool => {
+    if (seen.has(tool.name) || (allowed && !allowed.has(tool.name))) return false;
+    seen.add(tool.name);
+    return true;
+  });
   const boundedLimit = Math.max(4, Math.min(registry.length, Math.floor(limit)));
   const query = objective.toLowerCase();
   const core = new Set(["workspace.files", "workspace.search", "workspace.read", "git.status"]);
@@ -230,7 +236,7 @@ export function selectResearchTools(objective: string, limit = 12, additionalToo
     const score = terms.reduce((total, term) => total + (query.includes(term) ? (term.length >= 6 ? 2 : 1) : 0), 0);
     return { tool, score, index };
   }).sort((left, right) => right.score - left.score || left.index - right.index);
-  const selected = new Set<string>(core);
+  const selected = new Set(registry.filter(tool => core.has(tool.name)).map(tool => tool.name));
   for (const entry of ranked) {
     if (selected.size >= boundedLimit) break;
     selected.add(entry.tool.name);
@@ -721,7 +727,7 @@ export async function executeResearchTool(call: ResearchToolCall, context: Resea
       }
       case "data.audit": {
         const target = typeof args.path === "string" ? inside(context.root, args.path) : context.root;
-        output = auditData(target);
+        output = auditData(target, undefined, undefined, { excludeDirectories: [dirname(context.storePath)] });
         break;
       }
       case "artifact.audit": {

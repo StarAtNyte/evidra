@@ -33,49 +33,63 @@ function finitePositive(value: number, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-function expectedAt(reference: LearningPoint[], step: number): number | undefined {
-  const ordered = reference.filter((point) => Number.isFinite(point.step) && Number.isFinite(point.metric)).sort((left, right) => left.step - right.step);
-  if (!ordered.length) return undefined;
-  const before = ordered.filter((point) => point.step <= step).at(-1);
-  return (before ?? ordered[0]).metric;
+export const MAX_PROGRESS_LINE_CHARS = 64 * 1024;
+
+function orderedReference(reference: LearningPoint[]): LearningPoint[] {
+  return reference.filter((point) => Number.isFinite(point.step) && Number.isFinite(point.metric))
+    .map((point) => ({ ...point })).sort((left, right) => left.step - right.step);
 }
 
-export function assessEarlyStopping(
-  observed: LearningPoint[],
-  reference: LearningPoint[],
-  config: EarlyStoppingConfig,
-): EarlyStoppingDecision {
-  const points = observed.filter((point) => Number.isFinite(point.step) && Number.isFinite(point.metric)).sort((left, right) => left.step - right.step);
-  const latest = points.at(-1);
-  if (!config.enabled || !latest || reference.length === 0) return { stop: false, reason: "early stopping is inactive until a reference curve and progress point are available", observed: latest, underperformingPoints: 0 };
-  if (latest.step < Math.max(0, config.warmupSteps)) return { stop: false, reason: "warmup window is not complete", observed: latest, underperformingPoints: 0 };
-  const expectedMetric = expectedAt(reference, latest.step);
-  if (expectedMetric === undefined) return { stop: false, reason: "reference curve has no usable metric", observed: latest, underperformingPoints: 0 };
-  const gap = config.direction === "maximize" ? latest.metric - expectedMetric : expectedMetric - latest.metric;
-  const underperforming = config.direction === "maximize"
-    ? latest.metric + Math.max(0, config.minimumImprovement) < expectedMetric
-    : latest.metric - Math.max(0, config.minimumImprovement) > expectedMetric;
-  let underperformingPoints = 0;
-  for (const point of points.slice().reverse()) {
-    const expected = expectedAt(reference, point.step);
-    if (expected === undefined) break;
-    const behind = config.direction === "maximize"
-      ? point.metric + Math.max(0, config.minimumImprovement) < expected
-      : point.metric - Math.max(0, config.minimumImprovement) > expected;
-    if (!behind) break;
-    underperformingPoints += 1;
+function expectedAt(ordered: LearningPoint[], step: number): number | undefined {
+  if (!ordered.length) return undefined;
+  let low = 0;
+  let high = ordered.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (ordered[middle].step <= step) low = middle + 1;
+    else high = middle;
   }
+  return ordered[Math.max(0, low - 1)].metric;
+}
+
+function behindReference(point: LearningPoint, expected: number, config: EarlyStoppingConfig): boolean {
+  return config.direction === "maximize"
+    ? point.metric + Math.max(0, config.minimumImprovement) < expected
+    : point.metric - Math.max(0, config.minimumImprovement) > expected;
+}
+
+function stoppingDecision(latest: LearningPoint | undefined, reference: LearningPoint[], config: EarlyStoppingConfig, count: number): EarlyStoppingDecision {
+  if (!config.enabled || !latest || !reference.length) return { stop: false, reason: "early stopping is inactive until a reference curve and progress point are available", observed: latest, underperformingPoints: 0 };
+  if (latest.step < Math.max(0, config.warmupSteps)) return { stop: false, reason: "warmup window is not complete", observed: latest, underperformingPoints: 0 };
+  const expectedMetric = expectedAt(reference, latest.step)!;
+  const gap = config.direction === "maximize" ? latest.metric - expectedMetric : expectedMetric - latest.metric;
   const patience = Math.max(1, Math.floor(finitePositive(config.patience, 3)));
   return {
-    stop: underperformingPoints >= patience,
-    reason: underperformingPoints >= patience
-      ? `observed ${config.metric} is behind the reference curve for ${underperformingPoints} consecutive points`
+    stop: count >= patience,
+    reason: count >= patience
+      ? `observed ${config.metric} is behind the reference curve for ${count} consecutive points`
+      : count > 0
+      ? `observed ${config.metric} is behind the reference curve for ${count} consecutive points; ${patience} are required`
+      : behindReference(latest, expectedMetric, config)
+      ? "awaiting fresh ordered progress after ambiguous telemetry"
       : `observed ${config.metric} remains within the reference tolerance (${gap.toFixed(6)} signed gap)`,
-    observed: latest,
-    expectedMetric,
-    gap,
-    underperformingPoints,
+    observed: latest, expectedMetric, gap, underperformingPoints: count,
   };
+}
+
+export function assessEarlyStopping(observed: LearningPoint[], reference: LearningPoint[], config: EarlyStoppingConfig): EarlyStoppingDecision {
+  // A repeated step is one observation, not extra patience evidence.
+  const unique = new Map<number, LearningPoint>();
+  for (const point of observed) if (Number.isFinite(point.step) && Number.isFinite(point.metric)) unique.set(point.step, point);
+  const points = [...unique.values()].sort((left, right) => left.step - right.step);
+  const ordered = orderedReference(reference);
+  let count = 0;
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    const expected = expectedAt(ordered, points[index].step);
+    if (expected === undefined || !behindReference(points[index], expected, config)) break;
+    count += 1;
+  }
+  return stoppingDecision(points.at(-1), ordered, config, count);
 }
 
 function progressPoint(line: string, metricName: string): LearningPoint | undefined {
@@ -87,19 +101,22 @@ function progressPoint(line: string, metricName: string): LearningPoint | undefi
   const nested = value?.progress && typeof value.progress === "object" && !Array.isArray(value.progress) ? value.progress as Record<string, unknown> : value;
   const stepValue = nested?.step ?? nested?.iteration ?? nested?.epoch;
   const metricValue = nested?.[metricName] ?? (nested?.metrics && typeof nested.metrics === "object" && !Array.isArray(nested.metrics) ? (nested.metrics as Record<string, unknown>)[metricName] : undefined);
-  const step = typeof stepValue === "number" ? stepValue : Number(typeof stepValue === "string" ? stepValue : NaN);
-  const metric = typeof metricValue === "number" ? metricValue : Number(typeof metricValue === "string" ? metricValue : NaN);
+  const step = typeof stepValue === "number" ? stepValue : Number(typeof stepValue === "string" && stepValue.trim() ? stepValue : NaN);
+  const metric = typeof metricValue === "number" ? metricValue : Number(typeof metricValue === "string" && metricValue.trim() ? metricValue : NaN);
   if (Number.isFinite(step) && Number.isFinite(metric)) return { step, metric };
   const stepMatch = line.match(/(?:step|iteration|epoch)\s*[:=]\s*(\d+(?:\.\d+)?)/i);
-  const metricMatch = line.match(new RegExp(`${metricName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\s*[:=]\\s*(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`, "i"));
+  const metricMatch = line.match(new RegExp(`${metricName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:=]\\s*(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`, "i"));
   if (!stepMatch || !metricMatch) return undefined;
-  return { step: Number(stepMatch[1]), metric: Number(metricMatch[1]) };
+  const textStep = Number(stepMatch[1]);
+  const textMetric = Number(metricMatch[1]);
+  return Number.isFinite(textStep) && Number.isFinite(textMetric) ? { step: textStep, metric: textMetric } : undefined;
 }
 
 /** Extract a deterministic learning curve from a worker's captured output. */
 export function parseLearningCurve(output: string, metricName: string): LearningPoint[] {
   const points = new Map<number, LearningPoint>();
   for (const line of output.split("\n")) {
+    if (line.length > MAX_PROGRESS_LINE_CHARS) continue;
     const point = progressPoint(line.trim(), metricName);
     if (point) points.set(point.step, point);
   }
@@ -132,22 +149,55 @@ export function deriveReferenceCurve(curves: LearningPoint[][], minimumCurves = 
 }
 
 export class EarlyStoppingMonitor {
-  private readonly observed: LearningPoint[] = [];
   private remainder = "";
-  private lastStep: number | undefined;
+  private discardingLine = false;
+  private latest: LearningPoint | undefined;
+  private underperformingPoints = 0;
+  private readonly config: EarlyStoppingConfig;
+  private readonly reference: LearningPoint[];
 
-  constructor(private readonly config: EarlyStoppingConfig, private readonly reference: LearningPoint[]) {}
+  constructor(config: EarlyStoppingConfig, reference: LearningPoint[]) {
+    this.config = { ...config };
+    this.reference = orderedReference(reference);
+  }
+
+  private accept(line: string): void {
+    const point = progressPoint(line.trim(), this.config.metric);
+    if (!point) return;
+    if (this.latest && point.step <= this.latest.step) {
+      if (point.step === this.latest.step && point.metric === this.latest.metric) return;
+      // A late record or correction makes the preceding streak ambiguous.
+      // Rebuild patience from fresh increasing steps rather than replaying an
+      // unbounded history or counting repeated old records as new evidence.
+      this.underperformingPoints = 0;
+      if (point.step < this.latest.step) return;
+    }
+    this.latest = point;
+    const expected = expectedAt(this.reference, point.step);
+    this.underperformingPoints = expected !== undefined && behindReference(point, expected, this.config)
+      ? Math.min(Number.MAX_SAFE_INTEGER, this.underperformingPoints + 1) : 0;
+  }
 
   observe(chunk: string): EarlyStoppingDecision {
-    this.remainder += chunk;
-    const lines = this.remainder.split("\n");
-    this.remainder = lines.pop() ?? "";
-    for (const line of lines) {
-      const point = progressPoint(line.trim(), this.config.metric);
-      if (!point || point.step === this.lastStep) continue;
-      this.lastStep = point.step;
-      this.observed.push(point);
+    let offset = 0;
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf("\n", offset);
+      const end = newline < 0 ? chunk.length : newline;
+      if (!this.discardingLine) {
+        if (end - offset > MAX_PROGRESS_LINE_CHARS - this.remainder.length) {
+          // Discard the entire record, including its later suffix. Parsing a
+          // clipped suffix could manufacture a metric from arbitrary output.
+          this.remainder = "";
+          this.discardingLine = true;
+          this.underperformingPoints = 0;
+        } else this.remainder += chunk.slice(offset, end);
+      }
+      if (newline < 0) break;
+      if (!this.discardingLine) this.accept(this.remainder);
+      this.remainder = "";
+      this.discardingLine = false;
+      offset = newline + 1;
     }
-    return assessEarlyStopping(this.observed, this.reference, this.config);
+    return stoppingDecision(this.latest, this.reference, this.config, this.underperformingPoints);
   }
 }

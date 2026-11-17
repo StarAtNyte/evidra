@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
-import { mkdirSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, renameSync, rmSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { EvidenceClaimSchema } from "./types.js";
 import { compareClaims } from "./claim-consistency.js";
@@ -288,7 +288,7 @@ export interface ResearchRoutine {
   budgetMinutes: number;
   intervalSeconds: number;
   stopCondition: string;
-  provider: "codex" | "local";
+  provider: "codex" | "claude" | "local";
   model: string;
   thinking: string;
   autonomy: "safe" | "fast" | "yolo";
@@ -344,7 +344,7 @@ function validateRoutine(routine: Pick<ResearchRoutine, "name" | "goal" | "mode"
   if (!Number.isFinite(routine.budgetMinutes) || routine.budgetMinutes <= 0) throw new Error("Routine budget must be positive.");
   if (!Number.isFinite(routine.intervalSeconds) || routine.intervalSeconds < 60) throw new Error("Routine interval must be at least 1 minute.");
   if (!["research", "challenge"].includes(routine.mode)) throw new Error("Routine mode must be 'research' or 'challenge'.");
-  if (!["codex", "local"].includes(routine.provider)) throw new Error("Routine provider must be 'codex' or 'local'.");
+  if (!["codex", "claude", "local"].includes(routine.provider)) throw new Error("Routine provider must be 'codex', 'claude', or 'local'.");
   if (!routine.model.trim()) throw new Error("Routine model must not be empty.");
   if (!routine.thinking.trim()) throw new Error("Routine thinking effort must not be empty.");
   if (!["safe", "fast", "yolo"].includes(routine.autonomy)) throw new Error("Routine autonomy must be safe, fast, or yolo.");
@@ -833,6 +833,10 @@ export class ResearchStore {
     // event in its family and large research campaigns make status O(tasks ×
     // events). Retain the bounded scan fallback on SQLite builds without JSON1.
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_type_task_id_id ON events(type, json_extract(payload_json, '$.taskId'), id)"); } catch { /* JSON1 unavailable; event APIs retain their compatibility fallback */ }
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_type_experiment_id_id ON events(type, json_extract(payload_json, '$.experimentId'), id)"); } catch { /* JSON1 unavailable; allocation lookups retain their compatibility fallback */ }
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_modal_call_id ON events(json_extract(payload_json, '$.callId'), id) WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal'"); } catch { /* JSON1 unavailable; call ownership uses a streaming fallback */ }
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_modal_app_id ON events(json_extract(payload_json, '$.appId'), id) WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal'"); } catch { /* JSON1 unavailable; app ownership uses a bounded streaming fallback */ }
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_remote_submission_identity_v2 ON events(type, json_extract(payload_json, '$.experimentId'), json_extract(payload_json, '$.submissionId'), id) WHERE type IN ('run.remote.submitting', 'run.remote.allocated', 'run.remote.submitted', 'run.remote.terminal', 'run.remote.allocation.terminal')"); } catch { /* JSON1 unavailable; allocation proofs use bounded streaming reads */ }
     this.db.prepare("INSERT OR IGNORE INTO workspace_identity (id, workspace_id, created_at) VALUES (1, ?, ?)").run(`ws_${randomUUID()}`, new Date().toISOString());
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_experiments_created_at ON experiments(created_at);
@@ -915,8 +919,30 @@ export class ResearchStore {
 
   /** Create a consistent SQLite backup while keeping the live store open. */
   async backup(destination: string): Promise<void> {
-    mkdirSync(dirname(destination), { recursive: true });
-    await this.db.backup(destination);
+    const target = resolve(destination);
+    if (target === resolve(this.db.name)) throw new Error("Backup must not replace the live database.");
+    if (existsSync(this.db.name) && existsSync(target)) {
+      const source = statSync(this.db.name), existing = statSync(target);
+      if (source.dev === existing.dev && source.ino === existing.ino) throw new Error("Backup must not replace an alias of the live database.");
+    }
+    const requireNoJournals = (): void => {
+      if (["-wal", "-shm", "-journal"].some((suffix) => existsSync(target + suffix))) throw new Error("Backup destination has SQLite journal files; close or recover that database before replacing it.");
+    };
+    requireNoJournals();
+    mkdirSync(dirname(target), { recursive: true });
+    // The private directory protects SQLite's output while it is being written.
+    // Staging beside the destination keeps publication on the same filesystem.
+    const staging = mkdtempSync(join(dirname(target), ".evidra-backup-"));
+    try {
+      chmodSync(staging, 0o700);
+      const snapshot = join(staging, "state.sqlite");
+      await this.db.backup(snapshot);
+      chmodSync(snapshot, 0o600);
+      const descriptor = openSync(snapshot, "r");
+      try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+      requireNoJournals();
+      renameSync(snapshot, target);
+    } finally { rmSync(staging, { recursive: true, force: true }); }
   }
 
   createProject(project: { id: string; name: string; competitionId: string; config: unknown }): void {
@@ -1138,6 +1164,10 @@ export class ResearchStore {
   }
 
   releaseComputeReservation(experimentId: string, reason = "experiment terminal"): boolean {
+    const evidence = this.remoteExecutionState(experimentId);
+    if (evidence.recorded && !evidence.confirmed) return false;
+    const experiment = this.db.prepare("SELECT payload_json FROM experiments WHERE id = ?").get(experimentId) as { payload_json: string } | undefined;
+    if (experiment && (JSON.parse(experiment.payload_json) as { remoteReconciliationRequired?: unknown }).remoteReconciliationRequired === true) return false;
     const now = new Date().toISOString();
     const result = this.db.prepare("UPDATE compute_reservations SET status = 'released', updated_at = ? WHERE experiment_id = ? AND status = 'reserved'").run(now, experimentId);
     if (result.changes === 1) this.appendEvent("compute.budget.released", { experimentId, reason });
@@ -1151,13 +1181,27 @@ export class ResearchStore {
   saveExperiment(experiment: { id: string; payload: unknown }): void {
     const existing = this.db.prepare("SELECT payload_json FROM experiments WHERE id = ?").get(experiment.id) as { payload_json: string } | undefined;
     const now = new Date().toISOString();
-    const safePayload = redactStructured(experiment.payload);
+    let safePayload = redactStructured(experiment.payload);
     if (existing) {
+      const previous = JSON.parse(existing.payload_json) as { remoteReconciliationRequired?: unknown };
+      if (previous.remoteReconciliationRequired === true) {
+        if (!safePayload || typeof safePayload !== "object" || Array.isArray(safePayload)) throw new Error(`Experiment ${experiment.id} requires remote reconciliation before replacement.`);
+        if (["running", "scheduled", "completed"].includes(String((safePayload as { status?: unknown }).status))) throw new Error(`Experiment ${experiment.id} requires remote reconciliation before execution or completion.`);
+        safePayload = { ...safePayload, remoteReconciliationRequired: true };
+      }
       const previousManifest = registeredManifest(JSON.parse(existing.payload_json));
       const nextManifest = registeredManifest(safePayload);
       if (previousManifest && nextManifest && JSON.stringify(canonicalValue(previousManifest)) !== JSON.stringify(canonicalValue(nextManifest))) {
         this.appendEvent("experiment.manifest.mutation.rejected", { id: experiment.id, reason: "pre-registered manifest is immutable", fields: IMMUTABLE_MANIFEST_FIELDS.filter((field) => JSON.stringify(canonicalValue(previousManifest[field])) !== JSON.stringify(canonicalValue(nextManifest[field]))) });
         throw new Error(`Experiment ${experiment.id} has an immutable pre-registered manifest; create a new experiment for protocol changes.`);
+      }
+    }
+    const evidence = this.remoteExecutionState(experiment.id);
+    if (evidence.recorded && !evidence.confirmed && safePayload && typeof safePayload === "object") {
+      const status = String((safePayload as { status?: unknown }).status);
+      if (["running", "scheduled", "completed"].includes(status)) throw new Error(`Experiment ${experiment.id} has unconfirmed remote allocations; reconcile them before execution or completion.`);
+      if (["failed", "invalid", "rejected", "cancelled", "blocked"].includes(status)) {
+        safePayload = { ...safePayload, remoteReconciliationRequired: true, status: "blocked", remoteOutcomeStatus: status };
       }
     }
     this.db.prepare(`
@@ -1166,7 +1210,7 @@ export class ResearchStore {
       ON CONFLICT(id) DO UPDATE SET payload_json = excluded.payload_json
     `).run(experiment.id, JSON.stringify(safePayload), now);
     const status = (safePayload as { status?: unknown }).status;
-    if (["completed", "failed", "invalid", "rejected", "cancelled", "blocked"].includes(String(status))) this.releaseComputeReservation(experiment.id, `experiment status ${String(status)}`);
+    if ((safePayload as { remoteReconciliationRequired?: unknown }).remoteReconciliationRequired !== true && ["completed", "failed", "invalid", "rejected", "cancelled", "blocked"].includes(String(status))) this.releaseComputeReservation(experiment.id, `experiment status ${String(status)}`);
     this.appendEvent(existing ? "experiment.updated" : "experiment.created", { id: experiment.id, payload: safePayload });
   }
 
@@ -1570,6 +1614,15 @@ export class ResearchStore {
       if (existing.status !== "acknowledged" || status === "acknowledged") throw new Error(`Directive #${directiveId} already has a terminal ${existing.status} outcome.`);
     }
     this.appendEvent("agent.directive.outcome", { directiveId, role: normalizedRole, status, message: normalizedMessage });
+  }
+
+  /** Record a terminal outcome unless another path (stale-handoff recovery, an earlier attempt) already
+   * settled the directive. A recipient finishing late must not crash its caller over a closed handoff. */
+  settleAgentDirective(directiveId: number, role: string, status: Exclude<AgentDirectiveOutcomeStatus, "acknowledged">, message: string): boolean {
+    const existing = this.agentDirectiveOutcomes(256).find((outcome) => outcome.directiveId === directiveId);
+    if (existing && existing.status !== "acknowledged") return false;
+    this.recordAgentDirectiveOutcome(directiveId, role, status, message);
+    return true;
   }
 
   agentDirectiveOutcomes(limit = 64): AgentDirectiveOutcome[] {
@@ -3691,7 +3744,7 @@ export class ResearchStore {
     return rows.map((row) => ({ id: row.id, payload: JSON.parse(row.payload_json), createdAt: row.created_at }));
   }
 
-  /** Mark experiments left running by a dead controller as failed and retryable. */
+  /** Recover local work; quarantine remote work until its termination is proven. */
   recoverStaleExperiments(staleAfterMs = 30_000): string[] {
     const recovered: string[] = [];
     const cutoff = Math.max(0, staleAfterMs);
@@ -3712,25 +3765,233 @@ export class ResearchStore {
         const age = now - Date.parse(heartbeatAt);
         if (Number.isFinite(age) && age >= 0 && age <= cutoff) continue;
       }
-      const updated = { ...payload, status: "failed", failure: "Controller exited before experiment finalization.", recoveredAt: new Date().toISOString(), stale: true, recoveryAttempted: false };
+      const resources = payload.resources && typeof payload.resources === "object" ? payload.resources as { executor?: unknown } : {};
+      const remote = ["container", "modal", "slurm"].includes(String(resources.executor));
+      const updated = { ...payload, status: remote ? "blocked" : "failed", failure: remote ? "Controller exited; worker termination is unconfirmed. Remote reconciliation is required before replay." : "Controller exited before experiment finalization.", recoveredAt: new Date().toISOString(), stale: true, recoveryAttempted: remote, ...(remote ? { remoteReconciliationRequired: true } : {}) };
       this.saveExperiment({ id: experiment.id, payload: updated });
       this.appendEvent("experiment.stale.recovered", { experimentId: experiment.id, previousStatus: "running" });
+      if (remote) this.appendEvent("experiment.remote.reconciliation.required", { experimentId: experiment.id, executor: resources.executor, reason: "stale controller heartbeat does not prove remote termination" });
       recovered.push(experiment.id);
     }
     this.reconcileComputeReservations();
     return recovered;
   }
 
+  remoteExecutionState(experimentId: string): { recorded: boolean; confirmed: boolean; submissionIds: string[] } {
+    let records: Array<{ type: string; payload: unknown }>;
+    try {
+      const rows = this.db.prepare("SELECT type, payload_json FROM events WHERE type IN ('run.remote.submitting', 'run.remote.allocated', 'run.remote.submitted', 'run.remote.terminal') AND json_extract(payload_json, '$.experimentId') = ? ORDER BY id").all(experimentId) as Array<{ type: string; payload_json: string }>;
+      records = rows.map((row) => ({ type: row.type, payload: JSON.parse(row.payload_json) }));
+    } catch {
+      records = this.eventsByTypes(["run.remote.submitting", "run.remote.allocated", "run.remote.submitted", "run.remote.terminal"]);
+    }
+    const events = records.map((event) => ({ phase: event.type.slice("run.remote.".length), payload: event.payload as Record<string, unknown> }))
+      .filter((event) => event.payload?.experimentId === experimentId && ["slurm", "container", "modal"].includes(String(event.payload.executor)));
+    const intents = events.filter((event) => event.phase === "submitting");
+    if (!events.length) return { recorded: false, confirmed: false, submissionIds: [] };
+    const unresolved = { recorded: true, confirmed: false, submissionIds: [] };
+    if (this.verifyEventChain().status !== "valid" || !intents.length) return unresolved;
+    if (new Set(intents.map((intent) => intent.payload.submissionId)).size !== intents.length || events.some((event) => event.payload.phase !== event.phase)) return unresolved;
+    const terminalStates = new Set(["COMPLETED", "CANCELLED", "TIMEOUT", "FAILED", "OUT_OF_MEMORY", "NODE_FAIL", "PREEMPTED", "BOOT_FAIL", "DEADLINE", "REVOKED"]);
+    for (const intent of intents) {
+      const id = intent.payload.submissionId;
+      if (typeof id !== "string" || !/^[a-f0-9-]{36}$/.test(id) || intent.payload.allocationName !== `evidra-${id}`) return unresolved;
+      const submitted = events.filter((event) => event.phase === "submitted" && event.payload.submissionId === id);
+      const terminal = events.filter((event) => event.phase === "terminal" && event.payload.submissionId === id);
+      if (intent.payload.executor === "modal" && intent.payload.protocol === "modal-call-v1" && terminal.length === 1 && terminal[0].payload.state === "NOT_STARTED") {
+        const proof = terminal[0].payload;
+        if (events.some((event) => event.phase === "allocated" && event.payload.submissionId === id) || submitted.length !== 0 || events.indexOf(intent) >= events.indexOf(terminal[0]) || intent.payload.callId !== undefined || proof.executor !== "modal" || proof.protocol !== intent.payload.protocol || proof.allocationName !== intent.payload.allocationName || proof.callId !== undefined || proof.exitCode !== 127 || proof.completionEvidence !== "spawn-error" || !["ENOENT", "EACCES", "ENOEXEC", "ENOTDIR", "EMFILE", "ENFILE", "E2BIG"].includes(String(proof.spawnErrorCode))) return unresolved;
+        continue;
+      }
+      if (submitted.length !== 1 || terminal.length !== 1) return unresolved;
+      const receipt = submitted[0].payload;
+      const proof = terminal[0].payload;
+      if (events.indexOf(intent) >= events.indexOf(submitted[0]) || events.indexOf(submitted[0]) >= events.indexOf(terminal[0])) return unresolved;
+      if (receipt.executor !== intent.payload.executor || proof.executor !== intent.payload.executor) return unresolved;
+      if (receipt.allocationName !== intent.payload.allocationName || proof.allocationName !== intent.payload.allocationName) return unresolved;
+      if (intent.payload.executor === "modal") {
+        if (intent.payload.protocol === "modal-call-v1") {
+          if (receipt.protocol !== intent.payload.protocol || proof.protocol !== intent.payload.protocol || typeof receipt.callId !== "string" || !/^fc-[A-Za-z0-9]{1,128}$/.test(receipt.callId) || proof.callId !== receipt.callId) return unresolved;
+          if (!this.modalCallOwnershipConfirmed(experimentId, String(id), receipt.callId)) return unresolved;
+        } else return unresolved;
+        let allocation = proof;
+        const supplemental = this.remoteEvidenceForSubmission("run.remote.allocation.terminal", experimentId, id);
+        if (proof.appState === "STOPPED" && proof.runningTasks === 0 && typeof proof.appId === "string" && /^ap-[A-Za-z0-9]{1,128}$/.test(proof.appId) && supplemental.length !== 0) return unresolved;
+        if (!(proof.appState === "STOPPED" && proof.runningTasks === 0 && typeof proof.appId === "string" && /^ap-[A-Za-z0-9]{1,128}$/.test(proof.appId))) {
+          const terminals = this.remoteEvidenceForSubmission("run.remote.terminal", experimentId, id);
+          if (supplemental.length !== 1 || terminals.length !== 1 || supplemental[0].id <= terminals[0].id) return unresolved;
+          allocation = supplemental[0].payload;
+        }
+        if (allocation.phase !== "terminal" || allocation.state !== proof.state || allocation.exitCode !== proof.exitCode || allocation.executor !== "modal" || allocation.protocol !== intent.payload.protocol || allocation.allocationName !== intent.payload.allocationName || allocation.callId !== receipt.callId || allocation.appState !== "STOPPED" || allocation.runningTasks !== 0 || typeof allocation.appId !== "string" || !/^ap-[A-Za-z0-9]{1,128}$/.test(allocation.appId) || receipt.appId !== undefined && receipt.appId !== allocation.appId) return unresolved;
+        const workerCompleted = ["client-envelope", "sdk-result"].includes(String(proof.completionEvidence)) && proof.state === "COMPLETED" && Number.isInteger(proof.exitCode) && Number(proof.exitCode) >= 0 && Number(proof.exitCode) <= 255;
+        const allocationOnly = proof.completionEvidence === "sdk-allocation" && proof.state === "ALLOCATION_STOPPED" && proof.exitCode === 125;
+        if (!workerCompleted && !allocationOnly) return unresolved;
+        continue;
+      }
+      if (intent.payload.executor === "container") {
+        if (!["docker", "podman"].includes(String(intent.payload.runtime)) || receipt.runtime !== intent.payload.runtime || proof.runtime !== intent.payload.runtime || receipt.daemonId !== intent.payload.daemonId || proof.daemonId !== intent.payload.daemonId || typeof receipt.containerId !== "string" || !/^[a-f0-9]{64}$/.test(receipt.containerId) || proof.containerId !== receipt.containerId) return unresolved;
+        if (proof.state !== "REMOVED" && !(proof.state === "EXITED" && proof.runtime === "docker" && typeof proof.daemonId === "string" && /^[A-Za-z0-9][A-Za-z0-9:-]{15,127}$/.test(proof.daemonId))) return unresolved;
+        if (!Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255 || proof.state === "REMOVED" && proof.exitCode !== 0) return unresolved;
+        continue;
+      }
+      if (receipt.cluster !== undefined && (typeof receipt.cluster !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(receipt.cluster))) return unresolved;
+      if (typeof receipt.jobId !== "string" || !/^\d+$/.test(receipt.jobId) || proof.jobId !== receipt.jobId || proof.cluster !== receipt.cluster || !terminalStates.has(String(proof.state)) || !Number.isInteger(proof.exitCode) || Number(proof.exitCode) < 0 || Number(proof.exitCode) > 255) return unresolved;
+    }
+    // Every attempt needs an intent; unmatched ledger records cannot release a fence.
+    if (events.some((event) => !intents.some((intent) => intent.payload.submissionId === event.payload.submissionId))) return unresolved;
+    return { recorded: true, confirmed: true, submissionIds: intents.map((intent) => String(intent.payload.submissionId)) };
+  }
+
+  /** Concurrent observers must agree on the immutable container receipt. */
+  recordContainerReceiptEvidence(event: { experimentId: string; submissionId: string; allocationName: string; runtime: "docker" | "podman"; containerId: string; daemonId?: string; at: string; recovered?: boolean }): boolean {
+    return this.db.transaction(() => {
+      const existing = this.eventsByType("run.remote.submitted").map((record) => record.payload as Record<string, unknown>).filter((record) => record.experimentId === event.experimentId && record.submissionId === event.submissionId);
+      if (existing.length) return existing.length === 1 && existing[0].executor === "container" && ["runtime", "containerId", "daemonId", "allocationName"].every((key) => existing[0][key] === (event as unknown as Record<string, unknown>)[key]);
+      this.appendEvent("run.remote.submitted", { ...event, executor: "container", phase: "submitted" });
+      return true;
+    })();
+  }
+
+  /** A cleanup proof is distinct from a successful experiment measurement. */
+  recordContainerTerminalEvidence(event: { experimentId: string; submissionId: string; allocationName: string; runtime: "docker" | "podman"; containerId: string; daemonId?: string; state: string; exitCode: number; at: string }): boolean {
+    return this.db.transaction(() => {
+      const existing = this.eventsByType("run.remote.terminal").map((record) => record.payload as Record<string, unknown>).filter((record) => record.experimentId === event.experimentId && record.submissionId === event.submissionId);
+      if (existing.length) return existing.length === 1 && existing[0].executor === "container" && ["runtime", "containerId", "daemonId", "allocationName", "state", "exitCode"].every((key) => existing[0][key] === (event as unknown as Record<string, unknown>)[key]);
+      this.appendEvent("run.remote.terminal", { ...event, executor: "container", phase: "terminal" });
+      return true;
+    })();
+  }
+
+  /** A call receipt cannot be reused by another intent or experiment. */
+  private remoteEvidenceForSubmission(type: string, experimentId: string, submissionId: string): Array<{ id: number; payload: Record<string, unknown> }> {
+    try {
+      const rows = this.db.prepare("SELECT id, payload_json FROM events WHERE type = ? AND type IN ('run.remote.submitting', 'run.remote.allocated', 'run.remote.submitted', 'run.remote.terminal', 'run.remote.allocation.terminal') AND json_extract(payload_json, '$.experimentId') = ? AND json_extract(payload_json, '$.submissionId') = ? ORDER BY id LIMIT 2").all(type, experimentId, submissionId) as Array<{ id: number; payload_json: string }>;
+      return rows.map((row) => ({ id: row.id, payload: JSON.parse(row.payload_json) as Record<string, unknown> }));
+    } catch {
+      const found: Array<{ id: number; payload: Record<string, unknown> }> = [];
+      const rows = this.db.prepare("SELECT id, payload_json FROM events WHERE type = ? ORDER BY id").iterate(type) as IterableIterator<{ id: number; payload_json: string }>;
+      for (const row of rows) {
+        const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+        if (payload?.experimentId !== experimentId || payload.submissionId !== submissionId) continue;
+        found.push({ id: row.id, payload });
+        if (found.length === 2) break;
+      }
+      return found;
+    }
+  }
+
+  modalAppOwnershipConfirmed(experimentId: string, submissionId: string, appId: string): boolean {
+    let found: Array<Record<string, unknown>>;
+    try {
+      const rows = this.db.prepare("SELECT payload_json FROM events WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal' AND json_extract(payload_json, '$.appId') = ? ORDER BY id LIMIT 2").all(appId) as Array<{ payload_json: string }>;
+      found = rows.map((row) => JSON.parse(row.payload_json) as Record<string, unknown>);
+    } catch {
+      found = [];
+      const rows = this.db.prepare("SELECT payload_json FROM events WHERE type = 'run.remote.submitted' ORDER BY id").iterate() as IterableIterator<{ payload_json: string }>;
+      for (const row of rows) {
+        const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+        if (payload?.executor !== "modal" || payload.appId !== appId) continue;
+        found.push(payload);
+        if (found.length === 2) break;
+      }
+    }
+    return found.length === 1 && found[0].experimentId === experimentId && found[0].submissionId === submissionId && found[0].appName === `evidra-${submissionId}` && this.modalCallOwnershipConfirmed(experimentId, submissionId, String(found[0].callId));
+  }
+
+  modalCallOwnershipConfirmed(experimentId: string, submissionId: string, callId: string): boolean {
+    let receipts: Array<Record<string, unknown>>;
+    try {
+      const rows = this.db.prepare("SELECT payload_json FROM events WHERE type = 'run.remote.submitted' AND json_extract(payload_json, '$.executor') = 'modal' AND json_extract(payload_json, '$.callId') = ? ORDER BY id LIMIT 2").all(callId) as Array<{ payload_json: string }>;
+      receipts = rows.map((row) => JSON.parse(row.payload_json) as Record<string, unknown>);
+    } catch {
+      receipts = [];
+      const rows = this.db.prepare("SELECT payload_json FROM events WHERE type = 'run.remote.submitted' ORDER BY id").iterate() as IterableIterator<{ payload_json: string }>;
+      for (const row of rows) {
+        const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+        if (payload?.executor !== "modal" || payload.callId !== callId) continue;
+        receipts.push(payload);
+        if (receipts.length === 2) break;
+      }
+    }
+    if (!(receipts.length === 1 && receipts[0].experimentId === experimentId && receipts[0].submissionId === submissionId && receipts[0].protocol === "modal-call-v1")) return false;
+    const allocated = this.remoteEvidenceForSubmission("run.remote.allocated", experimentId, submissionId);
+    if (!allocated.length) return true; // Older call receipts did not journal app startup.
+    const intents = this.remoteEvidenceForSubmission("run.remote.submitting", experimentId, submissionId);
+    const submitted = this.remoteEvidenceForSubmission("run.remote.submitted", experimentId, submissionId);
+    if (allocated.length !== 1 || intents.length !== 1 || submitted.length !== 1 || intents[0].id >= allocated[0].id || allocated[0].id >= submitted[0].id) return false;
+    const app = allocated[0].payload, receipt = submitted[0].payload;
+    return app.executor === "modal" && app.protocol === "modal-call-v1" && app.phase === "allocated" && app.callId === undefined
+      && app.allocationName === `evidra-${submissionId}` && app.appName === app.allocationName
+      && intents[0].payload.allocationName === app.allocationName && intents[0].payload.appName === app.appName
+      && typeof app.appId === "string" && /^ap-[A-Za-z0-9]{1,128}$/.test(app.appId)
+      && receipt.appId === app.appId && receipt.appName === app.appName && receipt.allocationName === app.allocationName;
+  }
+
+  /** Both synchronous completion and recovery must agree on the same call. */
+  recordModalTerminalEvidence(event: { experimentId: string; submissionId: string; allocationName: string; callId: string; state: string; exitCode: number; completionEvidence: "client-envelope" | "sdk-result" | "sdk-allocation"; appId?: string; appState?: "STOPPED"; runningTasks?: number; at: string }): boolean {
+    return this.db.transaction(() => {
+      if (!this.modalCallOwnershipConfirmed(event.experimentId, event.submissionId, event.callId)) return false;
+      const existing = this.remoteEvidenceForSubmission("run.remote.terminal", event.experimentId, event.submissionId).map((record) => record.payload);
+      const receipt = this.remoteEvidenceForSubmission("run.remote.submitted", event.experimentId, event.submissionId)[0]?.payload;
+      const hasAllocation = typeof event.appId === "string" && /^ap-[A-Za-z0-9]{1,128}$/.test(event.appId) && event.appState === "STOPPED" && event.runningTasks === 0;
+      if (hasAllocation && receipt?.appId !== undefined && receipt.appId !== event.appId) return false;
+      if (existing.length) {
+        if (existing.length !== 1 || existing[0].executor !== "modal" || existing[0].protocol !== "modal-call-v1" || !["callId", "allocationName", "state", "exitCode"].every((key) => existing[0][key] === (event as unknown as Record<string, unknown>)[key])) return false;
+        if (existing[0].appId !== undefined) return hasAllocation && existing[0].appId === event.appId && existing[0].appState === event.appState && existing[0].runningTasks === event.runningTasks;
+        if (hasAllocation) {
+          const supplemental = this.remoteEvidenceForSubmission("run.remote.allocation.terminal", event.experimentId, event.submissionId).map((record) => record.payload);
+          if (supplemental.length) return supplemental.length === 1 && ["callId", "appId", "appState", "runningTasks", "allocationName"].every((key) => supplemental[0][key] === (event as unknown as Record<string, unknown>)[key]);
+          this.appendEvent("run.remote.allocation.terminal", { ...event, executor: "modal", protocol: "modal-call-v1", phase: "terminal" });
+        }
+        return true;
+      }
+      this.appendEvent("run.remote.terminal", { ...event, executor: "modal", protocol: "modal-call-v1", phase: "terminal" });
+      return true;
+    })();
+  }
+
+  /** Concurrent recovery observers must not create duplicate terminal proofs. */
+  recordRemoteTerminalEvidence(event: { experimentId: string; submissionId: string; allocationName: string; jobId: string; cluster?: string; state: string; exitCode: number; at: string }): boolean {
+    return this.db.transaction(() => {
+      const existing = this.eventsByType("run.remote.terminal").map((record) => record.payload as Record<string, unknown>).filter((record) => record.experimentId === event.experimentId && record.submissionId === event.submissionId);
+      if (existing.length) return existing.length === 1 && ["jobId", "cluster", "allocationName", "state", "exitCode"].every((key) => existing[0][key] === (event as unknown as Record<string, unknown>)[key]);
+      this.appendEvent("run.remote.terminal", { ...event, executor: "slurm", phase: "terminal" });
+      return true;
+    })();
+  }
+
+  /** Release a restart fence only after every allocation has terminal evidence. */
+  reconcileRemoteExperiment(experimentId: string): boolean {
+    if (this.verifyEventChain().status !== "valid") return false;
+    const entry = this.experiments().find((experiment) => experiment.id === experimentId);
+    const payload = entry?.payload && typeof entry.payload === "object" ? entry.payload as Record<string, unknown> : undefined;
+    if (!payload || payload.remoteReconciliationRequired !== true) return false;
+    const resources = payload.resources as { executor?: unknown } | undefined;
+    if (!["slurm", "container", "modal"].includes(String(resources?.executor))) return false;
+    const evidence = this.remoteExecutionState(experimentId);
+    if (!evidence.confirmed) return false;
+    this.db.transaction(() => {
+      const updated = { ...payload, remoteReconciliationRequired: false, status: "failed", recoveryAttempted: false, remoteReconciledAt: new Date().toISOString() };
+      this.db.prepare("UPDATE experiments SET payload_json = ? WHERE id = ?").run(safeJson(updated), experimentId);
+      this.releaseComputeReservation(experimentId, "all recorded remote allocations have terminal evidence");
+      this.appendEvent("experiment.remote.reconciled", { experimentId, executor: resources?.executor, submissionIds: evidence.submissionIds, result: "termination proven; measurement remains unvalidated" });
+    })();
+    return true;
+  }
+
   /** Release reservations whose experiment was never persisted or is terminal. */
   reconcileComputeReservations(): string[] {
     const terminal = new Set(["completed", "failed", "invalid", "rejected", "cancelled", "blocked"]);
-    const experiments = new Map(this.experiments().map((experiment) => {
+    const entries = this.experiments();
+    const uncertain = new Set(entries.filter((experiment) => (experiment.payload as { remoteReconciliationRequired?: unknown } | null)?.remoteReconciliationRequired === true).map((experiment) => experiment.id));
+    const experiments = new Map(entries.map((experiment) => {
       const payload = experiment.payload && typeof experiment.payload === "object" ? experiment.payload as { status?: unknown } : {};
       return [experiment.id, String(payload.status ?? "")] as const;
     }));
     const rows = this.db.prepare("SELECT experiment_id FROM compute_reservations WHERE status = 'reserved'").all() as Array<{ experiment_id: string }>;
     const released: string[] = [];
     for (const row of rows) {
+      if (uncertain.has(row.experiment_id)) continue;
       if (experiments.has(row.experiment_id) && !terminal.has(experiments.get(row.experiment_id) ?? "")) continue;
       if (this.releaseComputeReservation(row.experiment_id, experiments.has(row.experiment_id) ? "terminal experiment reconciliation" : "orphaned reservation reconciliation")) released.push(row.experiment_id);
     }
