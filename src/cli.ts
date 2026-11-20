@@ -6,9 +6,9 @@ import { workspaceBackupDestination } from "./core/backup-path.js";
 import { reconcileRemoteExperiment } from "./core/remote-reconciliation.js";
 import { Command } from "commander";
 import { appendFileSync, copyFileSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync, realpathSync } from "node:fs";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { externalActionNeedsReconciliation, ResearchStore, queueEffectivePriority, routineRetryDelaySeconds } from "./core/store.js";
@@ -57,7 +57,7 @@ import { persistExecutionStageResult } from "./core/stage-executor.js";
 import { availableResearchTools, executeResearchTool } from "./core/tools.js";
 import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "./core/external-tools.js";
 import { projectVerifiedSubtaskState } from "./core/subtask-state.js";
-import { classifyProcessFailure, executorFor, mergeEvaluatorResult, parseMetricOutput, prepareExperimentEnvironment, prepareWorkerHome, safeWorkerEnvironment, validateRunMetrics } from "./core/executors.js";
+import { classifyProcessFailure, executorFor, mergeEvaluatorResult, parseMetricOutput, prepareExperimentEnvironment, prepareWorkerHome, safeWorkerEnvironment, sessionBusEnvironment, validateRunMetrics } from "./core/executors.js";
 import { rankFinalCandidates, runCampaignFinalize, type FinalCandidate } from "./core/finalize.js";
 import { packEvidence } from "./core/evidence-pack.js";
 import { sha256File } from "./core/evidence.js";
@@ -135,6 +135,8 @@ import { runOrchestrationBenchmark } from "./core/orchestration-bench.js";
 import { runGovernanceBenchmark } from "./core/governance-bench.js";
 import { championExperimentIds, explorationHypothesis, holdoutAllows, holdoutReference, implementationOf, isAgentVisibleEvent, normalizeFamily, parentExperimentId, searchState, selectRatchetReference, decideRatchet, resolveRatchetPolicy, applySegmentGates, judgeSegments }  from "./core/ratchet.js";
 import { campaignLossAnalysis, loadRunUnitScores, pairedRatchetEvidence, unitScoreDirection, unitScoreFiles, unitScoresArtifactPath } from "./core/campaign-analysis.js";
+import type { CompetitionConfig } from "./core/types.js";
+import { candidateDependencies, checkResources, classifyLaunchFailure, dependencyStatus, detectSystemicFailure, missingEnvironment, parseTimeVerbose, resolveEnvContract, resolveLaunchPolicy, resourcesFromOutput, type Dependency, type DependencyStatus, type LaunchClassification, type RecordedFailure, type ResourceVerdict } from "./core/launch-guard.js";
 import { appendImprovement, ledgerPaths, readImprovementLedger, renderImprovementLedger, verifyImprovementLedger } from "./core/improvement-ledger.js";
 import { classifyTechnique, planScoutRound, promoteScoutScreens, resolveScoutPolicy, scoutBrief, scoutLedgerFromEvents, summarizeScoutLedger, techniqueLabel, TECHNIQUE_CLASSES, type ScoutPolicy } from "./core/scout.js";
 import { analyzeUnitLoss, renderLossAnalysis } from "./core/loss-analysis.js";
@@ -3020,7 +3022,7 @@ scout.command("run")
   .description("Run one deterministic scout round without an LLM director: diversity-filter the variants, screen them, promote the best")
   .action(async (file: string, options: { width?: string; promoteTop?: string; screenOnly?: boolean; parallel: string; timeoutMinutes: string }) => {
     const adapter = activeCompetition();
-    const variants = JSON.parse(readFileSync(file, "utf8")) as Array<{ title?: unknown; family?: unknown; mechanism?: unknown; env?: unknown }>;
+    const variants = JSON.parse(readFileSync(file, "utf8")) as Array<{ title?: unknown; family?: unknown; mechanism?: unknown; env?: unknown; dependsOn?: unknown }>;
     if (!Array.isArray(variants) || !variants.length) throw new Error("Variants file must be a non-empty JSON array.");
     const policy = resolveScoutPolicy({ ...adapter.config.scout, enabled: true, ...(options.promoteTop ? { promoteTop: Number(options.promoteTop) } : {}) }, options.width ? Number(options.width) : undefined);
     const store = new ResearchStore(statePath);
@@ -3031,10 +3033,16 @@ scout.command("run")
       const id = `hyp_scout_${stamp}_${index}_${variant.title.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 32)}`;
       const family = typeof variant.family === "string" ? variant.family : variant.title;
       const mechanism = typeof variant.mechanism === "string" ? variant.mechanism : `scout variant ${env.map((entry) => `${entry.name}=${entry.value}`).join(" ")}`;
-      store.saveHypothesis({ id, payload: { id, title: variant.title, formulationFamily: family, mechanism, outcomeType: "metric", implementationMode: "modify", proposedChange: env.map((entry) => `${entry.name}=${entry.value}`).join(" ") || "none", falsificationTest: "screen does not beat the champion on paired units", expectedMetricDelta: { low: 0, median: 0, high: 0 }, experimentEnvironment: env } });
-      return { id, title: variant.title, family, mechanism };
+      store.saveHypothesis({ id, payload: { id, title: variant.title, formulationFamily: family, mechanism, outcomeType: "metric", implementationMode: "modify", proposedChange: env.map((entry) => `${entry.name}=${entry.value}`).join(" ") || "none", falsificationTest: "screen does not beat the champion on paired units", expectedMetricDelta: { low: 0, median: 0, high: 0 }, experimentEnvironment: env, ...(Array.isArray(variant.dependsOn) ? { dependsOn: variant.dependsOn } : {}) } });
+      return { id, title: variant.title, family, mechanism, payload: { experimentEnvironment: env, dependsOn: Array.isArray(variant.dependsOn) ? variant.dependsOn : undefined } };
     });
-    const round = planScoutRound(candidates, campaignScoutLedger(store, adapter.config.metric), policy);
+    // Readiness gate: a variant whose dependency (e.g. a submission another agent is still building) is not ready waits.
+    const waiting = candidates.flatMap((candidate) => { const reason = unreadyReason(adapter.config, candidate.payload); return reason ? [{ id: candidate.id, reason }] : []; });
+    for (const entry of waiting) { console.log(`wait ${entry.id}: ${entry.reason}`); store.appendEvent("research.portfolio.candidate_deferred", { hypothesisId: entry.id, reason: entry.reason }); }
+    if (launchHalt()) { store.close(); process.exitCode = 75; throw new Error(`Launches are halted (${launchHalt()!.reason}). Fix the launch path, then: evidra launch clear`); }
+    const readyCandidates = candidates.filter((candidate) => !waiting.some((entry) => entry.id === candidate.id));
+    if (!readyCandidates.length) { store.close(); process.exitCode = 75; console.log("No variant is ready; nothing launched."); return; }
+    const round = planScoutRound(readyCandidates, campaignScoutLedger(store, adapter.config.metric), policy);
     store.appendEvent("research.scout.planned", { source: "scout run", policy, selected: round.selected, rejected: round.rejected });
     for (const rejected of round.rejected) console.log(`skip ${rejected.id}: ${rejected.reason}`);
     store.close();
@@ -3055,7 +3063,11 @@ scout.command("run")
     await Promise.all(Array.from({ length: Math.max(1, Math.min(Number(options.parallel) || 1, queue.length)) }, async (_, worker) => {
       // Stagger worker start so their store migrations do not contend for the SQLite write lock.
       await new Promise((resolve) => setTimeout(resolve, worker * 5_000));
-      for (let next = queue.shift(); next; next = queue.shift()) runs.set(next.experimentId, (await cli(["experiment", "run", next.experimentId, ...(hasReduced ? ["--reduced-only"] : [])])).exitCode);
+      for (let next = queue.shift(); next; next = queue.shift()) {
+        // A systemic launch failure halts the round instead of burning the remaining screens.
+        if (launchHalt()) { console.log(`skip ${next.experimentId}: launches halted`); continue; }
+        runs.set(next.experimentId, (await cli(["experiment", "run", next.experimentId, ...(hasReduced ? ["--reduced-only"] : [])])).exitCode);
+      }
     }));
     const resultStore = new ResearchStore(statePath);
     try {
@@ -3116,12 +3128,14 @@ program.command("hypothesis")
   .option("--family <family>", "method family (classified into a technique class)")
   .option("--mechanism <text>", "why it should work")
   .option("--env <assignments...>", "experiment environment overrides NAME=value")
+  .option("--depends-on <paths...>", "artifacts this candidate needs; each must carry the readiness marker (path or path:markerFile)")
   .option("--mode <mode>", "modify or verify", "modify")
-  .action((options: { title: string; family?: string; mechanism?: string; env?: string[]; mode: string }) => {
+  .action((options: { title: string; family?: string; mechanism?: string; env?: string[]; dependsOn?: string[]; mode: string }) => {
+    const dependsOn = (options.dependsOn ?? []).map((entry) => { const [path, file] = entry.split(":"); return { path, ...(file ? { readyWhen: { file } } : {}) }; });
     const env = (options.env ?? []).map((assignment) => { const index = assignment.indexOf("="); if (index < 1) throw new Error(`--env expects NAME=value, got ${assignment}`); return { name: assignment.slice(0, index), value: assignment.slice(index + 1) }; });
     const id = `hyp_${Date.now()}_${options.title.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 32)}`;
     const store = new ResearchStore(statePath);
-    store.saveHypothesis({ id, payload: { id, title: options.title, formulationFamily: options.family ?? options.title, mechanism: options.mechanism ?? "", outcomeType: "metric", implementationMode: options.mode === "verify" ? "verify" : "modify", proposedChange: env.map((entry) => `${entry.name}=${entry.value}`).join(" ") || options.title, falsificationTest: "paired ratchet does not keep it", expectedMetricDelta: { low: 0, median: 0, high: 0 }, experimentEnvironment: env } });
+    store.saveHypothesis({ id, payload: { id, title: options.title, formulationFamily: options.family ?? options.title, mechanism: options.mechanism ?? "", outcomeType: "metric", implementationMode: options.mode === "verify" ? "verify" : "modify", proposedChange: env.map((entry) => `${entry.name}=${entry.value}`).join(" ") || options.title, falsificationTest: "paired ratchet does not keep it", expectedMetricDelta: { low: 0, median: 0, high: 0 }, experimentEnvironment: env, ...(dependsOn.length ? { dependsOn } : {}) } });
     store.close();
     console.log(`${id}  [${classifyTechnique({ family: options.family ?? options.title, title: options.title })}]\nNext: evidra experiment propose ${id} && evidra experiment run <experiment id>`);
   });
@@ -6917,7 +6931,7 @@ research
         return [{ operator: payload.operator, actualMinutes: payload.durationSeconds / 60, status: payload.valid === true ? "completed" : "failed", context: { executor: typeof (payload as { executor?: unknown }).executor === "string" ? (payload as { executor: string }).executor : undefined, gpu: typeof (payload as { gpu?: unknown }).gpu === "string" ? (payload as { gpu: string }).gpu : undefined, provider: typeof (payload as { provider?: unknown }).provider === "string" ? (payload as { provider: string }).provider : undefined, model: typeof (payload as { model?: unknown }).model === "string" ? (payload as { model: string }).model : undefined } }];
       });
       const falsificationByHypothesisId = new Map(researchMemory.falsificationAgenda.map((item) => [item.hypothesisId, item]));
-      const incompleteVerificationReasons = decision.hypotheses.map(incompleteVerificationProposal);
+      const incompleteVerificationReasons = decision.hypotheses.map((hypothesis) => incompleteVerificationProposal(hypothesis) ?? unreadyReason(adapter.config, hypothesis));
       for (const [index, reason] of incompleteVerificationReasons.entries()) {
         if (reason) decisionStore.appendEvent("research.portfolio.candidate_deferred", { cycle, hypothesisId: materialized.hypothesisIds[index], title: decision.hypotheses[index]?.title, reason });
       }
@@ -7920,6 +7934,146 @@ experiment.command("gate")
     store.close();
     console.log(`Experiment ${experimentId} gates\n  leakage audit: ${gates.leakageAuditPassed ? "approved" : "pending"}\n  reviewer: ${gates.reviewerApproved ? "approved" : "pending"}`);
   });
+// ---- Launch-path safety: halts, readiness, preflight, infra-vs-experiment failures ----
+function launchHaltPath(): string { return join(stateDirectory, "launch-halt.json"); }
+function launchHalt(): { reason: string; signature?: string; experiments?: string[]; at: string } | undefined {
+  try { return JSON.parse(readFileSync(launchHaltPath(), "utf8")); } catch { return undefined; }
+}
+function haltLaunches(store: ResearchStore, diagnosis: { reason: string; signature?: string; experiments?: string[] }): void {
+  const halt = { ...diagnosis, at: new Date().toISOString() };
+  mkdirSync(stateDirectory, { recursive: true });
+  writeFileSync(launchHaltPath(), `${JSON.stringify(halt, null, 2)}\n`);
+  store.appendEvent("launch.halted", halt);
+  console.error(`LAUNCHES HALTED: ${diagnosis.reason}${diagnosis.experiments?.length ? ` (${diagnosis.experiments.join(", ")})` : ""}. Fix the launch path, then run: evidra launch clear`);
+}
+function hypothesisEnvironmentOf(payload: unknown): Record<string, string> {
+  const entries = (payload as { experimentEnvironment?: Array<{ name: string; value: string }> } | undefined)?.experimentEnvironment ?? [];
+  return Object.fromEntries(entries.map(({ name, value }) => [name, value]));
+}
+function launchReadiness(config: CompetitionConfig, payload: unknown, environment: Record<string, string> = hypothesisEnvironmentOf(payload)): DependencyStatus {
+  const readiness = config.launch?.readiness;
+  const declared = (payload as { dependsOn?: Dependency[] } | undefined)?.dependsOn;
+  const base = config.workspacePath ? resolve(root, config.workspacePath) : root;
+  const dependencies = candidateDependencies(declared, environment, readiness).map((dependency) => ({ ...dependency, path: resolve(base, dependency.path), ...(dependency.readyWhen?.file ? { readyWhen: { ...dependency.readyWhen, file: resolve(base, dependency.readyWhen.file) } } : {}) }));
+  return dependencyStatus(dependencies, readiness ? { ...readiness, trusted: readiness.trusted.map((path: string) => resolve(base, path)) } : undefined, {
+    run: (command) => spawnSync(command[0], command.slice(1), { cwd: base, stdio: "ignore", timeout: 120_000 }).status === 0,
+  });
+}
+function unreadyReason(config: CompetitionConfig, payload: unknown): string | undefined {
+  const status = launchReadiness(config, payload);
+  return status.ready ? undefined : `dependency not ready: ${status.pending.map((entry) => `${entry.path} (${entry.waitingFor})`).join("; ")}`;
+}
+/** Dry-run the exact launch chain with a no-op payload; cached for preflightTtlMinutes per environment. */
+async function runLaunchPreflight(config: CompetitionConfig, environment: NodeJS.ProcessEnv, cwd: string): Promise<{ ok: boolean; reason: string; output: string; cached?: boolean }> {
+  const policy = resolveLaunchPolicy(config.launch);
+  const contract = resolveEnvContract(config.launch?.contract);
+  const missing = missingEnvironment(contract?.requiredEnv ?? [], environment);
+  if (missing.length) {
+    // Re-derive the session variables a detached controller can lose before declaring the launch path broken.
+    Object.assign(environment, sessionBusEnvironment(environment));
+    const stillMissing = missingEnvironment(contract?.requiredEnv ?? [], environment);
+    if (stillMissing.length) return { ok: false, reason: `required environment missing: ${stillMissing.join(", ")}`, output: "" };
+  }
+  if (!policy.preflightCommand) return { ok: true, reason: "no preflight configured", output: "" };
+  const fingerprint = createHash("sha256").update(JSON.stringify([policy.preflightCommand, ...(contract?.requiredEnv ?? []).map((name) => environment[name] ?? "")])).digest("hex").slice(0, 16);
+  const store = new ResearchStore(statePath);
+  try {
+    const last = store.eventsByType("launch.preflight.completed").at(-1)?.payload as { fingerprint?: string; at?: string } | undefined;
+    if (last?.fingerprint === fingerprint && last.at && Date.now() - Date.parse(last.at) < policy.preflightTtlMinutes * 60_000) return { ok: true, reason: "preflight passed recently", output: "", cached: true };
+    let outcome = await runProcess(policy.preflightCommand, cwd, 10 * 60_000, undefined, undefined, environment).catch((error) => processFailureResult(policy.preflightCommand!, cwd, error));
+    if (outcome.exitCode !== 0) {
+      store.appendEvent("launch.preflight.retry", { exitCode: outcome.exitCode, output: `${outcome.stderr}\n${outcome.stdout}`.slice(-2000) });
+      Object.assign(environment, sessionBusEnvironment({ ...environment, XDG_RUNTIME_DIR: undefined, DBUS_SESSION_BUS_ADDRESS: undefined }));
+      outcome = await runProcess(policy.preflightCommand, cwd, 10 * 60_000, undefined, undefined, environment).catch((error) => processFailureResult(policy.preflightCommand!, cwd, error));
+    }
+    const output = `${outcome.stderr}\n${outcome.stdout}`.slice(-4000);
+    if (outcome.exitCode === 0) {
+      store.appendEvent("launch.preflight.completed", { fingerprint, at: new Date().toISOString(), command: policy.preflightCommand });
+      return { ok: true, reason: "preflight passed", output };
+    }
+    const classification = classifyLaunchFailure({ exitCode: outcome.exitCode, output }, policy);
+    store.appendEvent("launch.preflight.failed", { fingerprint, exitCode: outcome.exitCode, classification, output });
+    return { ok: false, reason: `preflight failed (exit ${outcome.exitCode}): ${classification.reason}`, output };
+  } finally {
+    store.close();
+  }
+}
+/** Retry a stage once when its failure is a launch-path failure; the executor re-derives the worker environment. */
+async function retryOnceOnInfra<T extends { status: string; exitCode?: number | null; stdout?: string; stderr?: string }>(config: CompetitionConfig, experimentId: string, stage: string, run: () => Promise<T>): Promise<T> {
+  const first = await run();
+  if (first.status === "completed") return first;
+  const classification = classifyLaunchFailure({ exitCode: first.exitCode ?? null, output: `${first.stderr ?? ""}\n${first.stdout ?? ""}` }, resolveLaunchPolicy(config.launch));
+  if (classification.kind !== "infra" || launchHalt()) return first;
+  const store = new ResearchStore(statePath);
+  store.appendEvent("experiment.infra.retry", { experimentId, stage, classification });
+  store.close();
+  console.log(`${experimentId}: ${stage} hit a launch-path failure (${classification.reason}); retrying once.`);
+  return run();
+}
+/**
+ * Record a stage failure. Infra failures are not experiment results: the experiment returns to
+ * "proposed" (no attempt, no quota). Identical fast failures across experiments halt launches.
+ */
+function recordLaunchFailure(store: ResearchStore, config: CompetitionConfig, experimentId: string, stage: string, outcome: { exitCode: number | null; output: string; durationSeconds?: number }): LaunchClassification {
+  const policy = resolveLaunchPolicy(config.launch);
+  const classification = classifyLaunchFailure(outcome, policy);
+  store.appendEvent("experiment.launch.failure", { experimentId, stage, kind: classification.kind, reason: classification.reason, signature: classification.signature, durationSeconds: outcome.durationSeconds ?? null, at: new Date().toISOString() });
+  const failures = store.eventsByType("experiment.launch.failure").map((event) => event.payload as RecordedFailure);
+  const systemic = detectSystemicFailure(failures, policy);
+  if (systemic.systemic && !launchHalt()) haltLaunches(store, { reason: `${systemic.experiments.length} experiments failed identically: ${systemic.signature}`, signature: systemic.signature, experiments: systemic.experiments });
+  return classification;
+}
+/** Measured resources of a run (evaluator stdout, else the contract's time file) checked against hosted limits. */
+function runResourceVerdict(config: CompetitionConfig, stdout: string | undefined, cwd: string, options: { ignoreWall?: boolean } = {}): (ResourceVerdict & { peakRssMb?: number; wallSeconds?: number }) | undefined {
+  const contract = resolveEnvContract(config.launch?.contract);
+  if (!contract) return undefined;
+  let resources = resourcesFromOutput(stdout ?? "");
+  if (!resources && contract.timeFile) {
+    try { resources = parseTimeVerbose(readFileSync(resolve(cwd, contract.timeFile), "utf8")); } catch { /* no time file */ }
+  }
+  if (!resources) return undefined;
+  const checked = checkResources(resources, options.ignoreWall && contract.hosted ? { ...contract, hosted: { ...contract.hosted, wallSeconds: undefined } } : contract);
+  return { ...checked, ...resources };
+}
+const launch = new Command("launch").description("Launch-path safety: preflight the exact launch chain, show or clear a systemic halt, check candidate readiness");
+launch.command("preflight").description("Run the configured no-op preflight through the launch chain now (ignores the cache)").action(async () => {
+  const adapter = activeCompetition();
+  const store = new ResearchStore(statePath);
+  store.appendEvent("launch.preflight.invalidated", { at: new Date(0).toISOString() });
+  store.close();
+  const environment = safeWorkerEnvironment({ ...(adapter.config.execution?.environment ?? {}) });
+  const result = await runLaunchPreflight({ ...adapter.config, launch: { ...adapter.config.launch, preflightTtlMinutes: 0 } }, environment, adapter.workspacePath(root));
+  console.log(`${result.ok ? "OK" : "FAILED"}: ${result.reason}`);
+  if (result.output.trim()) console.log(result.output.trim());
+  if (!result.ok) process.exitCode = 1;
+});
+launch.command("status").description("Show halt state, recent launch failures and candidate readiness").option("--json", "machine-readable").action((options: { json?: boolean }) => {
+  const adapter = activeCompetition();
+  const store = new ResearchStore(statePath);
+  try {
+    const halt = launchHalt();
+    const failures = store.eventsByType("experiment.launch.failure").slice(-10).map((event) => event.payload as RecordedFailure & { stage?: string; reason?: string });
+    const waiting = store.experiments().filter((entry) => ["proposed", "waiting"].includes(String((entry.payload as { status?: unknown }).status))).map((entry) => {
+      const hypothesisId = (entry.payload as { hypothesisId?: unknown }).hypothesisId;
+      const hypothesis = store.hypotheses().find((candidate) => candidate.id === hypothesisId)?.payload;
+      return { experimentId: entry.id, readiness: launchReadiness(adapter.config, hypothesis) };
+    });
+    if (options.json) { console.log(JSON.stringify({ halt: halt ?? null, failures, waiting }, null, 2)); return; }
+    console.log(halt ? `HALTED since ${halt.at}: ${halt.reason}` : "Launches enabled.");
+    for (const failure of failures) console.log(`  ${failure.at} ${failure.experimentId} ${failure.kind}: ${failure.reason ?? failure.signature}`);
+    for (const entry of waiting) console.log(`  ${entry.experimentId}: ${entry.readiness.ready ? "ready" : `waiting for ${entry.readiness.pending.map((item) => item.waitingFor).join("; ")}`}`);
+  } finally {
+    store.close();
+  }
+});
+launch.command("clear").description("Lift a systemic launch halt after fixing the launch path").action(() => {
+  rmSync(launchHaltPath(), { force: true });
+  const store = new ResearchStore(statePath);
+  store.appendEvent("launch.halt.cleared", { at: new Date().toISOString() });
+  store.close();
+  console.log("Launch halt cleared.");
+});
+program.addCommand(launch);
 experiment.command("abandon")
   .argument("<ids...>", "experiment identifiers")
   .requiredOption("--reason <reason>", "why the run was stopped (kept on record)")
@@ -8064,12 +8218,35 @@ experiment.command("run")
       }
       pinnedWorktree = snapshot.worktree;
     }
+    const existingHalt = launchHalt();
+    if (existingHalt) {
+      store.close();
+      process.exitCode = 75;
+      throw new Error(`Launches are halted (${existingHalt.reason}); ${id} was not started and costs no attempt. Fix the launch path, then: evidra launch clear`);
+    }
+    const readiness = launchReadiness(adapter.config, hypothesis?.payload, manifest.resources.environment ?? {});
+    if (!readiness.ready) {
+      store.appendEvent("experiment.dependency.waiting", { experimentId: id, pending: readiness.pending });
+      store.close();
+      process.exitCode = 75;
+      console.log(`Experiment ${id} is waiting: ${readiness.pending.map((entry) => `${entry.path} (${entry.waitingFor})`).join("; ")}. Not started; no attempt counted.`);
+      return;
+    }
     store.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "running" } });
     store.close();
     const worktreePath = pinnedWorktree ?? await ensureWorktree(root, root, id);
     stageDeclaredExperimentData(worktreePath, adapter.config.execution?.dataPaths ?? [], adapter.workspacePath(root), adapter.config.execution?.supportFiles ?? []);
     const experimentCwd = join(worktreePath, relative(root, adapter.workspacePath(root)));
     const experimentEnvironment = prepareExperimentEnvironment(manifest, experimentCwd);
+    const preflight = await runLaunchPreflight(adapter.config, experimentEnvironment, experimentCwd);
+    if (!preflight.ok) {
+      const preflightStore = new ResearchStore(statePath);
+      preflightStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "proposed", launchBlocked: preflight.reason } });
+      haltLaunches(preflightStore, { reason: preflight.reason });
+      preflightStore.close();
+      process.exitCode = 75;
+      throw new Error(`Launch preflight failed before ${id} spent any quota: ${preflight.reason}\n${preflight.output.trim()}`);
+    }
     const protectedReference = captureProtectedFiles(adapter.workspacePath(root), [adapter.config.evaluator.command], [], [adapter.config.evaluator.estimatorPath]);
     const changedProtected = changedProtectedFiles(protectedReference, experimentCwd);
     if (changedProtected.length) {
@@ -8155,10 +8332,10 @@ experiment.command("run")
         failedStore.close();
         throw new Error(`Reduced validation feasibility check failed:\n${reducedContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
       }
-      const reducedResult = await withExecutionHeartbeat(
+      const reducedResult = await retryOnceOnInfra(adapter.config, id, "reduced_validation", () => withExecutionHeartbeat(
         () => runReducedValidation(executor, manifest, experimentCwd, reducedCommand, primaryMetricName),
         { storePath: statePath, experimentId: id, stage: "reduced_validation", executor: manifest.resources.executor },
-      );
+      ));
       const reducedEnvironment = await captureEnvironment(root, experimentCwd, reducedResult.command ?? reducedCommand, manifest.resources.executor, manifest.resources.gpu);
       const reducedEvidenceStore = new ResearchStore(statePath);
       const reduced = persistExecutionStageResult({ store: reducedEvidenceStore, experimentId: id, stage: "reduced_validation", result: reducedResult, primaryMetricName, command: reducedCommand, cwd: experimentCwd, executor: manifest.resources.executor, artifactRoot: join(root, ".sota", "artifacts"), environment: reducedEnvironment });
@@ -8177,9 +8354,22 @@ experiment.command("run")
       executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", reduced.status === "completed" ? "completed" : "failed");
       const reducedStore = new ResearchStore(statePath);
       reducedStore.appendEvent(reduced.status === "completed" ? "experiment.stage.reduced_validation.completed" : "experiment.stage.reduced_validation.failed", { experimentId: id, runId: reduced.runId, metricEligible: reduced.status === "completed", metric: reduced.status === "completed" ? reduced.metrics[primaryMetricName] ?? null : null, reportedMetric: reduced.metrics[primaryMetricName] ?? null, exitCode: reduced.exitCode, failureClass: reduced.failureClass ?? null, command: reducedCommand });
-      if (reduced.status !== "completed") reducedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "failed", executionPlan } });
+      if (reduced.status !== "completed") {
+        const launchFailure = recordLaunchFailure(reducedStore, adapter.config, id, "reduced_validation", { exitCode: reduced.exitCode ?? null, output: `${reduced.stderr ?? ""}\n${reduced.stdout ?? ""}`, durationSeconds: reducedResult.durationSeconds });
+        const infra = launchFailure.kind === "infra";
+        reducedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: infra ? "proposed" : "failed", ...(infra ? { infraFailure: launchFailure.reason } : {}), executionPlan } });
+        reducedStore.close();
+        if (infra) process.exitCode = 75;
+        throw new Error(`${infra ? "Launch-path failure (not an experiment result; no attempt counted)" : "Reduced validation failed"} (${reduced.exitCode}): ${infra ? launchFailure.reason : reduced.stderr || reduced.stdout}`);
+      }
+      const reducedResources = runResourceVerdict(adapter.config, reducedResult.stdout, reducedResult.cwd ?? experimentCwd, { ignoreWall: true });
+      if (reducedResources) reducedStore.appendEvent("experiment.resources.checked", { experimentId: id, stage: "reduced_validation", runId: reduced.runId, ...reducedResources });
+      if (reducedResources && !reducedResources.ok) {
+        reducedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "rejected", rejection: `over hosted limits: ${reducedResources.reasons.join("; ")}`, executionPlan } });
+        reducedStore.close();
+        throw new Error(`Experiment ${id} rejected at screening: ${reducedResources.reasons.join("; ")}`);
+      }
       reducedStore.close();
-      if (reduced.status !== "completed") throw new Error(`Reduced validation failed (${reduced.exitCode}): ${reduced.stderr || reduced.stdout}`);
       const promotionPolicy = adapter.config.execution?.reducedPromotion;
       if (promotionPolicy?.enabled && manifest.outcomeType === "metric") {
         const promotionStore = new ResearchStore(statePath);
@@ -8244,10 +8434,10 @@ experiment.command("run")
       attemptStore.close();
     };
     recordAttemptStarted(attempt);
-    let result = await withExecutionHeartbeat(
+    let result = await retryOnceOnInfra(adapter.config, id, "full_validation", () => withExecutionHeartbeat(
       () => executor.run(manifest, experimentCwd, command, undefined, primaryMetricName),
       { storePath: statePath, experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
-    );
+    ));
     if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [primaryMetricName]);
     recordAttempt(attempt, result);
     while (result.status !== "completed") {
@@ -8272,6 +8462,13 @@ experiment.command("run")
       const route = recoveryRouteDirective(result.failureClass);
       const routeStore = new ResearchStore(statePath);
       routeStore.appendEvent("experiment.recovery.route_changed", { experimentId: id, runId: result.runId, attempts: attempt, ...route });
+      const launchFailure = recordLaunchFailure(routeStore, adapter.config, id, "full_validation", { exitCode: result.exitCode ?? null, output: `${result.stderr ?? ""}\n${result.stdout ?? ""}`, durationSeconds: result.durationSeconds });
+      if (launchFailure.kind === "infra") {
+        routeStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "proposed", infraFailure: launchFailure.reason, executionPlan } });
+        routeStore.close();
+        process.exitCode = 75;
+        throw new Error(`Launch-path failure (not an experiment result; no attempt counted): ${launchFailure.reason}`);
+      }
       routeStore.close();
     }
     const usesStandaloneVerification = verificationPlan.standalone;
@@ -8489,7 +8686,11 @@ experiment.command("run")
           ? unitScoresArtifactPath((baselinePayload as { artifactPaths?: unknown } | undefined)?.artifactPaths)
           : unitScoresArtifactPath((resultStore.runs().find((entry) => entry.id === ratchet.sourceId)?.payload as { artifacts?: unknown } | undefined)?.artifacts);
         const pairedEvidence = pairedRatchetEvidence(adapter.config, referenceUnitScores, unitScoresArtifactPath(artifactPaths), ratchetPolicy);
-        const ratchetDecision = applySegmentGates(decideRatchet({ scalarImproved: ratchetComparison.direction === "improved", scalarDelta: ratchetComparison.delta === null ? null : primaryMetricDirection === "minimize" ? -ratchetComparison.delta : ratchetComparison.delta, paired: pairedEvidence.paired, policy: ratchetPolicy }), judgeSegments(pairedEvidence.perSegment ?? {}, ratchetPolicy));
+        const runResources = runResourceVerdict(adapter.config, `${evaluator?.stdout ?? ""}\n${result.stdout ?? ""}`, result.cwd ?? experimentCwd);
+        if (runResources) resultStore.appendEvent("experiment.resources.checked", { experimentId: id, stage: "full_validation", runId: result.runId, ...runResources });
+        const gatedDecision = applySegmentGates(decideRatchet({ scalarImproved: ratchetComparison.direction === "improved", scalarDelta: ratchetComparison.delta === null ? null : primaryMetricDirection === "minimize" ? -ratchetComparison.delta : ratchetComparison.delta, paired: pairedEvidence.paired, policy: ratchetPolicy }), judgeSegments(pairedEvidence.perSegment ?? {}, ratchetPolicy));
+        // A gain that cannot run on the hosted machine is not a gain.
+        const ratchetDecision = runResources && !runResources.ok ? { ...gatedDecision, accept: false, verdict: "over_budget" as const, reason: `over hosted limits: ${runResources.reasons.join("; ")}` } : gatedDecision;
         resultStore.appendEvent("experiment.ratchet.checked", { experimentId: id, originalBaseline: baselineMetric, reference: ratchet, referenceRunId: ratchet.sourceId, referenceMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, comparison: ratchetComparison, decision: ratchetDecision, ...(pairedEvidence.note ? { unitScoreNote: pairedEvidence.note } : {}) });
         const ledgerHypothesis = hypothesis?.payload as { title?: unknown; formulationFamily?: unknown; mechanism?: unknown; proposedChange?: unknown } | undefined;
         const recordRatchetStep = (accepted: boolean, verdict: string, reason: string, stage: "full" | "holdout" = "full"): void => {
@@ -8515,6 +8716,7 @@ experiment.command("run")
               mode: ratchetDecision.mode,
               reason,
               ...(ratchetDecision.paired ? { ci: { lower: ratchetDecision.paired.lower, upper: ratchetDecision.paired.upper, confidence: ratchetDecision.paired.confidence, matched: ratchetDecision.paired.matched, probabilityImproved: ratchetDecision.paired.probabilityImproved } } : {}),
+              ...(runResources ? { resources: { ...(runResources.peakRssMb !== undefined ? { peakRssMb: runResources.peakRssMb } : {}), ...(runResources.wallSeconds !== undefined ? { wallSeconds: runResources.wallSeconds } : {}), ...(runResources.predictedHostedWallSeconds !== undefined ? { predictedHostedWallSeconds: runResources.predictedHostedWallSeconds } : {}), ok: runResources.ok, reasons: runResources.reasons } } : {}),
               ...(ratchetDecision.segments?.length ? { segments: ratchetDecision.segments.map((entry) => ({ segment: entry.segment, role: entry.role, passed: entry.passed, ...(entry.paired ? { lower: entry.paired.lower, upper: entry.paired.upper, meanImprovement: entry.paired.meanImprovement, matched: entry.paired.matched } : {}) })) } : {}),
             });
           } catch (error) {
@@ -8687,5 +8889,6 @@ try {
 } catch (error: unknown) {
   try { pauseCampaignAfterControllerError(error); } catch { /* Preserve the original controller error if recovery itself fails. */ }
   console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
+  // 75 (EX_TEMPFAIL) marks "not started: launch path or dependency"; callers retry later without counting an attempt.
+  process.exitCode = process.exitCode === 75 ? 75 : 1;
 }
