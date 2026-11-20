@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ProcessResult } from "./types.js";
 import { sha256File } from "./evidence.js";
@@ -29,6 +29,8 @@ export function recordBaselineEvidence(
   metric: number | null,
   metrics: Record<string, number> = {},
   metricsByFold: Record<string, number[]> = {},
+  /** Evaluator output files to preserve (artifact name -> absolute source path), e.g. per-unit scores. */
+  extraFiles: Record<string, string> = {},
 ): BaselineEvidence {
   const runId = `baseline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const artifactDir = join(root, ".sota", "artifacts", runId);
@@ -44,6 +46,14 @@ export function recordBaselineEvidence(
   for (const [name, content] of Object.entries(artifactContents)) {
     const path = join(artifactDir, name);
     writeFileSync(path, content);
+    artifactPaths[name] = path;
+    artifactChecksums[name] = sha256File(path);
+    store.saveArtifact({ id: `${runId}-${name}`, runId, name, path, checksum: artifactChecksums[name] });
+  }
+  for (const [name, source] of Object.entries(extraFiles)) {
+    if (!existsSync(source)) continue;
+    const path = join(artifactDir, name);
+    copyFileSync(source, path);
     artifactPaths[name] = path;
     artifactChecksums[name] = sha256File(path);
     store.saveArtifact({ id: `${runId}-${name}`, runId, name, path, checksum: artifactChecksums[name] });

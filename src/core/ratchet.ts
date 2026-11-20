@@ -262,6 +262,7 @@ export function decideRatchet(input: { scalarImproved: boolean; scalarDelta: num
     return { ...scalar(`only ${paired.matched} matched units (< ${policy.minUnits}); scalar comparison`), paired };
   }
   const level = `${Math.round(paired.confidence * 100)}% CI [${paired.lower.toPrecision(4)}, ${paired.upper.toPrecision(4)}]`;
+  if (paired.lower > policy.minLowerBound && !scalarImproved) return { accept: false, verdict: "no_gain", mode: "paired_bootstrap", reason: `${level} clears ${policy.minLowerBound} but the aggregate metric did not improve; both must agree`, scalarImproved, paired };
   if (paired.lower > policy.minLowerBound) return { accept: true, verdict: "keep", mode: "paired_bootstrap", reason: `${level} lower bound > ${policy.minLowerBound} over ${paired.matched} units`, scalarImproved, paired };
   if (paired.upper < 0) return { accept: false, verdict: "regressed", mode: "paired_bootstrap", reason: `${level} is entirely below 0`, scalarImproved, paired };
   if (paired.upper <= policy.minLowerBound) return { accept: false, verdict: "no_gain", mode: "paired_bootstrap", reason: `${level} cannot clear ${policy.minLowerBound}`, scalarImproved, paired };

@@ -25,14 +25,14 @@ export interface TechniqueClass {
 }
 
 export const TECHNIQUE_CLASSES: readonly TechniqueClass[] = [
-  { id: "linear_glm", label: "linear / generalized linear models", keywords: ["logistic regression", "linear", "ridge", "lasso", "elastic net", "glm", "multinomial", "softmax regression", "poisson"], examples: ["regularized multinomial GLM with interactions", "reduced-rank regression"] },
-  { id: "tree_ensemble", label: "tree ensembles", keywords: ["gbdt", "gradient boosting", "boosting", "xgboost", "lightgbm", "catboost", "random forest", "extra trees", "hgb", "decision tree", "tree"], examples: ["LightGBM with monotone constraints", "oblique / soft decision trees"] },
+  { id: "linear_glm", label: "linear / generalized linear models", keywords: ["logistic regression", "linear", "ridge", "lasso", "elastic net", "glm", "multinomial", "softmax regression", "poisson", "lr"], examples: ["regularized multinomial GLM with interactions", "reduced-rank regression"] },
+  { id: "tree_ensemble", label: "tree ensembles", keywords: ["gbdt", "gradient boost", "boost", "xgboost", "lightgbm", "catboost", "random forest", "extra trees", "hgb", "decision tree", "decision forest", "regression tree"], examples: ["LightGBM with monotone constraints", "oblique / soft decision trees"] },
   { id: "neighbors_retrieval", label: "nearest neighbours / retrieval / case-based", keywords: ["knn", "nearest", "neighbour", "neighbor", "retrieval", "case-based", "prototype", "kernel density", "similarity", "exemplar"], examples: ["metric-learned kNN", "retrieval-augmented prediction"] },
   { id: "neural_net", label: "neural networks trained from scratch", keywords: ["mlp", "neural", "transformer", "attention", "cnn", "rnn", "lstm", "autoencoder", "deep", "embedding", "contrastive", "set model", "resnet"], examples: ["masked-feature transformer over rows", "denoising autoencoder"] },
   { id: "foundation_pretrained", label: "pretrained / foundation models and LLMs", keywords: ["tabpfn", "tabicl", "pretrained", "foundation", "llm", "language model", "fine-tun", "finetun", "in-context", "zero-shot", "few-shot", "lora", "prompt"], examples: ["tabular foundation model in-context", "LLM features or LLM-as-predictor"] },
   { id: "probabilistic_graphical", label: "probabilistic graphical models / dependence structure", keywords: ["bayesian network", "graphical model", "chow-liu", "tree-augmented", "markov", "crf", "copula", "factor graph", "dependency network", "ising"], examples: ["Chow-Liu tree over targets", "Gaussian / discrete copula"] },
   { id: "latent_variable", label: "latent-variable / low-rank models", keywords: ["latent class", "latent", "mixture model", "irt", "item response", "factor analysis", "low-rank", "low rank", "matrix factorization", "pca", "topic model", "em algorithm"], examples: ["latent-class mixture", "IRT / factor model"] },
-  { id: "hierarchical_bayes", label: "hierarchical Bayes / shrinkage", keywords: ["hierarchical", "shrinkage", "partial pooling", "empirical bayes", "multilevel", "dirichlet", "random effects", "varying-coefficient", "bayesian"], examples: ["partial pooling by segment", "empirical-Bayes priors"] },
+  { id: "hierarchical_bayes", label: "hierarchical Bayes / shrinkage", keywords: ["hierarchical", "shrinkage", "partial pooling", "empirical bayes", "multilevel", "dirichlet", "random effects", "varying-coefficient", "bayesian", "bayes", "context tree"], examples: ["partial pooling by segment", "empirical-Bayes priors"] },
   { id: "ensemble_stacking", label: "ensembling / stacking / pooling", keywords: ["stacking", "stacker", "blend", "ensemble", "pooling", "pool", "bagging", "averaging", "product of experts", "super learner"], examples: ["cross-fitted stacker", "log-linear pooling"] },
   { id: "routing_gating", label: "routing / gating / per-segment selection", keywords: ["routing", "router", "gate", "gated", "gating", "mixture of experts", "moe", "per-segment", "per segment", "switch", "selector"], examples: ["learned router between models by segment", "per-segment model selection"] },
   { id: "calibration_scoring", label: "calibration / proper-scoring post-processing", keywords: ["calibration", "calibrate", "temperature", "platt", "isotonic", "proper scoring", "recalibrat", "dirichlet calibration", "conformal"], examples: ["cross-fitted temperature per segment", "isotonic / beta calibration"] },
@@ -49,8 +49,10 @@ const CLASS_BY_ID = new Map(TECHNIQUE_CLASSES.map((entry) => [entry.id, entry]))
 
 function hits(text: string, keyword: string): number {
   if (!text) return 0;
-  if (keyword.length <= 3) return new RegExp(`(^|[^a-z])${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z]|$)`).test(text) ? 1 : 0;
-  return text.includes(keyword) ? 1 : 0;
+  // Keywords match at a word start ("reweight" matches "reweighting", "ising" does not match "denoising");
+  // short ones must be whole words so "em" or "lr" do not fire inside other words.
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-z])${escaped}${keyword.length <= 3 ? "([^a-z]|$)" : ""}`).test(text) ? 1 : 0;
 }
 
 /** Map a free-text hypothesis to a technique class; family weighs most, then title, then mechanism. */
@@ -62,7 +64,8 @@ export function classifyTechnique(input: { family?: string; title?: string; mech
   for (const entry of TECHNIQUE_CLASSES) {
     let score = 0;
     for (const keyword of entry.keywords) score += 4 * hits(family, keyword) + 2 * hits(title, keyword) + 0.5 * hits(mechanism, keyword);
-    if (score > 0 && (!best || score > best.score)) best = { id: entry.id, score };
+    // On a tie a knob class wins: "TabICL tuning" is a tuning step, not a new foundation-model attempt.
+    if (score > 0 && (!best || score > best.score || (score === best.score && entry.knob))) best = { id: entry.id, score };
   }
   if (best) return best.id;
   const fallback = family.trim().replace(/\s+/g, " ") || title.trim().replace(/\s+/g, " ") || "unspecified";

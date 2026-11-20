@@ -21,6 +21,10 @@ test("free-text families map to coarse technique classes", () => {
   assert.equal(classifyTechnique({ family: "hyperparameter sweep", title: "tune learning rate" }), "hyperparameter_tuning");
   assert.equal(classifyTechnique({ family: "TabICL in-context" }), "foundation_pretrained");
   assert.match(classifyTechnique({ family: "zorbification" }), /^other:zorbification/);
+  assert.equal(classifyTechnique({ family: "TabICL tuning" }), "hyperparameter_tuning", "knob classes win ties");
+  assert.equal(classifyTechnique({ family: "latent/denoising (Rao-Blackwellised targets)" }), "latent_variable", "keywords match at word starts only");
+  assert.equal(classifyTechnique({ family: "hierarchical Bayes / context trees" }), "hierarchical_bayes");
+  assert.equal(classifyTechnique({ family: "gradient boosted trees" }), "tree_ensemble");
 });
 
 test("a scout round takes one candidate per class and caps knobs", () => {
@@ -74,7 +78,8 @@ test("paired bootstrap resolves a small consistent gain that a noisy aggregate h
   const verdict = decideRatchet({ scalarImproved: true, scalarDelta: 0.005, paired: pairedBootstrap(reference, noisy, { direction: "maximize", seed: 1 }), policy: resolveRatchetPolicy({}) });
   assert.equal(verdict.accept, false, "a scalar win that the paired CI cannot resolve is rejected");
   assert.equal(verdict.verdict, "noisy");
-  const keep = decideRatchet({ scalarImproved: false, scalarDelta: 0, paired: result, policy: resolveRatchetPolicy({}) });
+  assert.equal(decideRatchet({ scalarImproved: false, scalarDelta: 0, paired: result, policy: resolveRatchetPolicy({}) }).accept, false, "unit and aggregate evidence must agree");
+  const keep = decideRatchet({ scalarImproved: true, scalarDelta: 0.01, paired: result, policy: resolveRatchetPolicy({}) });
   assert.equal(keep.accept, true);
   assert.equal(keep.mode, "paired_bootstrap");
   const minimize = pairedBootstrap(reference, better, { direction: "minimize", seed: 1 });

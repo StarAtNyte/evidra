@@ -133,7 +133,13 @@ import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTas
 import { runSafetyBenchmark } from "./core/safety-bench.js";
 import { runOrchestrationBenchmark } from "./core/orchestration-bench.js";
 import { runGovernanceBenchmark } from "./core/governance-bench.js";
-import { championExperimentIds, explorationHypothesis, holdoutAllows, holdoutReference, implementationOf, isAgentVisibleEvent, normalizeFamily, parentExperimentId, searchState, selectRatchetReference } from "./core/ratchet.js";
+import { championExperimentIds, explorationHypothesis, holdoutAllows, holdoutReference, implementationOf, isAgentVisibleEvent, normalizeFamily, parentExperimentId, searchState, selectRatchetReference, decideRatchet, resolveRatchetPolicy }  from "./core/ratchet.js";
+import { campaignLossAnalysis, loadRunUnitScores, pairedRatchetEvidence, unitScoreDirection, unitScoreFiles, unitScoresArtifactPath } from "./core/campaign-analysis.js";
+import { appendImprovement, ledgerPaths, readImprovementLedger, renderImprovementLedger, verifyImprovementLedger } from "./core/improvement-ledger.js";
+import { classifyTechnique, planScoutRound, promoteScoutScreens, resolveScoutPolicy, scoutBrief, scoutLedgerFromEvents, summarizeScoutLedger, techniqueLabel, TECHNIQUE_CLASSES, type ScoutPolicy } from "./core/scout.js";
+import { analyzeUnitLoss, renderLossAnalysis } from "./core/loss-analysis.js";
+import { unitScoresFromPredictionRows } from "./core/error-analysis.js";
+import { loadUnitScores, pairedBootstrap } from "./core/unit-scores.js";
 import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.js";
 import { approvalInbox } from "./core/approvals.js";
 import { loadProjectGuidance } from "./core/project-guidance.js";
@@ -388,6 +394,41 @@ async function holdoutMetricFor(cwd: string, command: string[], environment: Nod
   if (result.exitCode !== 0) return undefined;
   const metric = parseMetricOutput(result.stdout, metricName).metrics[metricName];
   return typeof metric === "number" && Number.isFinite(metric) ? metric : undefined;
+}
+
+/**
+ * Scout policy for the active campaign: the competition manifest's scout block,
+ * overridden by --scout. The flag is recorded once per campaign so a resume
+ * keeps scout mode without repeating it.
+ */
+function campaignScoutPolicy(store: ResearchStore, config: ReturnType<typeof activeCompetition>["config"], cliWidth?: string): ScoutPolicy {
+  const since = activeCampaignStart(store);
+  const requested = cliWidth !== undefined ? Number(cliWidth) : undefined;
+  if (requested !== undefined && (!Number.isInteger(requested) || requested < 2 || requested > 5)) throw new Error("--scout expects a width between 2 and 5.");
+  const recorded = store.eventsByType("research.scout.enabled").filter((event) => !since || !event.createdAt || Date.parse(event.createdAt) >= Date.parse(since)).at(-1)?.payload as { width?: unknown } | undefined;
+  if (requested !== undefined && recorded?.width !== requested) store.appendEvent("research.scout.enabled", { width: requested, campaignStartedAt: since ?? null });
+  const width = requested ?? (typeof recorded?.width === "number" ? recorded.width : undefined);
+  return resolveScoutPolicy(config.scout, width);
+}
+
+/** The reduced-evaluator metric a scout screen must beat: configured, else the champion's own screen. */
+function scoutReferenceScreen(store: ResearchStore, policy: ScoutPolicy): number | undefined {
+  if (policy.referenceScreenMetric !== undefined) return policy.referenceScreenMetric;
+  const championId = championExperimentIds(store, activeCampaignStart(store)).at(-1);
+  if (!championId) return undefined;
+  const screen = store.eventsByType("experiment.stage.reduced_validation.completed").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === championId)?.payload as { metric?: unknown } | undefined;
+  return typeof screen?.metric === "number" && Number.isFinite(screen.metric) ? screen.metric : undefined;
+}
+
+/** Tried technique classes this campaign: scout screens plus every other attempt, oldest first. */
+function campaignScoutLedger(store: ResearchStore, metric: { name: string; direction: "maximize" | "minimize" }): ReturnType<typeof scoutLedgerFromEvents> {
+  const since = activeCampaignStart(store);
+  const scoutEntries = scoutLedgerFromEvents(store.eventsByType("research.scout.recorded").filter((event) => !since || !event.createdAt || Date.parse(event.createdAt) >= Date.parse(since)));
+  const covered = new Set(scoutEntries.map((entry) => entry.experimentId));
+  const attempts = campaignSearchState(store, metric).experimentLog
+    .filter((entry) => !covered.has(entry.experimentId) && (entry.status === "completed" || entry.status === "failed" || entry.status === "rejected" || entry.status === "screened"))
+    .map((entry) => ({ experimentId: entry.experimentId, techniqueClass: classifyTechnique({ family: entry.family, title: entry.idea }), family: entry.family, title: entry.idea, stage: "full" as const, improvement: null, valid: entry.status === "completed", accepted: entry.kept }));
+  return [...attempts, ...scoutEntries];
 }
 
 /** The champion, the per-family archive, recent attempts, and whether this cycle must explore. */
@@ -2816,6 +2857,109 @@ evidence.command("analyze").argument("<file>", "JSON array, {predictions: [...]}
 });
 program.addCommand(evidence);
 
+program.command("improvements")
+  .description("Show the improvements ledger: every ratchet step, accepted or rejected")
+  .option("--json", "emit the ledger as JSON")
+  .option("--verify", "verify the ledger hash chain and exit non-zero when broken")
+  .action((options: { json?: boolean; verify?: boolean }) => {
+    const entries = readImprovementLedger(stateDirectory);
+    const chain = verifyImprovementLedger(entries);
+    if (options.verify) {
+      console.log(chain.valid ? `Improvements ledger intact (${entries.length} entries).` : `Improvements ledger BROKEN at entry #${chain.brokenAt}.`);
+      if (!chain.valid) process.exitCode = 1;
+      return;
+    }
+    if (options.json) { console.log(JSON.stringify({ path: ledgerPaths(stateDirectory).json, chain, entries }, null, 2)); return; }
+    console.log(entries.length ? renderImprovementLedger(entries) : `No ratchet steps recorded yet (${ledgerPaths(stateDirectory).markdown}).`);
+  });
+
+const analyze = new Command("analyze").description("Data analysis: localize loss and estimate headroom from per-unit evaluator scores");
+analyze.command("loss")
+  .argument("<files...>", "unit-score files (CSV/TSV/JSONL/JSON/Parquet) or prediction artifacts; the first is the primary run")
+  .option("--direction <direction>", "maximize when higher unit scores are better, minimize for losses")
+  .option("--labels <labels>", "comma-separated run labels, in file order")
+  .option("--id-column <name>", "unit id column")
+  .option("--score-column <name>", "unit score column")
+  .option("--segments <columns>", "comma-separated segment columns (default: inferred)")
+  .option("--predictions", "treat files as prediction artifacts (actual/predicted rows) and score 0/1 or absolute error")
+  .option("--python <path>", "Python interpreter for Parquet/Feather")
+  .option("--json", "emit the full report as JSON")
+  .action((files: string[], options: { direction?: string; labels?: string; idColumn?: string; scoreColumn?: string; segments?: string; predictions?: boolean; python?: string; json?: boolean }) => {
+    const labels = options.labels?.split(",").map((label) => label.trim()) ?? [];
+    const direction = options.predictions ? "minimize" : options.direction === "minimize" || options.direction === "maximize" ? options.direction : undefined;
+    if (!direction) throw new Error("--direction maximize|minimize is required for unit-score files.");
+    const runs = files.map((file, index) => ({
+      id: labels[index] || basename(file),
+      table: options.predictions
+        ? unitScoresFromPredictionRows(parsePredictionRows(file.endsWith(".jsonl") ? readFileSync(file, "utf8") : JSON.parse(readFileSync(file, "utf8")) as unknown))
+        : loadUnitScores(file, { idColumn: options.idColumn, scoreColumn: options.scoreColumn, segmentColumns: options.segments?.split(",").map((column) => column.trim()).filter(Boolean), python: options.python }),
+    }));
+    const report = analyzeUnitLoss(runs, { direction });
+    console.log(options.json ? JSON.stringify(report, null, 2) : renderLossAnalysis(report));
+  });
+analyze.command("campaign")
+  .description("Loss analysis over the champion, baseline and recent runs that wrote evaluator.unitScores")
+  .option("--json", "emit the full report as JSON")
+  .action((options: { json?: boolean }) => {
+    const adapter = activeCompetition();
+    if (!adapter.config.evaluator.unitScores) throw new Error("Set evaluator.unitScores in competition.json so the evaluator's per-unit scores are recorded with each run.");
+    const store = new ResearchStore(statePath);
+    try {
+      const champion = championExperimentIds(store, activeCampaignStart(store)).at(-1);
+      const analysis = campaignLossAnalysis(store, adapter.config, champion);
+      if (!analysis) { console.log("No recorded run has unit scores yet; run the baseline or an experiment first."); return; }
+      if ("error" in analysis) throw new Error(analysis.error);
+      console.log(options.json ? JSON.stringify(analysis.report, null, 2) : renderLossAnalysis(analysis.report));
+    } finally {
+      store.close();
+    }
+  });
+analyze.command("paired")
+  .argument("<reference>", "reference unit-score file")
+  .argument("<candidate>", "candidate unit-score file")
+  .option("--direction <direction>", "maximize or minimize", "maximize")
+  .option("--cluster-by <column>", "resample whole clusters of units")
+  .option("--confidence <level>", "two-sided confidence level", "0.95")
+  .option("--min-lower-bound <value>", "acceptance bar for the CI lower bound", "0")
+  .option("--id-column <name>", "unit id column")
+  .option("--score-column <name>", "unit score column")
+  .description("Paired bootstrap CI between two runs' unit scores, with the ratchet's verdict")
+  .action((reference: string, candidate: string, options: { direction: string; clusterBy?: string; confidence: string; minLowerBound: string; idColumn?: string; scoreColumn?: string }) => {
+    const direction = options.direction === "minimize" ? "minimize" : "maximize";
+    const load = (file: string) => loadUnitScores(file, { idColumn: options.idColumn, scoreColumn: options.scoreColumn });
+    const policy = resolveRatchetPolicy({ mode: "paired", confidence: Number(options.confidence), minLowerBound: Number(options.minLowerBound), clusterBy: options.clusterBy });
+    const paired = pairedBootstrap(load(reference).units, load(candidate).units, { direction, confidence: policy.confidence, clusterBy: policy.clusterBy, iterations: policy.iterations });
+    console.log(JSON.stringify({ paired, decision: decideRatchet({ scalarImproved: paired.meanImprovement > 0, scalarDelta: paired.meanImprovement, paired, policy }) }, null, 2));
+  });
+program.addCommand(analyze);
+
+const scout = new Command("scout").description("Broad exploration: technique classes, the tried-classes ledger, and classification");
+scout.command("ledger")
+  .option("--json", "emit JSON")
+  .description("Show which technique classes this campaign has tried, their best result, and which are cooling down")
+  .action((options: { json?: boolean }) => {
+    const adapter = activeCompetition();
+    const store = new ResearchStore(statePath);
+    try {
+      const policy = resolveScoutPolicy(adapter.config.scout, undefined);
+      const ledger = campaignScoutLedger(store, adapter.config.metric);
+      const brief = scoutBrief(ledger, policy);
+      if (options.json) { console.log(JSON.stringify({ policy, ledger, brief }, null, 2)); return; }
+      const summaries = summarizeScoutLedger(ledger, policy);
+      console.log(["| class | screens | fulls | best improvement | accepted | status |", "|---|---|---|---|---|---|", ...summaries.map((summary) => `| ${summary.label} | ${summary.screens} | ${summary.fulls} | ${summary.bestImprovement ?? "-"} | ${summary.accepted} | ${summary.coolingDown ? `cooldown (${summary.othersSinceLast}/${policy.cooldown})` : "open"} |`), "", `Untried: ${(brief.untriedClasses as Array<{ label: string }>).map((entry) => entry.label).join("; ")}`].join("\n"));
+    } finally {
+      store.close();
+    }
+  });
+scout.command("classes").description("List the technique classes scout rounds draw from").action(() => {
+  for (const entry of TECHNIQUE_CLASSES) console.log(`${entry.id}${entry.knob ? " (knob)" : ""}: ${entry.label} - e.g. ${entry.examples.join("; ")}`);
+});
+scout.command("classify").argument("<text...>", "a method family or hypothesis title").description("Show which technique class a family name maps to").action((text: string[]) => {
+  const id = classifyTechnique({ family: text.join(" ") });
+  console.log(`${id}: ${techniqueLabel(id)}`);
+});
+program.addCommand(scout);
+
 const memory = new Command("memory").description("Search durable research claims, hypotheses, and sources");
 memory.command("search").argument("<query>").action((query: string) => {
   const store = new ResearchStore(statePath);
@@ -4985,7 +5129,7 @@ challenge.command("baseline").description("Run the canonical baseline").action(a
   const store = new ResearchStore(statePath);
   const parsed = parseMetricOutput(result.stdout, adapter.config.metric.name);
   const metric = parsed.metrics[adapter.config.metric.name] ?? null;
-  recordBaselineEvidence(store, root, result, metric, parsed.metrics, parsed.metricsByFold);
+  recordBaselineEvidence(store, root, result, metric, parsed.metrics, parsed.metricsByFold, unitScoreFiles(adapter.config, result.cwd));
   store.close();
   if (result.exitCode !== 0) process.exitCode = result.exitCode;
 });
@@ -5009,14 +5153,16 @@ challenge.command("start")
   .option("--executor <executor>", "experiment execution target: local, container, modal, or slurm", "local")
   .option("--resume", "resume the saved challenge campaign")
   .option("--resume-run <started-at>", "resume a specific retained campaign run by its startedAt timestamp")
+  .option("--scout <width>", "scout mode: screen N (2-5) different technique classes per round and promote only the best screens")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; agentTokenBudget: string; roleTokenBudgets?: string; autonomy?: string; limitPolicy: string; executor: string; resume?: boolean; resumeRun?: string; skipBaseline?: boolean }) => {
+  .action(async (options: { goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; agentTokenBudget: string; roleTokenBudgets?: string; autonomy?: string; limitPolicy: string; executor: string; resume?: boolean; resumeRun?: string; skipBaseline?: boolean; scout?: string }) => {
     const script = process.argv[1];
     if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
     const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--gpu-budget", options.gpuBudget, "--agent-token-budget", options.agentTokenBudget, ...(options.roleTokenBudgets ? ["--role-token-budgets", options.roleTokenBudgets] : []), "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--fallback-model", options.fallbackModel, "--thinking", options.thinking, "--lanes", options.lanes, ...(options.laneBudget ? ["--lane-budget", options.laneBudget] : []), ...(options.autonomy ? ["--autonomy", options.autonomy] : []), "--limit-policy", options.limitPolicy, "--executor", options.executor];
     if (options.resume || options.resumeRun) args.push("--resume");
     if (options.resumeRun) args.push("--resume-run", options.resumeRun);
     if (options.skipBaseline) args.push("--skip-baseline");
+    if (options.scout) args.push("--scout", options.scout);
     const result = await runProcess([process.execPath, script, ...args], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
       (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
     });
@@ -5198,8 +5344,9 @@ research
   .option("--routine-id <id>", "internal durable routine identity for queue lineage")
   .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--resume-run <started-at>", "resume a specific retained campaign run by its startedAt timestamp")
+  .option("--scout <width>", "scout mode: screen N (2-5) different technique classes per round and promote only the best screens")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; agentTokenBudget: string; roleTokenBudgets?: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy?: string; limitPolicy: string; executor: string; triggerContext?: string; routineId?: string; resume?: boolean; resumeRun?: string; skipBaseline?: boolean }) => {
+  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; agentTokenBudget: string; roleTokenBudgets?: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy?: string; limitPolicy: string; executor: string; triggerContext?: string; routineId?: string; resume?: boolean; resumeRun?: string; skipBaseline?: boolean; scout?: string }) => {
     const requestedAutonomy = options.autonomy;
     const savedStore = new ResearchStore(statePath);
     type SavedCampaign = { goal?: string; goalSetId?: string; budgetMinutes?: number; gpuBudgetHours?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; triggerContext?: { eventType: string; eventCreatedAt: string }; routineId?: string; runtime?: unknown; runtimeFingerprint?: string; autoExecuteExperiments?: boolean };
@@ -6078,7 +6225,7 @@ research
       if (mode === "challenge" && baseline && !reusePriorBaseline) {
         const parsed = parseMetricOutput(baseline.stdout, adapter.config.metric.name);
         const metric = parsed.metrics[adapter.config.metric.name] ?? null;
-        recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold);
+        recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold, unitScoreFiles(adapter.config, baseline.cwd));
       }
       const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), dataAudit: dataAuditSummary, ...(baseline ? { baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: redactSecrets(baseline.stdout.slice(-4000)), stderr: redactSecrets(baseline.stderr.slice(-4000)) } } : {}) };
       const observationId = recordWorkspaceObservation(store, observation);
@@ -6298,8 +6445,18 @@ research
           const verifiedStateStore = new ResearchStore(statePath);
           const verifiedState = phaseGoal ? projectVerifiedSubtaskState(verifiedStateStore.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined);
           const experimentHistory = campaignSearchState(verifiedStateStore, adapter.config.metric);
+          // Scout mode and the loss analysis are what keep the director off a single path:
+          // the brief names untried technique classes, the analysis says where the loss is.
+          const directorScoutPolicy = campaignScoutPolicy(verifiedStateStore, adapter.config, options.scout);
+          const scoutContext = directorScoutPolicy.enabled ? scoutBrief(campaignScoutLedger(verifiedStateStore, adapter.config.metric), directorScoutPolicy) : null;
+          const lossAnalysis = campaignLossAnalysis(verifiedStateStore, adapter.config, experimentHistory.champion?.experimentId);
+          if (lossAnalysis && "report" in lossAnalysis) {
+            verifiedStateStore.appendEvent("research.loss_analysis.completed", { cycle, primaryRunId: lossAnalysis.report.primaryRunId, units: lossAnalysis.report.units, standardError: lossAnalysis.report.standardError, gapTable: lossAnalysis.report.gapTable.slice(0, 5), routing: lossAnalysis.report.routing.slice(0, 3), oracle: lossAnalysis.report.oracle ?? null, hypotheses: lossAnalysis.report.hypotheses.map((entry) => ({ title: entry.title, techniqueClass: entry.techniqueClass, expectedGain: entry.expectedGain })) });
+          } else if (lossAnalysis && "error" in lossAnalysis) {
+            verifiedStateStore.appendEvent("research.loss_analysis.failed", { cycle, error: lossAnalysis.error });
+          }
           verifiedStateStore.close();
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, ...experimentHistory, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, authoritativeEvidence: researchMemory.authoritativeObservations, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, laneToolResults: laneToolObservationContext(laneReports), crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness, goalProgress, triggerContext: campaign.triggerContext ? { eventType: campaign.triggerContext.eventType, eventCreatedAt: campaign.triggerContext.eventCreatedAt, trust: "external_wakeup_signal" } : null }, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, taskId: cycleTaskId, goalId: phaseGoal?.id ?? null, parentTaskId: cycleTaskId, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, onToolBudgetExhausted: (details) => {
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, ...experimentHistory, ...(scoutContext ? { scout: scoutContext } : {}), ...(lossAnalysis && "brief" in lossAnalysis ? { lossAnalysis: lossAnalysis.brief } : {}), constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, authoritativeEvidence: researchMemory.authoritativeObservations, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, laneToolResults: laneToolObservationContext(laneReports), crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness, goalProgress, triggerContext: campaign.triggerContext ? { eventType: campaign.triggerContext.eventType, eventCreatedAt: campaign.triggerContext.eventCreatedAt, trust: "external_wakeup_signal" } : null }, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, taskId: cycleTaskId, goalId: phaseGoal?.id ?? null, parentTaskId: cycleTaskId, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, onToolBudgetExhausted: (details) => {
             const exhaustedStore = new ResearchStore(statePath);
             exhaustedStore.appendEvent("research.director.tool_budget.exhausted", { cycle, goalId: phaseGoal?.id ?? null, ...details });
             exhaustedStore.close();
@@ -6598,6 +6755,19 @@ research
       for (const [index, reason] of incompleteVerificationReasons.entries()) {
         if (reason) decisionStore.appendEvent("research.portfolio.candidate_deferred", { cycle, hypothesisId: materialized.hypothesisIds[index], title: decision.hypotheses[index]?.title, reason });
       }
+      // Scout mode: one candidate per technique class, cooled-down classes rejected, knobs capped.
+      const cycleScoutPolicy = campaignScoutPolicy(decisionStore, adapter.config, options.scout);
+      const scoutRound = cycleScoutPolicy.enabled
+        ? planScoutRound(decision.hypotheses.flatMap((hypothesis, index) => incompleteVerificationReasons[index] ? [] : [{ id: materialized.hypothesisIds[index] ?? `hypothesis-${index}`, title: hypothesis.title, family: hypothesis.formulationFamily, mechanism: hypothesis.mechanism, proposedChange: hypothesis.proposedChange }]), campaignScoutLedger(decisionStore, adapter.config.metric), cycleScoutPolicy)
+        : undefined;
+      if (scoutRound) decisionStore.appendEvent("research.scout.planned", { cycle, policy: cycleScoutPolicy, selected: scoutRound.selected, rejected: scoutRound.rejected, fallback: scoutRound.selected.length === 0 });
+      const scoutSelected = scoutRound && scoutRound.selected.length ? new Map(scoutRound.selected.map((entry) => [entry.id, entry.techniqueClass])) : undefined;
+      const scoutCandidateDescription = (experimentId: string): { techniqueClass: string; family: string; title: string } => {
+        const candidateId = executedPortfolioExperiments.find((entry) => entry.experimentId === experimentId)?.candidateId;
+        const index = candidateId ? materialized.hypothesisIds.indexOf(candidateId) : -1;
+        const described = index >= 0 ? decision.hypotheses[index] : undefined;
+        return { techniqueClass: (candidateId ? scoutSelected?.get(candidateId) : undefined) ?? classifyTechnique({ family: described?.formulationFamily, title: described?.title }), family: described?.formulationFamily ?? "unspecified", title: described?.title ?? experimentId };
+      };
       const portfolioPlan = planPortfolio(decision.hypotheses.map((hypothesis, index) => ({
         id: materialized.hypothesisIds[index] ?? `hypothesis-${index}`,
         title: hypothesis.title,
@@ -6617,11 +6787,11 @@ research
         novelty: architectureNovelty(hypothesis.architectureChange),
         informationValue: hypothesis.outcomeType !== "metric" ? 1 : Math.min(1, Math.max(0, (hypothesis.expectedMetricDelta.high - hypothesis.expectedMetricDelta.low) / (Math.abs(hypothesis.expectedMetricDelta.high) + Math.abs(hypothesis.expectedMetricDelta.low) + 0.01))),
         risk: hypothesis.implementationRisk === "high" ? 1 : hypothesis.implementationRisk === "medium" ? 0.5 : 0.1,
-        family: hypothesis.formulationFamily,
+        family: scoutSelected?.get(materialized.hypothesisIds[index] ?? `hypothesis-${index}`) ?? hypothesis.formulationFamily,
         architectureChange: hypothesis.architectureChange,
         quality: hypothesisQuality[index]?.score,
-      })).filter((_, index) => !incompleteVerificationReasons[index]), {
-        maxCandidates: autonomy === "yolo" ? 3 : autonomy === "fast" ? 2 : 1,
+      })).filter((candidate, index) => !incompleteVerificationReasons[index] && (!scoutSelected || scoutSelected.has(candidate.id))), {
+        maxCandidates: scoutSelected ? cycleScoutPolicy.width : autonomy === "yolo" ? 3 : autonomy === "fast" ? 2 : 1,
         preferredCandidateId: materialized.hypothesisIds[decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis)],
         exploreArchitecture: goalProgress.pivotRequired,
         maxParallel: experimentParallelism,
@@ -6630,6 +6800,7 @@ research
         costHistory,
         executionContext: { executor: options.executor },
       });
+      if (scoutSelected && portfolioPlan.halving.stages.length > 1) portfolioPlan.halving.stages[0].retainCount = Math.min(cycleScoutPolicy.promoteTop, portfolioPlan.halving.stages[0].candidateIds.length);
       decisionStore.appendEvent("research.portfolio.planned", {
         cycle,
         selected: portfolioPlan.selected,
@@ -7019,7 +7190,7 @@ research
         const screeningStage = portfolioPlan.halving.stages[0];
         const objectiveDefinitions = [{ name: adapter.config.metric.name, direction: adapter.config.metric.direction }, ...(adapter.config.secondaryMetrics ?? [])];
         const objectiveNames = objectiveDefinitions.length > 1 ? objectiveDefinitions.map((objective) => objective.name) : [];
-        const promoted = promoteHalvingStage(screeningStage, screenedCandidates.map((candidate) => ({
+        let promoted = promoteHalvingStage(screeningStage, screenedCandidates.map((candidate) => ({
           id: candidate.experimentId,
           metric: candidate.metric,
           valid: candidate.valid,
@@ -7029,13 +7200,41 @@ research
           })) } : {}),
         })), adapter.config.metric.direction, objectiveNames);
         const promotionStore = new ResearchStore(statePath);
-        promotionStore.appendEvent("research.portfolio.screening_promoted", { cycle, stage: screeningStage.index, candidates: screenedCandidates, promoted, retainCount: screeningStage.retainCount, direction: adapter.config.metric.direction });
+        if (scoutSelected) {
+          // A screen earns full evaluation only by beating the reference screen, not just by ranking first.
+          const referenceScreen = scoutReferenceScreen(promotionStore, cycleScoutPolicy);
+          const scoutPromotion = promoteScoutScreens(screenedCandidates, cycleScoutPolicy, adapter.config.metric.direction, referenceScreen);
+          promoted = scoutPromotion.promoted;
+          for (const screenDecision of scoutPromotion.decisions) {
+            const described = scoutCandidateDescription(screenDecision.experimentId);
+            const screened = screenedCandidates.find((entry) => entry.experimentId === screenDecision.experimentId);
+            promotionStore.appendEvent("research.scout.recorded", { cycle, experimentId: screenDecision.experimentId, stage: "screen", improvement: screenDecision.improvement, valid: screened?.valid === true, promoted: screenDecision.promoted, reason: screenDecision.reason, referenceScreen: referenceScreen ?? null, metric: screened?.metric ?? null, ...described });
+            try {
+              appendImprovement(stateDirectory, { campaignStartedAt: campaign.startedAt, experimentId: screenDecision.experimentId, stage: "screen", title: described.title, family: described.family, techniqueClass: described.techniqueClass, metricName: adapter.config.metric.name, direction: adapter.config.metric.direction, referenceId: referenceScreen === undefined ? undefined : "reference-screen", referenceMetric: referenceScreen ?? null, candidateMetric: screened?.metric ?? null, improvement: screenDecision.improvement, accepted: screenDecision.promoted, verdict: screenDecision.promoted ? "promoted" : screened?.valid ? "screened_out" : "screen_failed", mode: "reduced_screen", reason: screenDecision.reason });
+            } catch (error) {
+              promotionStore.appendEvent("experiment.improvement_ledger.failed", { experimentId: screenDecision.experimentId, error: error instanceof Error ? error.message : String(error) });
+            }
+          }
+        }
+        promotionStore.appendEvent("research.portfolio.screening_promoted", { cycle, stage: screeningStage.index, candidates: screenedCandidates, promoted, retainCount: screeningStage.retainCount, direction: adapter.config.metric.direction, ...(scoutSelected ? { policy: "scout" } : {}) });
         promotionStore.close();
         for (const candidate of screenedCandidates.filter((entry) => promoted.includes(entry.experimentId))) {
           const fullRun = await runCampaignExperiment(root, candidate.experimentId, "full-after-screen", campaignRemainingMs(campaign));
           await finalizeAutonomousRun(candidate.experimentId, fullRun);
           if (fullRun.exitCode === 0) await executeQueuedHarnessRetest(candidate.experimentId);
         }
+      }
+      if (scoutSelected && executedPortfolioExperiments.length) {
+        const outcomeStore = new ResearchStore(statePath);
+        const champions = new Set(championExperimentIds(outcomeStore, campaign.startedAt));
+        for (const { experimentId } of executedPortfolioExperiments) {
+          const status = (outcomeStore.experiments().find((entry) => entry.id === experimentId)?.payload as { status?: unknown } | undefined)?.status;
+          if (status !== "completed" && status !== "failed") continue;
+          const check = outcomeStore.eventsByType("experiment.ratchet.checked").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === experimentId)?.payload as { comparison?: { delta?: unknown } } | undefined;
+          const delta = typeof check?.comparison?.delta === "number" && Number.isFinite(check.comparison.delta) ? (adapter.config.metric.direction === "minimize" ? -check.comparison.delta : check.comparison.delta) : null;
+          outcomeStore.appendEvent("research.scout.recorded", { cycle, experimentId, stage: "full", improvement: delta, valid: status === "completed", accepted: champions.has(experimentId), ...scoutCandidateDescription(experimentId) });
+        }
+        outcomeStore.close();
       }
       if (portfolioPlan.evolution.enabled && executedPortfolioExperiments.length) {
         const evolutionEvents = decisionStore.eventsByType("experiment.comparison.completed");
@@ -7319,7 +7518,7 @@ research.command("propose")
     if (baseline) {
       const parsed = parseMetricOutput(baseline.stdout, adapter.config.metric.name);
       const metric = parsed.metrics[adapter.config.metric.name] ?? null;
-      recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold);
+      recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold, unitScoreFiles(adapter.config, baseline.cwd));
     } else if (reusedBaseline) {
       console.log(`· Reused successful baseline observation ${String(reusedBaseline.runId ?? "(unknown run)")}.`);
     } else {
@@ -7425,7 +7624,7 @@ program.command("baseline")
     const store = new ResearchStore(statePath);
     const parsed = parseMetricOutput(result.stdout, adapter.config.metric.name);
     const metric = parsed.metrics[adapter.config.metric.name] ?? null;
-    recordBaselineEvidence(store, root, result, metric, parsed.metrics, parsed.metricsByFold);
+    recordBaselineEvidence(store, root, result, metric, parsed.metrics, parsed.metricsByFold, unitScoreFiles(adapter.config, result.cwd));
     store.close();
     if (result.exitCode !== 0) process.exitCode = result.exitCode;
   });
@@ -7978,6 +8177,13 @@ experiment.command("run")
       writeFileSync(path, content);
       artifactPaths[name] = path;
     }
+    if (result.status === "completed") {
+      for (const [name, source] of Object.entries(unitScoreFiles(adapter.config, result.cwd ?? experimentCwd))) {
+        const path = join(artifactDir, name);
+        copyFileSync(source, path);
+        artifactPaths[name] = path;
+      }
+    }
     const recorded = {
       ...persistedResult,
       recoveryAttempts: attempt,
@@ -8081,8 +8287,47 @@ experiment.command("run")
         );
         const ratchetBaselineRun = historicalRuns.find((entry) => entry.id === ratchet.sourceId)?.run ?? baselineRun;
         const ratchetComparison = ratchet.sourceId === baselineRun.runId ? comparison : compareRuns(ratchetBaselineRun, RunResultSchema.parse(recorded), metricName, primaryMetricDirection === "minimize");
-        resultStore.appendEvent("experiment.ratchet.checked", { experimentId: id, originalBaseline: baselineMetric, reference: ratchet, referenceRunId: ratchet.sourceId, referenceMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, comparison: ratchetComparison });
-        if (ratchetComparison.direction === "improved") {
+        const ratchetPolicy = resolveRatchetPolicy(adapter.config.ratchet);
+        const referenceUnitScores = ratchet.sourceId === baselineRun.runId
+          ? unitScoresArtifactPath((baselinePayload as { artifactPaths?: unknown } | undefined)?.artifactPaths)
+          : unitScoresArtifactPath((resultStore.runs().find((entry) => entry.id === ratchet.sourceId)?.payload as { artifacts?: unknown } | undefined)?.artifacts);
+        const pairedEvidence = pairedRatchetEvidence(adapter.config, referenceUnitScores, unitScoresArtifactPath(artifactPaths), ratchetPolicy);
+        const ratchetDecision = decideRatchet({ scalarImproved: ratchetComparison.direction === "improved", scalarDelta: ratchetComparison.delta === null ? null : primaryMetricDirection === "minimize" ? -ratchetComparison.delta : ratchetComparison.delta, paired: pairedEvidence.paired, policy: ratchetPolicy });
+        resultStore.appendEvent("experiment.ratchet.checked", { experimentId: id, originalBaseline: baselineMetric, reference: ratchet, referenceRunId: ratchet.sourceId, referenceMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, comparison: ratchetComparison, decision: ratchetDecision, ...(pairedEvidence.note ? { unitScoreNote: pairedEvidence.note } : {}) });
+        const ledgerHypothesis = hypothesis?.payload as { title?: unknown; formulationFamily?: unknown; mechanism?: unknown; proposedChange?: unknown } | undefined;
+        const recordRatchetStep = (accepted: boolean, verdict: string, reason: string, stage: "full" | "holdout" = "full"): void => {
+          try {
+            const referenceMetric = ratchetBaselineRun.metrics[metricName] ?? baselineMetric;
+            const candidateMetric = recorded.metrics[metricName];
+            appendImprovement(stateDirectory, {
+              campaignStartedAt,
+              experimentId: id,
+              runId: result.runId,
+              stage,
+              title: typeof ledgerHypothesis?.title === "string" ? ledgerHypothesis.title : undefined,
+              family: typeof ledgerHypothesis?.formulationFamily === "string" ? ledgerHypothesis.formulationFamily : undefined,
+              techniqueClass: classifyTechnique({ family: typeof ledgerHypothesis?.formulationFamily === "string" ? ledgerHypothesis.formulationFamily : undefined, title: typeof ledgerHypothesis?.title === "string" ? ledgerHypothesis.title : undefined, mechanism: typeof ledgerHypothesis?.mechanism === "string" ? ledgerHypothesis.mechanism : undefined }),
+              metricName,
+              direction: primaryMetricDirection,
+              referenceId: ratchet.sourceId,
+              referenceMetric: typeof referenceMetric === "number" ? referenceMetric : null,
+              candidateMetric: typeof candidateMetric === "number" ? candidateMetric : null,
+              improvement: typeof candidateMetric === "number" && typeof referenceMetric === "number" ? (primaryMetricDirection === "minimize" ? referenceMetric - candidateMetric : candidateMetric - referenceMetric) : null,
+              accepted,
+              verdict,
+              mode: ratchetDecision.mode,
+              reason,
+              ...(ratchetDecision.paired ? { ci: { lower: ratchetDecision.paired.lower, upper: ratchetDecision.paired.upper, confidence: ratchetDecision.paired.confidence, matched: ratchetDecision.paired.matched, probabilityImproved: ratchetDecision.paired.probabilityImproved } } : {}),
+            });
+          } catch (error) {
+            resultStore.appendEvent("experiment.improvement_ledger.failed", { experimentId: id, error: error instanceof Error ? error.message : String(error) });
+          }
+        };
+        if (!ratchetDecision.accept) {
+          recordRatchetStep(false, ratchetDecision.verdict, ratchetDecision.reason);
+          if (ratchetComparison.direction === "improved") console.log(`${metricName} improved on the aggregate but the paired unit test did not confirm it (${ratchetDecision.verdict}: ${ratchetDecision.reason}); not kept.`);
+        }
+        if (ratchetDecision.accept) {
           const holdoutCommand = adapter.config.evaluator.holdoutCommand;
           let holdoutPassed = true;
           if (holdoutCommand) {
@@ -8096,10 +8341,12 @@ experiment.command("run")
             resultStore.appendEvent("experiment.holdout.completed", { experimentId: id, metric: candidateHoldout ?? null, reference: reference ?? null, kept: holdoutPassed });
           }
           if (holdoutPassed) {
-            resultStore.appendEvent("experiment.champion.updated", { experimentId: id, runId: result.runId, metric: recorded.metrics[metricName], previousRunId: ratchet.sourceId, previousMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, hypothesisId: manifest.hypothesisId });
+            resultStore.appendEvent("experiment.champion.updated", { experimentId: id, runId: result.runId, metric: recorded.metrics[metricName], previousRunId: ratchet.sourceId, previousMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, hypothesisId: manifest.hypothesisId, ratchetMode: ratchetDecision.mode });
+            recordRatchetStep(true, "keep", ratchetDecision.reason);
             console.log(`New champion: ${metricName} ${ratchetBaselineRun.metrics[metricName] ?? baselineMetric} → ${recorded.metrics[metricName]}; later experiments start from this implementation.`);
           } else {
             console.log(`${metricName} improved but the hidden holdout did not; not kept (likely overfitting the development split).`);
+            recordRatchetStep(false, "holdout_regressed", "primary improved but the hidden holdout regressed", "holdout");
           }
         }
         const operator = manifest.searchOperator ?? "ucb_portfolio";

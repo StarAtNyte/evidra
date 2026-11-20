@@ -71,7 +71,41 @@ export const CompetitionConfigSchema = z.object({
     /** Optional evaluator on data the agents never see. A run becomes the champion only if
      * it improves the primary metric and does not regress on this holdout. */
     holdoutCommand: z.array(z.string()).min(1).optional(),
+    /** Optional per-unit score file the evaluator writes (relative to the evaluator cwd): one row per
+     * evaluation unit with an id, a score, and optional segment columns. Enables the paired ratchet
+     * and loss decomposition. CSV/TSV/JSONL/JSON, or Parquet/Feather when Python pandas is available. */
+    unitScores: z.object({
+      path: z.string().min(1),
+      idColumn: z.string().min(1).optional(),
+      scoreColumn: z.string().min(1).optional(),
+      segmentColumns: z.array(z.string().min(1)).optional(),
+      /** Whether higher unit scores are better; defaults to the primary metric direction. */
+      direction: z.enum(["minimize", "maximize"]).optional(),
+      /** Python interpreter used for Parquet/Feather; defaults to the evaluator's interpreter when it is Python. */
+      python: z.string().min(1).optional(),
+    }).optional(),
   }),
+  /** How a completed run earns the champion slot. */
+  ratchet: z.object({
+    mode: z.enum(["auto", "scalar", "paired"]).default("auto"),
+    confidence: z.number().min(0.5).max(0.999).default(0.95),
+    minLowerBound: z.number().finite().default(0),
+    iterations: z.number().int().min(100).max(20_000).default(2000),
+    minUnits: z.number().int().min(2).default(30),
+    /** Resample whole clusters (a segment column such as respondent id) instead of single units. */
+    clusterBy: z.string().min(1).optional(),
+    trim: z.number().min(0).max(0.45).default(0),
+  }).optional(),
+  /** Broad exploration: screen several technique classes per round, promote only the best screens. */
+  scout: z.object({
+    enabled: z.boolean().default(true),
+    width: z.number().int().min(2).max(5).default(4),
+    promoteTop: z.number().int().min(1).max(5).default(1),
+    cooldown: z.number().int().min(0).max(20).default(4),
+    minScreenDelta: z.number().finite().default(0),
+    maxKnobsPerRound: z.number().int().min(0).max(5).default(1),
+    referenceScreenMetric: z.number().finite().optional(),
+  }).optional(),
   workspacePath: z.string().optional(),
   baselineCommand: z.array(z.string()).optional(),
   experimentCommand: z.array(z.string()).optional(),

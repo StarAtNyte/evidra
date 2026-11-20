@@ -265,7 +265,7 @@ function lossHypotheses(input: { gapTable: SegmentLoss[]; routing: RoutingHeadro
   if (worst && worst.recoverableToMean > 0) {
     result.push(hypothesis({
       title: `Targeted model for ${worst.column}=${worst.value}`,
-      formulationFamily: "per-segment specialist (data-centric)",
+      formulationFamily: "segment specialist / reweighting (data-centric)",
       mechanism: `${worst.column}=${worst.value} holds ${(worst.unitShare * 100).toFixed(1)}% of units but drags the aggregate by ${format(worst.recoverableToMean)}; a specialist (separate fit, reweighting, or extra features for this segment) can recover part of it without touching the rest.`,
       evidence: [`segment mean ${format(worst.meanScore)} vs gap-table rank 1, recoverable-to-mean ${format(worst.recoverableToMean)}`],
       expectedGain: worst.recoverableToMean * 0.3,
@@ -341,7 +341,7 @@ export function lossAnalysisBrief(report: LossAnalysisReport): Record<string, un
     ...(report.worstDecileLossShare !== undefined ? { worstDecileLossShare: report.worstDecileLossShare } : {}),
     gapTable: report.gapTable.slice(0, 8).map((segment) => ({ segment: `${segment.column}=${segment.value}`, unitShare: segment.unitShare, meanScore: segment.meanScore, recoverableToMean: segment.recoverableToMean, ...(segment.recoverableToBestRun !== undefined ? { recoverableToBestRun: segment.recoverableToBestRun, bestRunId: segment.bestRunId } : {}) })),
     runs: report.runs,
-    ...(report.oracle ? { oracle: report.oracle } : {}),
+    ...(report.oracle ? { oracle: { ...report.oracle, note: "optimistic upper bound: per-unit best-of-runs also picks up per-unit noise" } } : {}),
     routing: report.routing.slice(0, 4).map((entry) => ({ column: entry.column, crossFittedGain: entry.crossFittedGain, inSampleGain: entry.inSampleGain })),
     dataHypotheses: report.hypotheses,
     notes: report.notes,
