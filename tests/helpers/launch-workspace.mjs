@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /** A committed toy competition workspace driven through the real CLI. */
-export function workspace(t, launch, evaluator, files = {}) {
+export function workspace(t, launch, evaluator, files = {}, extraConfig = {}) {
   const root = mkdtempSync(join(tmpdir(), "evidra-launch-"));
   if (typeof launch === "function") launch = launch(root);
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -16,7 +16,7 @@ export function workspace(t, launch, evaluator, files = {}) {
   mkdirSync(join(root, "subs", "base"), { recursive: true });
   mkdirSync(join(root, "subs", "v50"), { recursive: true });
   writeFileSync(join(root, "subs", "v50", "model.py"), "");
-  const config = { id: "toy", name: "toy", taskType: "probabilistic_classification", datasetRevision: "v1", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["python3", "evaluate.py"], estimatorPath: "estimator.py" }, baselineCommand: ["python3", "evaluate.py"], experimentCommand: ["python3", "evaluate.py"], workspacePath: ".", launch: { readiness: { envPaths: { EV_SUBMISSION: "subs/{value}" }, trusted: ["subs/base"] }, ...launch } };
+  const config = { id: "toy", name: "toy", taskType: "probabilistic_classification", datasetRevision: "v1", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["python3", "evaluate.py"], estimatorPath: "estimator.py" }, baselineCommand: ["python3", "evaluate.py"], experimentCommand: ["python3", "evaluate.py"], workspacePath: ".", launch: { readiness: { envPaths: { EV_SUBMISSION: "subs/{value}" }, trusted: ["subs/base"] }, ...launch }, ...extraConfig };
   writeFileSync(join(root, "competition.json"), JSON.stringify(config));
   const git = (...args) => execFileSync("git", args, { cwd: root });
   git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t"); git("add", "-A"); git("commit", "-qm", "init");

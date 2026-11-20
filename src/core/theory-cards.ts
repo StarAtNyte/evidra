@@ -52,7 +52,7 @@ export const TheoryCardSchema = z.object({
   prediction: z.object({ statement: z.string().min(10), segment: z.string().optional(), sign: z.enum(["positive", "negative", "zero"]).default("positive"), minimumEffect: z.number().optional() }).optional(),
   /** Relative compute cost (1 = one reduced screen). */
   cost: z.number().positive().default(1),
-});
+}).passthrough();
 export type TheoryCard = z.infer<typeof TheoryCardSchema>;
 
 /**
@@ -71,7 +71,7 @@ export const WildCardSchema = z.object({
   expectedGain: z.object({ value: z.number().default(0), spread: z.number().positive().optional(), probability: z.number().min(0).max(1).optional() }).default({}),
   cost: z.number().positive().default(1),
   model: z.string().optional(),
-});
+}).passthrough();
 export type WildCard = z.infer<typeof WildCardSchema>;
 export type AnyCard = TheoryCard | WildCard;
 export const isWild = (card: AnyCard): card is WildCard => card.origin === "wild";
@@ -368,11 +368,13 @@ export const THEORY_CARD_INSTRUCTIONS = [
   "New theory (origin new_theory) is allowed when no known estimator fits: state assumptions, give derivation, and a falsifiable prediction {statement, segment, sign, minimumEffect}. It is flagged new/unproven until the ratchet confirms or falsifies it.",
   "Wild cards (origin wild) fill a reserved exploration quota: a hunch, a falsifiable prediction, a cheap screen (cost <= wildMaxCost), optionally expectedGain {value, spread}. Crazy out-of-the-box ideas belong here.",
   "Promoted wild cards (pendingWriteups) need their theory written up as a full card.",
+  "Compliance: every card declares dataAccess (tags such as given_columns, visible_answers, hidden_given_columns), ruleRisks [{rule, why}] for any hard rule it could brush against, selfCritique [{rule, verdict clear|brushes|violates, argument}] against each rule in compliance.rules, and scope.datasets. Cards that brush a rule are never screened automatically; they wait for a human ruling.",
 ];
 
-export function ideationBrief(ledger: readonly TheoryVerdict[], options: { wildQuota: number; wildMaxCost: number; sentBack?: Array<{ title?: string; issues: string[] }> }): Record<string, unknown> {
+export function ideationBrief(ledger: readonly TheoryVerdict[], options: { wildQuota: number; wildMaxCost: number; sentBack?: Array<{ title?: string; issues: string[] }>; rules?: Array<{ id: string; description: string }>; allowedData?: string[] }): Record<string, unknown> {
   return {
     instructions: THEORY_CARD_INSTRUCTIONS,
+    ...(options.rules?.length ? { compliance: { rules: options.rules, allowedData: options.allowedData ?? [] } } : {}),
     wildQuota: options.wildQuota,
     wildMaxCost: options.wildMaxCost,
     theoryLedger: ledger.slice(-12).map((entry) => ({ title: entry.title, origin: entry.origin, techniqueClass: entry.techniqueClass, verdict: entry.verdict, predictedGain: entry.predictedGain, observedGain: entry.observedGain, ...(entry.mechanismMismatch ? { mechanismMismatch: entry.mechanismMismatch } : {}) })),

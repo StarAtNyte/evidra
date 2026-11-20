@@ -140,6 +140,7 @@ import type { AgentProvider } from "./agents/codex-exec.js";
 import { DEFAULT_FORBIDDEN_ENV, environmentSnapshot, extractTraceback, knownRepair, parseRepairAction, rememberRepair, rememberedEnvironment, REPAIR_INSTRUCTIONS, repairPolicyViolations, runRepairCommand, tail, writeEscalation, type EvidencePack, type RepairAction } from "./core/self-repair.js";
 import { planSupervisorTick, type LiveWorker, type QueuedExperiment, type SupervisorPolicy } from "./core/supervisor.js";
 import { failureSignature, candidateDependencies, checkResources, classifyLaunchFailure, dependencyStatus, detectSystemicFailure, missingEnvironment, parseTimeVerbose, resolveEnvContract, resolveLaunchPolicy, resourcesFromOutput, type Dependency, type DependencyStatus, type LaunchClassification, type RecordedFailure, type ResourceVerdict } from "./core/launch-guard.js";
+import { escalateCompliance, reviewCompliance, ComplianceConfigSchema, type ComplianceConfig } from "./core/compliance.js";
 import { loadCardFile, rankTheoryCards, cardStatus, analysisNumbersFromBrief, ideationBrief, isWild, planIdeationRound, readTheoryLedger, recordTheoryVerdict, completeTheoryWriteup, validateTheoryCard, type AnalysisNumbers, type AnyCard } from "./core/theory-cards.js";
 import { appendImprovement, effectiveImprovements, ledgerPaths, readImprovementLedger, renderImprovementLedger, verifyImprovementLedger } from "./core/improvement-ledger.js";
 import { classifyTechnique, planScoutRound, promoteScoutScreens, resolveScoutPolicy, scoutBrief, scoutLedgerFromEvents, summarizeScoutLedger, techniqueLabel, TECHNIQUE_CLASSES, type ScoutPolicy } from "./core/scout.js";
@@ -407,6 +408,19 @@ async function holdoutMetricFor(cwd: string, command: string[], environment: Nod
  * overridden by --scout. The flag is recorded once per campaign so a resume
  * keeps scout mode without repeating it.
  */
+/**
+ * Compliance review of a hypothesis's card. needs_human_ruling is escalated (once) and never screened
+ * automatically; rejected cards are closed. Returns undefined when compliant or no rules are set.
+ */
+function complianceHold(stateDirectory: string, store: ResearchStore, config: ReturnType<typeof activeCompetition>["config"], card: unknown, title: string | undefined, context: string): { status: "needs_human_ruling" | "rejected"; reason: string } | undefined {
+  if (!config.compliance || card === undefined || card === null || typeof card !== "object") return undefined;
+  const review = reviewCompliance(card as Record<string, unknown>, config.compliance);
+  store.appendEvent("research.compliance.reviewed", { context, ...review });
+  if (review.status === "compliant") return undefined;
+  if (review.status === "needs_human_ruling") escalateCompliance(stateDirectory, review, { title });
+  return { status: review.status, reason: `compliance ${review.status === "rejected" ? "rejected" : "needs a human ruling (escalated; not screened)"}: ${review.reasons.join("; ")}` };
+}
+
 /** Latest loss-analysis numbers per state directory, used to check theory-card arithmetic. */
 const ideationAnalysis = new Map<string, AnalysisNumbers>();
 
@@ -457,6 +471,8 @@ function ideationGate(stateDirectory: string, store: ResearchStore, config: Retu
       sentBack.push({ title: hypothesis.title, issues });
       continue;
     }
+    const hold = complianceHold(stateDirectory, store, config, hypothesis.theoryCard, hypothesis.title, `cycle ${cycle}`);
+    if (hold) { reasons[index] = hold.reason; sentBack.push({ title: hypothesis.title, issues: [hold.reason] }); continue; }
     if (!isWild(checked.card)) for (const pending of readTheoryLedger(stateDirectory).filter((entry) => entry.theoryPending && entry.cardId === (checked.card!.id ?? checked.card!.title))) completeTheoryWriteup(stateDirectory, pending.cardId, checked.card);
     valid.push({ index, card: { ...checked.card, id: checked.card.id ?? hypothesis.title } });
   }
@@ -481,7 +497,7 @@ function campaignIdeationContext(stateDirectory: string, store: ResearchStore, c
     const payload = event.payload as { cards?: Array<{ title: string; issues: string[] }>; round?: string[] };
     return [...(payload.cards ?? []), ...(payload.round ? [{ title: "round", issues: payload.round }] : [])];
   });
-  return ideationBrief(readTheoryLedger(stateDirectory), { wildQuota: settings.wildQuota, wildMaxCost: settings.wildMaxCost, sentBack });
+  return ideationBrief(readTheoryLedger(stateDirectory), { wildQuota: settings.wildQuota, wildMaxCost: settings.wildMaxCost, sentBack, rules: config.compliance?.rules.map((rule) => ({ id: rule.id, description: rule.description })), allowedData: config.compliance?.allowedData });
 }
 
 function campaignScoutPolicy(store: ResearchStore, config: ReturnType<typeof activeCompetition>["config"], cliWidth?: string): ScoutPolicy {
@@ -3248,19 +3264,20 @@ theory.command("check")
   .argument("<files...>", "theory card JSON files")
   .description("Validate cards (math, citations, arithmetic against the loss analysis, selection-noise risk) and rank the valid ones")
   .option("--json", "print JSON")
+  .option("--compliance <file>", "compliance rules JSON ({allowedData, rules, rulings}); defaults to the competition's compliance block")
   .option("--analysis <file>", "loss-analysis numbers JSON ({noiseFloor, headroom, share}, or a lossAnalysis brief) to check the arithmetic against")
-  .action((files: string[], options: { json?: boolean; analysis?: string }) => {
+  .action((files: string[], options: { json?: boolean; analysis?: string; compliance?: string }) => {
     const ledger = readTheoryLedger(stateDirectory);
     const suppliedAnalysis = options.analysis ? JSON.parse(readFileSync(resolve(options.analysis), "utf8")) as Record<string, unknown> : undefined;
     const analysis: AnalysisNumbers = suppliedAnalysis ? ("gapTable" in suppliedAnalysis ? analysisNumbersFromBrief(suppliedAnalysis) : (suppliedAnalysis.analysis ?? suppliedAnalysis) as AnalysisNumbers) : ideationAnalysis.get(stateDirectory) ?? {};
-    const results = files.map((file) => ({ file, ...validateTheoryCard(loadCardFile(resolve(file)), analysis, { wildMaxCost: activeCompetition().config.ideation?.wildMaxCost ?? 1 }) }));
-    const valid = results.filter((entry) => entry.card && !entry.issues.length).map((entry) => entry.card!);
+    const compliancePolicy: ComplianceConfig | undefined = options.compliance ? ComplianceConfigSchema.parse(((raw) => raw.compliance ?? raw)(JSON.parse(readFileSync(resolve(options.compliance), "utf8")) as Record<string, unknown>)) : activeCompetition().config.compliance;
+    const results = files.map((file) => { const raw = loadCardFile(resolve(file)); return { file, ...validateTheoryCard(raw, analysis, { wildMaxCost: activeCompetition().config.ideation?.wildMaxCost ?? 1 }), compliance: reviewCompliance(raw as Record<string, unknown>, compliancePolicy) }; });
+    const valid = results.filter((entry) => entry.card && !entry.issues.length && entry.compliance.status === "compliant").map((entry) => entry.card!);
     const ranked = rankTheoryCards(valid, ledger);
-    if (results.some((entry) => entry.issues.length)) process.exitCode = 1;
-    if (options.json) { console.log(JSON.stringify({ results: results.map((entry) => ({ file: entry.file, issues: entry.issues, risk: entry.risk })), ranked: ranked.map((entry) => ({ title: entry.card.title, score: entry.score, reason: entry.reason })) }, null, 2)); return; }
-    for (const entry of results) console.log(`${entry.file}: ${entry.issues.length ? `sent back\n  ${entry.issues.map((issue) => `${issue.field}: ${issue.message}`).join("\n  ")}` : `ok (${cardStatus(entry.card!, ledger)})`}`);
+    if (results.some((entry) => entry.issues.length || entry.compliance.status !== "compliant")) process.exitCode = 1;
+    if (options.json) { console.log(JSON.stringify({ results: results.map((entry) => ({ file: entry.file, issues: entry.issues, risk: entry.risk, compliance: entry.compliance })), ranked: ranked.map((entry) => ({ title: entry.card.title, score: entry.score, reason: entry.reason })) }, null, 2)); return; }
+    for (const entry of results) console.log(`${entry.file}: ${entry.issues.length ? `sent back\n  ${entry.issues.map((issue) => `${issue.field}: ${issue.message}`).join("\n  ")}` : `ok (${cardStatus(entry.card!, ledger)})`}; compliance ${entry.compliance.status}${entry.compliance.status === "compliant" ? "" : `\n  ${entry.compliance.reasons.join("\n  ")}`}`);
     for (const entry of ranked) console.log(`  ${entry.score.toExponential(2)}  ${entry.card.title}  ${entry.reason}`);
-    if (results.some((entry) => entry.issues.length)) process.exitCode = 1;
   });
 theory.command("ledger")
   .description("Show recorded theory verdicts (confirmed/falsified), mechanism mismatches and pending write-ups")
@@ -3287,6 +3304,9 @@ program.command("hypothesis")
       theoryCard = loadCardFile(resolve(options.theoryCard));
       const checked = validateTheoryCard(theoryCard, ideationAnalysis.get(stateDirectory) ?? {}, { wildMaxCost: activeCompetition().config.ideation?.wildMaxCost ?? 1 });
       if (checked.issues.length) { for (const issue of checked.issues) console.error(`${issue.field}: ${issue.message}`); throw new Error("theory card rejected; fix it before any compute is spent"); }
+      const review = reviewCompliance(theoryCard as Record<string, unknown>, activeCompetition().config.compliance);
+      if (review.status === "rejected") { for (const reason of review.reasons) console.error(reason); throw new Error("theory card rejected by the compliance review"); }
+      if (review.status === "needs_human_ruling") { escalateCompliance(stateDirectory, review, { title: options.title }); console.log(`Compliance: needs a human ruling (escalated to ESCALATIONS.md); it will not be screened until compliance.rulings allows it.\n  ${review.reasons.join("\n  ")}`); }
     }
     const dependsOn = (options.dependsOn ?? []).map((entry) => { const [path, file] = entry.split(":"); return { path, ...(file ? { readyWhen: { file } } : {}) }; });
     const env = (options.env ?? []).map((assignment) => { const index = assignment.indexOf("="); if (index < 1) throw new Error(`--env expects NAME=value, got ${assignment}`); return { name: assignment.slice(0, index), value: assignment.slice(index + 1) }; });
@@ -8623,6 +8643,14 @@ experiment.command("run")
     // Remembered launch-path fixes apply to every launch, so a repaired lane stays repaired.
     const rememberedFixes = rememberedEnvironment(stateDirectory);
     if (Object.keys(rememberedFixes).length) (manifest.resources as { environment?: Record<string, string> }).environment = { ...rememberedFixes, ...(manifest.resources.environment ?? {}) };
+    const compliance = complianceHold(stateDirectory, store, adapter.config, (hypothesis?.payload as { theoryCard?: unknown } | undefined)?.theoryCard, (hypothesis?.payload as { title?: string } | undefined)?.title, `experiment ${id}`);
+    if (compliance) {
+      if (compliance.status === "rejected") store.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "rejected", rejection: compliance.reason } });
+      store.close();
+      process.exitCode = compliance.status === "rejected" ? 1 : 75;
+      console.log(`Experiment ${id} not started: ${compliance.reason}`);
+      return;
+    }
     const readiness = launchReadiness(adapter.config, hypothesis?.payload, manifest.resources.environment ?? {});
     if (!readiness.ready) {
       store.appendEvent("experiment.dependency.waiting", { experimentId: id, pending: readiness.pending });

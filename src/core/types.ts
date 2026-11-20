@@ -1,3 +1,4 @@
+import { ComplianceConfigSchema } from "./compliance.js";
 import { z } from "zod";
 
 /** Allow complete multi-module implementations while keeping provider payloads bounded. */
@@ -161,6 +162,8 @@ export const CompetitionConfigSchema = z.object({
     maxKnobsPerRound: z.number().int().min(0).max(5).default(1),
     referenceScreenMetric: z.number().finite().optional(),
   }).optional(),
+  /** Hard rules every idea is reviewed against before it can be screened (see core/compliance.ts). */
+  compliance: ComplianceConfigSchema.optional(),
   /** Theory-card ideation: every hypothesis carries its math; a reserved quota screens wild cards. */
   ideation: z.object({
     theoryCards: z.boolean().default(true),

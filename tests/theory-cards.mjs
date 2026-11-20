@@ -201,3 +201,60 @@ test("cli: theory check sends back a card without math; a carded experiment writ
   assert.ok(["confirmed", "falsified", "inconclusive"].includes(entry.verdict));
   assert.match(cli("theory", "ledger").stdout, /Continuous trust gate/);
 });
+
+test("compliance: W2 and TWMET-on-ACS need a human ruling; the rest of idea_search.md is compliant", async () => {
+  const { reviewCompliance, ComplianceConfigSchema } = await import("../dist/core/compliance.js");
+  const policy = ComplianceConfigSchema.parse(fixture.compliance);
+  for (const [status, ids] of Object.entries(fixture.expect.compliance)) for (const id of ids) assert.equal(reviewCompliance(byId[id], policy).status, status, id);
+  // The deterministic check catches W2 even if the director does not declare the risk.
+  const { ruleRisks, selfCritique, ...undeclared } = byId["w2-hhc"];
+  const review = reviewCompliance(undeclared, policy);
+  assert.equal(review.status, "needs_human_ruling");
+  assert.ok(review.reasons.some((reason) => /neither declares this risk nor critiques it/.test(reason)));
+  // TWMET is fine on CPS and needs a ruling on ACS; a recorded human ruling for ACS clears it.
+  assert.equal(reviewCompliance(byId["twmet"], policy).status, "compliant");
+  const ruled = ComplianceConfigSchema.parse({ ...fixture.compliance, rulings: [{ card: "twmet-acs", datasets: ["nh_s2"], status: "compliant", by: "coordinator" }] });
+  assert.equal(reviewCompliance(byId["twmet-acs"], ruled).status, "compliant");
+  assert.equal(reviewCompliance(byId["w2-hhc"], ruled).status, "needs_human_ruling", "a ruling covers only its own card");
+});
+
+test("compliance: forbidden data, a violating self-critique or a missing declaration reject; negations do not trip keywords", async () => {
+  const { reviewCompliance, ComplianceConfigSchema } = await import("../dist/core/compliance.js");
+  const policy = ComplianceConfigSchema.parse(fixture.compliance);
+  assert.equal(reviewCompliance({ ...byId["twloo"], dataAccess: ["given_columns", "hidden_labels"] }, policy).status, "rejected");
+  assert.equal(reviewCompliance({ ...byId["twloo"], dataAccess: ["given_columns", "leaderboard_feedback"] }, policy).status, "rejected");
+  assert.equal(reviewCompliance({ ...byId["twloo"], selfCritique: [{ rule: "no-record-linkage", verdict: "violates", argument: "it joins rows to an external register" }] }, policy).status, "rejected");
+  const { dataAccess, ...undeclared } = byId["twloo"];
+  assert.match(reviewCompliance(undeclared, policy).reasons[0], /compliance declaration missing/);
+  assert.equal(reviewCompliance({ ...byId["twloo"], dataAccess: ["census_microdata"] }, policy).status, "needs_human_ruling", "undeclared data sources go to a human");
+  assert.equal(reviewCompliance({ ...byId["twloo"], hunch: "uses no record linkage and never touches the leaderboard" }, policy).status, "compliant");
+  assert.equal(reviewCompliance({ ...byId["twloo"], hunch: "probe the public score to tune alpha" }, policy).status, "needs_human_ruling");
+});
+
+test("cli: a needs-human-ruling card is escalated and never screened automatically", async (t) => {
+  const { workspace } = await import("./helpers/launch-workspace.mjs");
+  const { writeFileSync } = await import("node:fs");
+  const { root, cli } = workspace(t, {}, "import json\nprint(json.dumps({'score': 0.5}))\n", {}, { compliance: fixture.compliance });
+  writeFileSync(join(root, "w2.json"), JSON.stringify(byId["w2-hhc"]));
+  writeFileSync(join(root, "twmet-acs.json"), JSON.stringify(byId["twmet-acs"]));
+  writeFileSync(join(root, "twloo.json"), JSON.stringify(byId["twloo"]));
+  const check = cli("theory", "check", "--json", "w2.json", "twmet-acs.json", "twloo.json");
+  assert.equal(check.status, 1);
+  const statuses = JSON.parse(check.stdout).results.map((entry) => entry.compliance.status);
+  assert.deepEqual(statuses, ["needs_human_ruling", "needs_human_ruling", "compliant"]);
+  const added = cli("hypothesis", "--title", "hidden-hidden consensus", "--family", "geometric pooling consensus", "--mode", "verify", "--env", "HHC=1", "--theory-card", "w2.json");
+  assert.equal(added.status, 0, added.stderr);
+  assert.match(added.stdout, /needs a human ruling/);
+  const hypothesis = added.stdout.match(/hyp_\S+/)[0];
+  assert.equal(cli("experiment", "propose", hypothesis).status, 0);
+  const experiment = JSON.parse(cli("launch", "status", "--json").stdout).waiting.find((entry) => entry.experimentId.includes(hypothesis.slice(4, 20))).experimentId;
+  const ran = cli("experiment", "run", experiment);
+  assert.equal(ran.status, 75, ran.stdout + ran.stderr);
+  assert.match(ran.stdout, /not started: compliance needs a human ruling/);
+  const escalations = readFileSync(join(root, ".sota", "ESCALATIONS.md"), "utf8");
+  assert.match(escalations, /w2-hhc \(compliance: needs a human ruling\)/);
+  assert.equal(escalations.match(/compliance:w2-hhc/g).length, 1, "escalated once, not on every attempt");
+  const { ResearchStore } = await import("../dist/core/store.js");
+  const store = new ResearchStore(join(root, ".sota", "database.sqlite"));
+  try { assert.equal(store.runs().filter((run) => JSON.stringify(run.payload).includes(experiment)).length, 0, "no run was started"); } finally { store.close(); }
+});

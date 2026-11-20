@@ -1,11 +1,49 @@
 {
   "source": "simulcara/situated-evals/experiment_logs/2026-11-20/idea_search.md (ideas #1-#5, wild W1-W2, plus #15 as the card the checker must reject for missing math). Units are CPS skill (dskill ~ d(nats/cell) / 0.74).",
-  "expect": { "accept": ["twloo", "twgate2", "tweb", "twmet", "w1-twdens", "w2-hhc"], "reject": { "poolb": ["expectedGain.value"], "mc-cf": ["model", "expectedGain.derivation"] } },
+  "expect": {
+    "accept": [
+      "twloo",
+      "twgate2",
+      "tweb",
+      "twmet",
+      "w1-twdens"
+    ],
+    "reject": {
+      "poolb": [
+        "expectedGain.value"
+      ],
+      "mc-cf": [
+        "model",
+        "expectedGain.derivation"
+      ]
+    },
+    "compliance": {
+      "needs_human_ruling": [
+        "w2-hhc",
+        "twmet-acs"
+      ],
+      "compliant": [
+        "twloo",
+        "twgate2",
+        "tweb",
+        "poolb",
+        "twmet",
+        "w1-twdens",
+        "mc-cf"
+      ]
+    }
+  },
   "analysis": {
     "noiseFloor": 0.0006,
     "note": "noiseFloor = 2 x paired SE ~0.0003 for a KWIDE-sized change (tx_s1 CI half-width 0.0006 over 1449 respondent clusters); headroom = CPS optimistic copy headroom +0.0057 (idea_search #2).",
-    "headroom": { "dataset=tx_s1": 0.0057, "dataset=tx_s2": 0.0057 },
-    "share": { "dataset=tx_s1": 0.5, "dataset=tx_s2": 0.5 }
+    "headroom": {
+      "dataset=tx_s1": 0.0057,
+      "dataset=tx_s2": 0.0057
+    },
+    "share": {
+      "dataset=tx_s1": 0.5,
+      "dataset=tx_s2": 0.5
+    }
   },
   "cards": [
     {
@@ -14,14 +52,65 @@
       "origin": "new_theory",
       "family": "nearest neighbour leave-one-out twin counts",
       "model": "p_i = (c_i + alpha_{h,b} B_i) / (C_i + alpha_{h,b}), c_i(y) = sum_{j in N_LOO(i)} k_lambda(d_ij - d_i,min) 1{y_j = y}, N_LOO(i) = visible rows except i",
-      "lossTerm": { "term": "bias_misspecification", "why": "(M) 5-fold OOF neighbour pools hold 0.8 n_v rows, so alpha is chosen on bucket populations (OOF d>=2 share 0.331) that differ from the hidden ones (0.253); the mismatch biases the trust level" },
-      "assumptions": ["each row in bucket b has a copy source with probability tau_b, y_i = y_j with probability rho_h, else y_i ~ B_i", "kNN counts have no fitted parameters, so LOO counts are honest", "the visible-mate leak (1 dof of ~9k rows x 28 candidates) is negligible"],
+      "lossTerm": {
+        "term": "bias_misspecification",
+        "why": "(M) 5-fold OOF neighbour pools hold 0.8 n_v rows, so alpha is chosen on bucket populations (OOF d>=2 share 0.331) that differ from the hidden ones (0.253); the mismatch biases the trust level"
+      },
+      "assumptions": [
+        "each row in bucket b has a copy source with probability tau_b, y_i = y_j with probability rho_h, else y_i ~ B_i",
+        "kNN counts have no fitted parameters, so LOO counts are honest",
+        "the visible-mate leak (1 dof of ~9k rows x 28 candidates) is negligible"
+      ],
       "derivation": "For a single-neighbour bucket the posterior is p = (1-w) B + w e_{y_j} with w = 1/(1+alpha). Maximising tau log(w + (1-w) b) + (1-tau) log((1-w)(1-b)) gives the first-order condition tau(1-b)/(w + (1-w) b) = (1-tau)/(1-w). Under 5-fold OOF, tau_b^OOF is lowered in the unique buckets by rows whose partner sits in the same fold, so w* is set too small (alpha too large) in near buckets and far buckets learn no update; LOO restores the hidden bucket composition (mean d_min 1.223 vs hidden 1.206).",
-      "prediction": { "statement": "the LOO 'buckets vis' histogram matches 'buckets hid' (near-bucket share 50.1% -> ~59% on tx_s1), the OOF twin gain rises above 1.141 nats/row, and the paired CPS delta is > 0; delta <= 0 with both shifts present falsifies the theory", "segment": "dataset=tx_s1", "sign": "positive", "minimumEffect": 0 },
-      "estimation": { "estimated": "(lambda, alpha) per (head, bucket) from the 28-candidate grid, unchanged from TW2; only the neighbour pool changes", "method": "argmax of OOF log-lik gain behind the 0.1 nats/row gate", "crossFit": "B_oof stays the 5-fold OOF blend; (lambda, alpha) chosen on other folds' rows; strict variant chooses alpha for fold f only from rows whose neighbours lie outside f", "parameters": 0, "dataSize": 9000, "selections": 1 },
-      "expectedGain": { "value": 0.0025, "derivation": "a 0.05 shift in tau at b in {0.3, 0.5} costs 0.011-0.017 nats per affected cell (0.014/0.74 = 0.019 skill); affected cells 10-25% (0.175) of hidden cells on updated heads; 0.019 x 0.175 x 0.75 = 0.0025 (range +0.001 to +0.004)", "inputs": { "segment": "dataset=tx_s1", "lossShare": 0.175, "headroom": 0.019, "recoverFraction": 0.75 }, "probability": 0.45 },
-      "algorithm": { "steps": "in twin_posterior2 replace the fold loop filling oi/od/om with twin_neighbours(G, vis_idx, vis_idx, w, m=TWIN_M+1) and mask self with idx==arange (exact duplicates tie); same switch for the bucket computation at ~line 1796", "complexity": "O(n_v^2 |G|) over 128-row chunks, same as now; no GPU, no new memory", "integrationPoint": "twin_posterior2 (line 1145) neighbour pool" },
-      "cost": 0.5
+      "prediction": {
+        "statement": "the LOO 'buckets vis' histogram matches 'buckets hid' (near-bucket share 50.1% -> ~59% on tx_s1), the OOF twin gain rises above 1.141 nats/row, and the paired CPS delta is > 0; delta <= 0 with both shifts present falsifies the theory",
+        "segment": "dataset=tx_s1",
+        "sign": "positive",
+        "minimumEffect": 0
+      },
+      "estimation": {
+        "estimated": "(lambda, alpha) per (head, bucket) from the 28-candidate grid, unchanged from TW2; only the neighbour pool changes",
+        "method": "argmax of OOF log-lik gain behind the 0.1 nats/row gate",
+        "crossFit": "B_oof stays the 5-fold OOF blend; (lambda, alpha) chosen on other folds' rows; strict variant chooses alpha for fold f only from rows whose neighbours lie outside f",
+        "parameters": 0,
+        "dataSize": 9000,
+        "selections": 1
+      },
+      "expectedGain": {
+        "value": 0.0025,
+        "derivation": "a 0.05 shift in tau at b in {0.3, 0.5} costs 0.011-0.017 nats per affected cell (0.014/0.74 = 0.019 skill); affected cells 10-25% (0.175) of hidden cells on updated heads; 0.019 x 0.175 x 0.75 = 0.0025 (range +0.001 to +0.004)",
+        "inputs": {
+          "segment": "dataset=tx_s1",
+          "lossShare": 0.175,
+          "headroom": 0.019,
+          "recoverFraction": 0.75
+        },
+        "probability": 0.45
+      },
+      "algorithm": {
+        "steps": "in twin_posterior2 replace the fold loop filling oi/od/om with twin_neighbours(G, vis_idx, vis_idx, w, m=TWIN_M+1) and mask self with idx==arange (exact duplicates tie); same switch for the bucket computation at ~line 1796",
+        "complexity": "O(n_v^2 |G|) over 128-row chunks, same as now; no GPU, no new memory",
+        "integrationPoint": "twin_posterior2 (line 1145) neighbour pool"
+      },
+      "cost": 0.5,
+      "dataAccess": [
+        "given_columns",
+        "visible_answers"
+      ],
+      "ruleRisks": [],
+      "selfCritique": [
+        {
+          "rule": "no-unit-classification",
+          "verdict": "clear",
+          "argument": "changes only which visible rows enter the GIVEN-similarity counts; no unit identity is inferred"
+        }
+      ],
+      "scope": {
+        "datasets": [
+          "tx_s1",
+          "tx_s2"
+        ]
+      }
     },
     {
       "id": "twgate2",
@@ -29,48 +118,214 @@
       "origin": "literature",
       "family": "gating trust gate",
       "citations": [
-        { "title": "Generalization through Memorization: Nearest Neighbor Language Models", "venue": "ICLR", "year": 2020, "url": "https://arxiv.org/abs/1911.00172" },
-        { "title": "Efficient Nearest Neighbor Language Models", "venue": "EMNLP", "year": 2021, "url": "https://arxiv.org/abs/2109.04212" }
+        {
+          "title": "Generalization through Memorization: Nearest Neighbor Language Models",
+          "venue": "ICLR",
+          "year": 2020,
+          "url": "https://arxiv.org/abs/1911.00172"
+        },
+        {
+          "title": "Efficient Nearest Neighbor Language Models",
+          "venue": "EMNLP",
+          "year": 2021,
+          "url": "https://arxiv.org/abs/2109.04212"
+        }
       ],
       "model": "p_i = (1 - w_i) B_i + w_i c_hat_i, c_hat_i = c_i^lambda / C_i, w_i = sigmoid(eta_h + theta^T phi_i), phi = [d_min, 1{unique}, log(1+n_tied), d2 - d_min, log C_i, max_y c_hat_i(y), H(B_i), log B_i(argmax c_hat_i)]",
-      "lossTerm": { "term": "variance_estimation", "why": "(B, V) 12 buckets x 28 candidates x ~200 heads argmax picks are coarse and carry winner's-curse noise sigma sqrt(2 log M); a smooth low-dimensional gate removes both" },
-      "assumptions": ["trust varies smoothly with n_tied, the second-neighbour gap and the prior entropy", "theta is shared across heads; per-head intercepts shrink toward 0"],
-      "estimation": { "estimated": "theta (8-10 shared) and eta_h per head with an L2 penalty", "method": "L-BFGS on sum -log p_i(y_ih) (concave in w)", "crossFit": "theta^(-f) fitted on folds != f and applied to fold f OOF; hidden rows use theta fitted on all visible rows; on/off by cross-fitted gain >= 0.1 nats/row", "parameters": 210, "dataSize": 1900000, "selections": 1 },
-      "expectedGain": { "value": 0.00125, "derivation": "optimistic copy headroom +0.0057 minus GPU-measured TW2 gain +0.0026 leaves ~0.003; a smooth gate recovers a third to a half: 0.003 x 0.42 = 0.00125 (range +0.001 to +0.0015)", "inputs": { "segment": "dataset=tx_s1", "headroom": 0.003, "recoverFraction": 0.42 }, "probability": 0.4 },
-      "algorithm": { "steps": "new twin_gate2(...) replaces the (lambda, alpha) loop in twin_posterior2 when the switch is on; reuses oi/od/om/hi/hd/hm and _twin_counts; third arm combines with TWLOO", "complexity": "H x n_v x |phi| ~ 18M floats (150 MB float64; chunk by head or float32); ~50 L-BFGS iterations, seconds on CPU", "integrationPoint": "twin_posterior2 (lambda, alpha) selection loop" },
-      "prediction": { "statement": "fitted theta > 0 on 1{unique}, gap and consensus, < 0 on log(1+n_tied); theta_gap ~ 0 with paired delta <= 0 means buckets were already sufficient", "segment": "dataset=tx_s1", "sign": "positive" },
-      "cost": 0.6
+      "lossTerm": {
+        "term": "variance_estimation",
+        "why": "(B, V) 12 buckets x 28 candidates x ~200 heads argmax picks are coarse and carry winner's-curse noise sigma sqrt(2 log M); a smooth low-dimensional gate removes both"
+      },
+      "assumptions": [
+        "trust varies smoothly with n_tied, the second-neighbour gap and the prior entropy",
+        "theta is shared across heads; per-head intercepts shrink toward 0"
+      ],
+      "estimation": {
+        "estimated": "theta (8-10 shared) and eta_h per head with an L2 penalty",
+        "method": "L-BFGS on sum -log p_i(y_ih) (concave in w)",
+        "crossFit": "theta^(-f) fitted on folds != f and applied to fold f OOF; hidden rows use theta fitted on all visible rows; on/off by cross-fitted gain >= 0.1 nats/row",
+        "parameters": 210,
+        "dataSize": 1900000,
+        "selections": 1
+      },
+      "expectedGain": {
+        "value": 0.00125,
+        "derivation": "optimistic copy headroom +0.0057 minus GPU-measured TW2 gain +0.0026 leaves ~0.003; a smooth gate recovers a third to a half: 0.003 x 0.42 = 0.00125 (range +0.001 to +0.0015)",
+        "inputs": {
+          "segment": "dataset=tx_s1",
+          "headroom": 0.003,
+          "recoverFraction": 0.42
+        },
+        "probability": 0.4
+      },
+      "algorithm": {
+        "steps": "new twin_gate2(...) replaces the (lambda, alpha) loop in twin_posterior2 when the switch is on; reuses oi/od/om/hi/hd/hm and _twin_counts; third arm combines with TWLOO",
+        "complexity": "H x n_v x |phi| ~ 18M floats (150 MB float64; chunk by head or float32); ~50 L-BFGS iterations, seconds on CPU",
+        "integrationPoint": "twin_posterior2 (lambda, alpha) selection loop"
+      },
+      "prediction": {
+        "statement": "fitted theta > 0 on 1{unique}, gap and consensus, < 0 on log(1+n_tied); theta_gap ~ 0 with paired delta <= 0 means buckets were already sufficient",
+        "segment": "dataset=tx_s1",
+        "sign": "positive"
+      },
+      "cost": 0.6,
+      "dataAccess": [
+        "given_columns",
+        "visible_answers"
+      ],
+      "ruleRisks": [],
+      "selfCritique": [
+        {
+          "rule": "no-unit-classification",
+          "verdict": "clear",
+          "argument": "a smooth trust weight over retrieval features; no pairing decision"
+        }
+      ],
+      "scope": {
+        "datasets": [
+          "tx_s1",
+          "tx_s2"
+        ]
+      }
     },
     {
       "id": "tweb",
       "title": "Empirical-Bayes head-pooled shrinkage of the (lambda, alpha) selection (SIM_TWEB)",
       "origin": "literature",
       "family": "empirical bayes shrinkage",
-      "citations": [{ "title": "Stein's Estimation Rule and Its Competitors: An Empirical Bayes Approach", "venue": "JASA", "year": 1973 }],
+      "citations": [
+        {
+          "title": "Stein's Estimation Rule and Its Competitors: An Empirical Bayes Approach",
+          "venue": "JASA",
+          "year": 1973
+        }
+      ],
       "model": "c*_hb = argmax_c [ S_hb(c) + kappa n_hb S_bar_b(c) / n_bar_b ], S_bar_b(c) = sum_h S_hb(c) n_hb / sum_h n_hb",
-      "lossTerm": { "term": "variance_estimation", "why": "(V) per-(h, b) argmax over 28 candidates on 25-170 visible rows in buckets 2-5 is selection noise; pooling toward the bucket curve is a James-Stein posterior mode" },
-      "assumptions": ["candidate gain curves are exchangeable across heads within a bucket"],
-      "estimation": { "estimated": "kappa in {0, 0.5, 2}; one scalar", "method": "existing 2-nat test applied to S_hb(c*)", "crossFit": "kappa chosen by the existing fold cross-fitting", "parameters": 1, "dataSize": 9000, "selections": 3 },
-      "expectedGain": { "value": 0.00065, "derivation": "V-only share of the ~0.003 residual: 0.003 x 0.22 = 0.00065 (range +0.0003 to +0.001)", "inputs": { "segment": "dataset=tx_s1", "headroom": 0.003, "recoverFraction": 0.22 }, "probability": 0.35 },
-      "algorithm": { "steps": "precompute S for all heads, then choose c*_hb inside the bucket loop of twin_posterior2 (~15 lines)", "complexity": "O(H x B x 28) after the existing S computation", "integrationPoint": "twin_posterior2 bucket loop" },
-      "prediction": { "statement": "the paired delta concentrates in buckets with < 200 rows; concentration in big buckets means noise", "segment": "dataset=tx_s1", "sign": "positive" },
-      "cost": 0.4
+      "lossTerm": {
+        "term": "variance_estimation",
+        "why": "(V) per-(h, b) argmax over 28 candidates on 25-170 visible rows in buckets 2-5 is selection noise; pooling toward the bucket curve is a James-Stein posterior mode"
+      },
+      "assumptions": [
+        "candidate gain curves are exchangeable across heads within a bucket"
+      ],
+      "estimation": {
+        "estimated": "kappa in {0, 0.5, 2}; one scalar",
+        "method": "existing 2-nat test applied to S_hb(c*)",
+        "crossFit": "kappa chosen by the existing fold cross-fitting",
+        "parameters": 1,
+        "dataSize": 9000,
+        "selections": 3
+      },
+      "expectedGain": {
+        "value": 0.00065,
+        "derivation": "V-only share of the ~0.003 residual: 0.003 x 0.22 = 0.00065 (range +0.0003 to +0.001)",
+        "inputs": {
+          "segment": "dataset=tx_s1",
+          "headroom": 0.003,
+          "recoverFraction": 0.22
+        },
+        "probability": 0.35
+      },
+      "algorithm": {
+        "steps": "precompute S for all heads, then choose c*_hb inside the bucket loop of twin_posterior2 (~15 lines)",
+        "complexity": "O(H x B x 28) after the existing S computation",
+        "integrationPoint": "twin_posterior2 bucket loop"
+      },
+      "prediction": {
+        "statement": "the paired delta concentrates in buckets with < 200 rows; concentration in big buckets means noise",
+        "segment": "dataset=tx_s1",
+        "sign": "positive"
+      },
+      "cost": 0.4,
+      "dataAccess": [
+        "visible_answers"
+      ],
+      "ruleRisks": [],
+      "selfCritique": [
+        {
+          "rule": "no-unit-classification",
+          "verdict": "clear",
+          "argument": "pools selection curves across heads; no row-level matching"
+        }
+      ],
+      "scope": {
+        "datasets": [
+          "tx_s1",
+          "tx_s2"
+        ]
+      }
     },
     {
       "id": "poolb",
       "title": "Per-regime pool weights, MoE by twin bucket (SIM_POOLB)",
       "origin": "new_theory",
       "family": "mixture of experts regime weights",
-      "citations": [{ "title": "Adaptive Mixtures of Local Experts", "venue": "Neural Computation", "year": 1991 }],
+      "citations": [
+        {
+          "title": "Adaptive Mixtures of Local Experts",
+          "venue": "Neural Computation",
+          "year": 1991
+        }
+      ],
       "model": "p ∝ prod_k p_k^{w_k(r)}, r in {unique-twin near, other}; log-linear pooling is Bayes-optimal when expert evidence is conditionally independent given y",
-      "lossTerm": { "term": "bias_misspecification", "why": "(B) TabICL sees the twin row too, so twin evidence is double counted (or diluted) by one weight across regimes" },
-      "assumptions": ["log-linear pooling with tempered likelihoods", "twin evidence is shared between the twin-updated blend and TabICL"],
+      "lossTerm": {
+        "term": "bias_misspecification",
+        "why": "(B) TabICL sees the twin row too, so twin evidence is double counted (or diluted) by one weight across regimes"
+      },
+      "assumptions": [
+        "log-linear pooling with tempered likelihoods",
+        "twin evidence is shared between the twin-updated blend and TabICL"
+      ],
       "derivation": "For a product of experts with tempered likelihoods the optimal weight on expert k is its share of independent evidence. In the unique-near regime TabICL either copies the twin (redundant evidence) or dilutes it; both give w*_t(unique) < w*_t(other).",
-      "prediction": { "statement": "logged per-regime picks show w_t(unique) < w_t(other) for most tasks and paired delta > 0; otherwise T2 is wrong", "segment": "dataset=tx_s1", "sign": "positive", "minimumEffect": 0 },
-      "estimation": { "estimated": "one shared regime offset dw across tasks", "method": "grid over dw on the weighting fold", "crossFit": "picks on the 20% weighting fold (same selection risk as KWIDE)", "parameters": 1, "dataSize": 9000, "selections": 5 },
-      "expectedGain": { "value": 0.0005, "derivation": "unique-near cells are 29% of CPS rows; PP (-0.00008) says dilution is small: 0.0057 x 0.29 x 0.3 = 0.0005 (range 0 to +0.001)", "inputs": { "segment": "dataset=tx_s1", "lossShare": 0.29, "headroom": 0.0057, "recoverFraction": 0.3 }, "probability": 0.25 },
-      "algorithm": { "steps": "pass the bucket vector (om, hm) from the twin posterior into the per-task TabICL/Kumo weight pick; pick per (task, regime) with a shared offset", "complexity": "2x the weight picks; negligible compute; needs a GPU paired run", "integrationPoint": "_predict_impl per-task TabICL/Kumo weight pick" },
-      "cost": 1
+      "prediction": {
+        "statement": "logged per-regime picks show w_t(unique) < w_t(other) for most tasks and paired delta > 0; otherwise T2 is wrong",
+        "segment": "dataset=tx_s1",
+        "sign": "positive",
+        "minimumEffect": 0
+      },
+      "estimation": {
+        "estimated": "one shared regime offset dw across tasks",
+        "method": "grid over dw on the weighting fold",
+        "crossFit": "picks on the 20% weighting fold (same selection risk as KWIDE)",
+        "parameters": 1,
+        "dataSize": 9000,
+        "selections": 5
+      },
+      "expectedGain": {
+        "value": 0.0005,
+        "derivation": "unique-near cells are 29% of CPS rows; PP (-0.00008) says dilution is small: 0.0057 x 0.29 x 0.3 = 0.0005 (range 0 to +0.001)",
+        "inputs": {
+          "segment": "dataset=tx_s1",
+          "lossShare": 0.29,
+          "headroom": 0.0057,
+          "recoverFraction": 0.3
+        },
+        "probability": 0.25
+      },
+      "algorithm": {
+        "steps": "pass the bucket vector (om, hm) from the twin posterior into the per-task TabICL/Kumo weight pick; pick per (task, regime) with a shared offset",
+        "complexity": "2x the weight picks; negligible compute; needs a GPU paired run",
+        "integrationPoint": "_predict_impl per-task TabICL/Kumo weight pick"
+      },
+      "cost": 1,
+      "dataAccess": [
+        "given_columns",
+        "visible_answers"
+      ],
+      "ruleRisks": [],
+      "selfCritique": [
+        {
+          "rule": "no-unit-classification",
+          "verdict": "clear",
+          "argument": "per-regime pooling weights only"
+        }
+      ],
+      "scope": {
+        "datasets": [
+          "tx_s1",
+          "tx_s2"
+        ]
+      }
     },
     {
       "id": "twmet",
@@ -78,26 +333,170 @@
       "origin": "invention",
       "family": "feature weighting per head metric",
       "model": "d_ij^(h) = sum_g w_g^(h) 1{G_ig != G_jg}, w^(h) in W = {w_knnopt, 1, w_MI(h)}, w_MI(h)_g ∝ MI(G_g; Y_h) normalised to mean 1",
-      "lossTerm": { "term": "bias_misspecification", "why": "(B) the instrument-wide knn_opt weights are tuned for kNN accuracy averaged over heads; hours and industry heads may want another distance" },
-      "assumptions": ["the best twin distance differs by head", "MI weights are estimable from visible rows"],
-      "estimation": { "estimated": "metric choice per head jointly with (lambda, alpha)", "method": "same OOF argmax as TW2", "crossFit": "same 5-fold cross-fit; MI computed on training folds", "parameters": 200, "dataSize": 1900000, "selections": 3 },
-      "expectedGain": { "value": 0.0005, "derivation": "0 to +0.001 on CPS: 0.0057 x 0.09 = 0.0005", "inputs": { "segment": "dataset=tx_s1", "headroom": 0.0057, "recoverFraction": 0.09 }, "probability": 0.3 },
-      "algorithm": { "steps": "compute neighbours under each of 3 metrics in CPU chunks; choose per head with the (lambda, alpha) cross-fit", "complexity": "3x the neighbour computation", "integrationPoint": "twin_neighbours metric argument in twin_posterior2" },
-      "prediction": { "statement": "hours/industry heads pick a non-default metric and gain; ask before screening on ACS (household separation)", "segment": "dataset=tx_s1", "sign": "positive" },
-      "cost": 0.6
+      "lossTerm": {
+        "term": "bias_misspecification",
+        "why": "(B) the instrument-wide knn_opt weights are tuned for kNN accuracy averaged over heads; hours and industry heads may want another distance"
+      },
+      "assumptions": [
+        "the best twin distance differs by head",
+        "MI weights are estimable from visible rows"
+      ],
+      "estimation": {
+        "estimated": "metric choice per head jointly with (lambda, alpha)",
+        "method": "same OOF argmax as TW2",
+        "crossFit": "same 5-fold cross-fit; MI computed on training folds",
+        "parameters": 200,
+        "dataSize": 1900000,
+        "selections": 3
+      },
+      "expectedGain": {
+        "value": 0.0005,
+        "derivation": "0 to +0.001 on CPS: 0.0057 x 0.09 = 0.0005",
+        "inputs": {
+          "segment": "dataset=tx_s1",
+          "headroom": 0.0057,
+          "recoverFraction": 0.09
+        },
+        "probability": 0.3
+      },
+      "algorithm": {
+        "steps": "compute neighbours under each of 3 metrics in CPU chunks; choose per head with the (lambda, alpha) cross-fit",
+        "complexity": "3x the neighbour computation",
+        "integrationPoint": "twin_neighbours metric argument in twin_posterior2"
+      },
+      "prediction": {
+        "statement": "hours/industry heads pick a non-default metric and the paired CPS delta is > 0",
+        "segment": "dataset=tx_s1",
+        "sign": "positive"
+      },
+      "cost": 0.6,
+      "dataAccess": [
+        "given_columns",
+        "visible_answers"
+      ],
+      "ruleRisks": [],
+      "selfCritique": [
+        {
+          "rule": "no-unit-classification",
+          "verdict": "clear",
+          "argument": "per-head GIVEN weights on CPS, where rows are not grouped into households"
+        }
+      ],
+      "scope": {
+        "datasets": [
+          "tx_s1",
+          "tx_s2"
+        ]
+      }
+    },
+    {
+      "id": "twmet-acs",
+      "title": "Per-head twin metric on ACS (SIM_TWMET, nh_s2)",
+      "origin": "invention",
+      "family": "feature weighting per head metric",
+      "model": "d_ij^(h) = sum_g w_g^(h) 1{G_ig != G_jg}, w^(h) in W = {w_knnopt, 1, w_MI(h)}, w_MI(h)_g ∝ MI(G_g; Y_h) normalised to mean 1",
+      "lossTerm": {
+        "term": "bias_misspecification",
+        "why": "(B) the instrument-wide knn_opt weights are tuned for kNN accuracy averaged over heads; hours and industry heads may want another distance"
+      },
+      "assumptions": [
+        "the best twin distance differs by head",
+        "MI weights are estimable from visible rows"
+      ],
+      "estimation": {
+        "estimated": "metric choice per head jointly with (lambda, alpha)",
+        "method": "same OOF argmax as TW2",
+        "crossFit": "same 5-fold cross-fit; MI computed on training folds",
+        "parameters": 200,
+        "dataSize": 1900000,
+        "selections": 3
+      },
+      "expectedGain": {
+        "value": 0.0005,
+        "derivation": "0 to +0.001 on CPS: 0.0057 x 0.09 = 0.0005",
+        "inputs": {
+          "segment": "dataset=tx_s1",
+          "headroom": 0.0057,
+          "recoverFraction": 0.09
+        },
+        "probability": 0.3
+      },
+      "algorithm": {
+        "steps": "compute neighbours under each of 3 metrics in CPU chunks; choose per head with the (lambda, alpha) cross-fit",
+        "complexity": "3x the neighbour computation",
+        "integrationPoint": "twin_neighbours metric argument in twin_posterior2"
+      },
+      "prediction": {
+        "statement": "ACS heads pick a non-default distance and nh_s2 improves",
+        "segment": "dataset=tx_s1",
+        "sign": "positive"
+      },
+      "cost": 0.6,
+      "dataAccess": [
+        "given_columns",
+        "visible_answers"
+      ],
+      "ruleRisks": [],
+      "selfCritique": [
+        {
+          "rule": "no-unit-classification",
+          "verdict": "clear",
+          "argument": "GIVEN-similarity kNN, the same class as knn_opt"
+        }
+      ],
+      "scope": {
+        "datasets": [
+          "nh_s2"
+        ]
+      }
     },
     {
       "id": "mc-cf",
       "title": "Matrix completion / CF over respondents x items (#15, not recommended)",
       "origin": "literature",
       "family": "low-rank matrix factorization",
-      "citations": [{ "title": "Provable Inductive Matrix Completion", "year": 2013, "url": "https://arxiv.org/abs/1306.0626" }],
+      "citations": [
+        {
+          "title": "Provable Inductive Matrix Completion",
+          "year": 2013,
+          "url": "https://arxiv.org/abs/1306.0626"
+        }
+      ],
       "model": "collaborative filtering over respondents and items",
-      "lossTerm": { "term": "bias_misspecification", "why": "low-rank structure over respondents and items" },
-      "assumptions": ["answers are low rank"],
-      "estimation": { "estimated": "factor matrices", "method": "inductive matrix completion", "crossFit": "respondent folds", "parameters": 4000, "dataSize": 1900000 },
-      "expectedGain": { "value": 0.0002, "derivation": "none: a hidden row has no observed PREDICT entries, so this is the side-information model already tried" },
-      "algorithm": { "steps": "fit inductive MC with GIVEN side information", "complexity": "O(n k^2) per sweep", "integrationPoint": "blend component" }
+      "lossTerm": {
+        "term": "bias_misspecification",
+        "why": "low-rank structure over respondents and items"
+      },
+      "assumptions": [
+        "answers are low rank"
+      ],
+      "estimation": {
+        "estimated": "factor matrices",
+        "method": "inductive matrix completion",
+        "crossFit": "respondent folds",
+        "parameters": 4000,
+        "dataSize": 1900000
+      },
+      "expectedGain": {
+        "value": 0.0002,
+        "derivation": "none: a hidden row has no observed PREDICT entries, so this is the side-information model already tried"
+      },
+      "algorithm": {
+        "steps": "fit inductive MC with GIVEN side information",
+        "complexity": "O(n k^2) per sweep",
+        "integrationPoint": "blend component"
+      },
+      "dataAccess": [
+        "visible_answers"
+      ],
+      "ruleRisks": [],
+      "selfCritique": [],
+      "scope": {
+        "datasets": [
+          "tx_s1",
+          "tx_s2"
+        ]
+      }
     },
     {
       "id": "w1-twdens",
@@ -105,9 +504,34 @@
       "origin": "wild",
       "family": "kernel density profile crowding",
       "hunch": "a rare profile with a unique visible match is far more likely a true copy source than a profile common in the population; split the unique bucket by n_all(i) = #{k != i : d_ik <= d_i,min + 0.05} over visible + hidden GIVEN rows into {1, 2-3, >3}",
-      "prediction": { "statement": "on CPS the alpha picked for n_all = 1 is <= 0.3 and for n_all > 3 is >= 3, and the paired delta on tx_s1 is > 0; if the alpha picks do not separate the hunch is dead", "segment": "dataset=tx_s1", "sign": "positive" },
-      "expectedGain": { "value": 0, "spread": 0.002 },
-      "cost": 0.3
+      "prediction": {
+        "statement": "on CPS the alpha picked for n_all = 1 is <= 0.3 and for n_all > 3 is >= 3, and the paired delta on tx_s1 is > 0; if the alpha picks do not separate the hunch is dead",
+        "segment": "dataset=tx_s1",
+        "sign": "positive"
+      },
+      "expectedGain": {
+        "value": 0,
+        "spread": 0.002
+      },
+      "cost": 0.3,
+      "dataAccess": [
+        "given_columns",
+        "hidden_given_columns",
+        "visible_answers"
+      ],
+      "ruleRisks": [],
+      "selfCritique": [
+        {
+          "rule": "no-unit-classification",
+          "verdict": "clear",
+          "argument": "counts how crowded a GIVEN profile region is; no pairing decision"
+        }
+      ],
+      "scope": {
+        "datasets": [
+          "tx_s1"
+        ]
+      }
     },
     {
       "id": "w2-hhc",
@@ -115,9 +539,119 @@
       "origin": "wild",
       "family": "geometric pooling consensus",
       "hunch": "mutual unique near-profile hidden pairs should have near-identical Bayes posteriors but get independently noisy estimates; replace each with the normalised p_i^(1-beta) p_k^beta, beta chosen on visible-visible analogue pairs",
-      "prediction": { "statement": "gains only on d >= 2 rows (25% of CPS hidden rows, 37% of the loss) and ~0 elsewhere; OOF analogue picking beta = 0 kills it", "segment": "dataset=tx_s1", "sign": "positive" },
-      "expectedGain": { "value": 0, "spread": 0.0015 },
-      "cost": 1
+      "prediction": {
+        "statement": "gains only on d >= 2 rows (25% of CPS hidden rows, 37% of the loss) and ~0 elsewhere; OOF analogue picking beta = 0 kills it",
+        "segment": "dataset=tx_s1",
+        "sign": "positive"
+      },
+      "expectedGain": {
+        "value": 0,
+        "spread": 0.0015
+      },
+      "cost": 1,
+      "dataAccess": [
+        "given_columns",
+        "hidden_given_columns"
+      ],
+      "ruleRisks": [
+        {
+          "rule": "no-unit-classification",
+          "why": "treats mutual unique near-profile hidden rows as twins whose posteriors should agree, which is close to same-unit matching"
+        }
+      ],
+      "selfCritique": [
+        {
+          "rule": "no-unit-classification",
+          "verdict": "brushes",
+          "argument": "GIVEN similarity among unlabelled rows is the kNN class, but pairing rows for consensus is close to unit classification; idea_search.md flags it for the coordinator"
+        }
+      ],
+      "scope": {
+        "datasets": [
+          "tx_s1"
+        ]
+      }
     }
-  ]
+  ],
+  "compliance": {
+    "note": "Hard rules for SimulacraBench as ruled by the coordinator on 2026-11-20. nh_s2 is the ACS proxy, where household mates make metric changes sensitive.",
+    "allowedData": [
+      "given_columns",
+      "visible_answers",
+      "hidden_given_columns"
+    ],
+    "rules": [
+      {
+        "id": "given-and-visible-only",
+        "description": "GIVEN columns plus visible answers only",
+        "forbiddenData": [
+          "hidden_labels",
+          "external_data",
+          "leaderboard_feedback",
+          "external_identifiers"
+        ]
+      },
+      {
+        "id": "no-record-linkage",
+        "description": "no record linkage or re-identification",
+        "forbiddenData": [
+          "external_identifiers"
+        ],
+        "keywords": [
+          "record linkage",
+          "re-identif",
+          "reidentif",
+          "link records",
+          "identity resolution"
+        ]
+      },
+      {
+        "id": "no-unit-classification",
+        "description": "no same-unit or same-household classification",
+        "keywords": [
+          "same person",
+          "same household",
+          "same unit",
+          "household mate",
+          "household-separating",
+          "separate household",
+          "pair classifier",
+          "hidden-hidden"
+        ],
+        "sensitiveDatasets": [
+          "nh_s2"
+        ],
+        "sensitiveKeywords": [
+          "metric",
+          "distance",
+          "twin",
+          "neighbour",
+          "household"
+        ]
+      },
+      {
+        "id": "no-hidden-labels",
+        "description": "no hidden labels",
+        "forbiddenData": [
+          "hidden_labels"
+        ],
+        "keywords": [
+          "hidden label",
+          "hidden answers"
+        ]
+      },
+      {
+        "id": "no-leaderboard-feedback",
+        "description": "no leaderboard feedback",
+        "forbiddenData": [
+          "leaderboard_feedback"
+        ],
+        "keywords": [
+          "leaderboard",
+          "public score"
+        ]
+      }
+    ],
+    "rulings": []
+  }
 }
