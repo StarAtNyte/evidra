@@ -106,6 +106,8 @@ export const CompetitionConfigSchema = z.object({
     segmentColumn: z.string().min(1).optional(),
     requireSegments: z.array(z.string().min(1)).optional(),
     guardSegments: z.array(z.string().min(1)).optional(),
+    /** Gate full evaluation on a paired screen (CI lower bound above minLowerBound). Default: on in paired mode. */
+    screenGate: z.boolean().optional(),
   }).optional(),
   /** Launch-path safety: preflight, infra-vs-experiment failures, readiness gating, env contract. */
   launch: z.object({

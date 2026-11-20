@@ -3128,14 +3128,15 @@ program.command("hypothesis")
   .option("--family <family>", "method family (classified into a technique class)")
   .option("--mechanism <text>", "why it should work")
   .option("--env <assignments...>", "experiment environment overrides NAME=value")
+  .option("--paired-reference <path>", "unit-score file the screen and ratchet should pair against (e.g. the parent's), instead of the champion")
   .option("--depends-on <paths...>", "artifacts this candidate needs; each must carry the readiness marker (path or path:markerFile)")
   .option("--mode <mode>", "modify or verify", "modify")
-  .action((options: { title: string; family?: string; mechanism?: string; env?: string[]; dependsOn?: string[]; mode: string }) => {
+  .action((options: { title: string; family?: string; mechanism?: string; env?: string[]; dependsOn?: string[]; pairedReference?: string; mode: string }) => {
     const dependsOn = (options.dependsOn ?? []).map((entry) => { const [path, file] = entry.split(":"); return { path, ...(file ? { readyWhen: { file } } : {}) }; });
     const env = (options.env ?? []).map((assignment) => { const index = assignment.indexOf("="); if (index < 1) throw new Error(`--env expects NAME=value, got ${assignment}`); return { name: assignment.slice(0, index), value: assignment.slice(index + 1) }; });
     const id = `hyp_${Date.now()}_${options.title.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 32)}`;
     const store = new ResearchStore(statePath);
-    store.saveHypothesis({ id, payload: { id, title: options.title, formulationFamily: options.family ?? options.title, mechanism: options.mechanism ?? "", outcomeType: "metric", implementationMode: options.mode === "verify" ? "verify" : "modify", proposedChange: env.map((entry) => `${entry.name}=${entry.value}`).join(" ") || options.title, falsificationTest: "paired ratchet does not keep it", expectedMetricDelta: { low: 0, median: 0, high: 0 }, experimentEnvironment: env, ...(dependsOn.length ? { dependsOn } : {}) } });
+    store.saveHypothesis({ id, payload: { id, title: options.title, formulationFamily: options.family ?? options.title, mechanism: options.mechanism ?? "", outcomeType: "metric", implementationMode: options.mode === "verify" ? "verify" : "modify", proposedChange: env.map((entry) => `${entry.name}=${entry.value}`).join(" ") || options.title, falsificationTest: "paired ratchet does not keep it", expectedMetricDelta: { low: 0, median: 0, high: 0 }, experimentEnvironment: env, ...(dependsOn.length ? { dependsOn } : {}), ...(options.pairedReference ? { pairedReference: options.pairedReference } : {}) } });
     store.close();
     console.log(`${id}  [${classifyTechnique({ family: options.family ?? options.title, title: options.title })}]\nNext: evidra experiment propose ${id} && evidra experiment run <experiment id>`);
   });
@@ -8615,6 +8616,35 @@ experiment.command("run")
         throw new Error(`Experiment ${id} rejected at screening: ${reducedResources.reasons.join("; ")}`);
       }
       reducedStore.close();
+      // Paired screen gate: a screen must beat its reference on the units it covered (CI lower bound
+      // above the ratchet bar) before a full evaluation is spent on it.
+      const screenRatchet = resolveRatchetPolicy(adapter.config.ratchet);
+      if (reducedUnitScores && !options.reducedOnly && adapter.config.ratchet?.screenGate !== false && (adapter.config.ratchet?.screenGate === true || screenRatchet.mode === "paired")) {
+        const gateStore = new ResearchStore(statePath);
+        const declaredReference = (hypothesis?.payload as { pairedReference?: unknown } | undefined)?.pairedReference;
+        const championId = championExperimentIds(gateStore, activeCampaignStart(gateStore)).at(-1);
+        const championRunId = championId ? (gateStore.experiments().find((candidate) => candidate.id === championId)?.payload as { runId?: unknown } | undefined)?.runId : undefined;
+        const championScores = typeof championRunId === "string" ? unitScoresArtifactPath((gateStore.runs().find((run) => run.id === championRunId)?.payload as { artifacts?: unknown } | undefined)?.artifacts) : undefined;
+        const baselineScores = unitScoresArtifactPath((gateStore.eventsByType("baseline.completed").at(-1)?.payload as { artifactPaths?: unknown } | undefined)?.artifactPaths);
+        const referenceScores = typeof declaredReference === "string" ? resolve(adapter.workspacePath(root), declaredReference) : championScores ?? baselineScores;
+        const referenceLabel = typeof declaredReference === "string" ? `declared ${declaredReference}` : championScores ? `champion ${championId}` : "baseline";
+        const gate = pairedRatchetEvidence(adapter.config, referenceScores, reducedUnitScores, screenRatchet);
+        const paired = gate.paired && gate.paired.matched >= screenRatchet.minUnits ? gate.paired : undefined;
+        gateStore.appendEvent("experiment.screen.paired_gate", { experimentId: id, runId: reduced.runId, reference: referenceLabel, ...(paired ? { meanImprovement: paired.meanImprovement, lower: paired.lower, upper: paired.upper, matched: paired.matched, passed: paired.lower > screenRatchet.minLowerBound } : { note: gate.note ?? "too few matched units; gate skipped" }) });
+        if (paired && !(paired.lower > screenRatchet.minLowerBound)) {
+          const verdict = paired.upper < 0 ? "regressed" : paired.meanImprovement <= 0 ? "no_gain" : "noisy";
+          const reason = `paired screen vs ${referenceLabel}: ${paired.meanImprovement.toExponential(2)} [${paired.lower.toExponential(2)}, ${paired.upper.toExponential(2)}] over ${paired.matched} units; lower bound not above ${screenRatchet.minLowerBound}`;
+          executionPlan = advanceExecutionStage(executionPlan, "full_validation", "skipped");
+          gateStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "rejected", rejection: reason, reducedRunId: reduced.runId, executionPlan } });
+          try {
+            const ledgerHypothesis = hypothesis?.payload as { title?: string; formulationFamily?: string; mechanism?: string } | undefined;
+            appendImprovement(stateDirectory, { experimentId: id, runId: reduced.runId, stage: "screen", title: ledgerHypothesis?.title, family: ledgerHypothesis?.formulationFamily, techniqueClass: classifyTechnique({ family: ledgerHypothesis?.formulationFamily, title: ledgerHypothesis?.title, mechanism: ledgerHypothesis?.mechanism }), metricName: primaryMetricName, direction: primaryMetricDirection, referenceId: referenceLabel, referenceMetric: null, candidateMetric: reduced.metrics[primaryMetricName] ?? null, improvement: paired.meanImprovement, accepted: false, verdict, mode: "paired", reason, ci: { lower: paired.lower, upper: paired.upper, confidence: paired.confidence, matched: paired.matched, probabilityImproved: paired.probabilityImproved }, ...(reducedResources ? { resources: { ...(reducedResources.peakRssMb !== undefined ? { peakRssMb: reducedResources.peakRssMb } : {}), ...(reducedResources.wallSeconds !== undefined ? { wallSeconds: reducedResources.wallSeconds } : {}), ok: reducedResources.ok, reasons: reducedResources.reasons } } : {}) });
+          } catch (error) { gateStore.appendEvent("experiment.improvement_ledger.failed", { experimentId: id, error: error instanceof Error ? error.message : String(error) }); }
+          gateStore.close();
+          throw new Error(`Experiment ${id} did not earn a full evaluation (${verdict}): ${reason}`);
+        }
+        gateStore.close();
+      }
       const promotionPolicy = adapter.config.execution?.reducedPromotion;
       if (promotionPolicy?.enabled && manifest.outcomeType === "metric") {
         const promotionStore = new ResearchStore(statePath);
