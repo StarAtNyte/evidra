@@ -195,3 +195,20 @@ test("cross-fitted shrinkage toward a fallback finds over-confidence and folds b
   const calibrated = analyzeUnitLoss([{ id: "m", table: { ...table, units: rows.map((row) => ({ ...row, mix: { ...row.mix, fallback: row.mix.logp - 3 } })) } }], { direction: "maximize" });
   assert.ok(calibrated.notes.some((note) => /not over-confident/.test(note)));
 });
+
+test("workers keep the user session bus so systemd-run --user evaluators work", async () => {
+  const { safeWorkerEnvironment, sessionBusEnvironment } = await import("../dist/core/executors.js");
+  assert.deepEqual(sessionBusEnvironment({ XDG_RUNTIME_DIR: "/run/user/7", DBUS_SESSION_BUS_ADDRESS: "unix:path=/x" }, 7, () => false), { XDG_RUNTIME_DIR: "/run/user/7", DBUS_SESSION_BUS_ADDRESS: "unix:path=/x" });
+  assert.deepEqual(sessionBusEnvironment({}, 1000, (path) => path === "/run/user/1000" || path === "/run/user/1000/bus"), { XDG_RUNTIME_DIR: "/run/user/1000", DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus" }, "derived when a detached controller lost them");
+  assert.deepEqual(sessionBusEnvironment({}, 1000, () => false), {});
+  const saved = { x: process.env.XDG_RUNTIME_DIR, d: process.env.DBUS_SESSION_BUS_ADDRESS };
+  process.env.XDG_RUNTIME_DIR = "/run/user/4242"; process.env.DBUS_SESSION_BUS_ADDRESS = "unix:path=/run/user/4242/bus";
+  try {
+    const env = safeWorkerEnvironment({});
+    assert.equal(env.XDG_RUNTIME_DIR, "/run/user/4242");
+    assert.equal(env.DBUS_SESSION_BUS_ADDRESS, "unix:path=/run/user/4242/bus");
+  } finally {
+    if (saved.x === undefined) delete process.env.XDG_RUNTIME_DIR; else process.env.XDG_RUNTIME_DIR = saved.x;
+    if (saved.d === undefined) delete process.env.DBUS_SESSION_BUS_ADDRESS; else process.env.DBUS_SESSION_BUS_ADDRESS = saved.d;
+  }
+});
