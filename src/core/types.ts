@@ -107,6 +107,33 @@ export const CompetitionConfigSchema = z.object({
     requireSegments: z.array(z.string().min(1)).optional(),
     guardSegments: z.array(z.string().min(1)).optional(),
   }).optional(),
+  /** Launch-path safety: preflight, infra-vs-experiment failures, readiness gating, env contract. */
+  launch: z.object({
+    /** No-op payload through the exact launch chain (same wrapper, env, cgroup, lock path). Exit 0 = healthy. */
+    preflightCommand: z.array(z.string()).min(1).optional(),
+    preflightTtlMinutes: z.number().min(0).max(24 * 60).optional(),
+    infraExitCodes: z.array(z.number().int()).optional(),
+    infraPatterns: z.array(z.string()).optional(),
+    systemicFailures: z.number().int().min(2).max(50).optional(),
+    systemicWindowMinutes: z.number().min(1).max(24 * 60).optional(),
+    quickFailureSeconds: z.number().min(0).optional(),
+    readiness: z.object({
+      defaultMarker: z.string().min(1).default("READY"),
+      envPaths: z.record(z.string(), z.string()).default({}),
+      trusted: z.array(z.string()).default([]),
+    }).optional(),
+    contract: z.object({
+      requiredEnv: z.array(z.string()).default([]),
+      devices: z.array(z.string()).default([]),
+      timeFile: z.string().optional(),
+      localMemoryCapGb: z.number().positive().optional(),
+      localCores: z.number().int().positive().optional(),
+      hosted: z.object({ memoryGb: z.number().positive().optional(), cpus: z.number().int().positive().optional(), gpu: z.string().optional(), wallSeconds: z.number().positive().optional() }).optional(),
+      memorySafetyFraction: z.number().gt(0).max(1).default(0.85),
+      wallSafetyFraction: z.number().gt(0).max(1).default(0.85),
+      wallScale: z.number().positive().default(1),
+    }).optional(),
+  }).optional(),
   /** Broad exploration: screen several technique classes per round, promote only the best screens. */
   scout: z.object({
     enabled: z.boolean().default(true),

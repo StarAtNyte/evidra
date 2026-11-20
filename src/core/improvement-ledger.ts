@@ -34,6 +34,8 @@ export interface ImprovementEntry {
   ci?: { lower: number; upper: number; confidence: number; matched: number; probabilityImproved: number };
   /** Per-stratum gate evidence (for example per dataset). */
   segments?: Array<{ segment: string; role: string; lower?: number; upper?: number; meanImprovement?: number; matched?: number; passed: boolean | null }>;
+  /** Measured run resources and the hosted-limit check (peak RSS, wall). */
+  resources?: { peakRssMb?: number; wallSeconds?: number; predictedHostedWallSeconds?: number; ok: boolean; reasons: string[] };
   prev: string;
   sha: string;
 }
@@ -126,9 +128,9 @@ export function renderImprovementLedger(entries: readonly ImprovementEntry[]): s
     "",
     "## All steps",
     "",
-    "| # | stage | experiment | class | candidate | improvement | verdict | reason |",
-    "|---|---|---|---|---|---|---|---|",
-    ...entries.map((entry) => `| ${entry.seq} | ${entry.stage} | ${entry.experimentId} | ${entry.techniqueClass ?? "-"} | ${formatNumber(entry.candidateMetric)} | ${formatNumber(entry.improvement)} | ${entry.accepted ? "**" : ""}${entry.verdict}${entry.accepted ? "**" : ""} | ${entry.reason.replace(/\|/g, "/").slice(0, 160)} |`),
+    "| # | stage | experiment | class | candidate | improvement | verdict | peak RSS / wall | reason |",
+    "|---|---|---|---|---|---|---|---|---|",
+    ...entries.map((entry) => `| ${entry.seq} | ${entry.stage} | ${entry.experimentId} | ${entry.techniqueClass ?? "-"} | ${formatNumber(entry.candidateMetric)} | ${formatNumber(entry.improvement)} | ${entry.accepted ? "**" : ""}${entry.verdict}${entry.accepted ? "**" : ""} | ${entry.resources ? `${entry.resources.peakRssMb !== undefined ? `${(entry.resources.peakRssMb / 1024).toFixed(1)} GB` : "-"} / ${entry.resources.wallSeconds !== undefined ? `${Math.round(entry.resources.wallSeconds)} s` : "-"}${entry.resources.ok ? "" : " OVER"}` : "-"} | ${entry.reason.replace(/\|/g, "/").slice(0, 160)} |`),
     "",
   ];
   return lines.join("\n");

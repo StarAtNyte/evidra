@@ -251,7 +251,7 @@ export function resolveRatchetPolicy(config: Partial<RatchetPolicy> | undefined)
  * above the bar; a CI that straddles it is NOISY rather than a win, so a lucky
  * draw on one aggregate number cannot climb the ratchet.
  */
-export type RatchetVerdict = "keep" | "no_gain" | "regressed" | "noisy" | "insufficient_units";
+export type RatchetVerdict = "keep" | "no_gain" | "regressed" | "noisy" | "insufficient_units" | "over_budget";
 
 export interface RatchetDecision {
   accept: boolean;
