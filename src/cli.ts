@@ -5,7 +5,7 @@ import { formatHarnessFeedback, parseHarnessFeedbackRole, projectHarnessFailureF
 import { workspaceBackupDestination } from "./core/backup-path.js";
 import { reconcileRemoteExperiment } from "./core/remote-reconciliation.js";
 import { Command } from "commander";
-import { appendFileSync, copyFileSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync, realpathSync } from "node:fs";
+import { appendFileSync, copyFileSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync, realpathSync, openSync, closeSync } from "node:fs";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { spawn, spawnSync } from "node:child_process";
@@ -138,6 +138,7 @@ import { campaignLossAnalysis, loadRunUnitScores, pairedRatchetEvidence, unitSco
 import type { CompetitionConfig, ExperimentManifest } from "./core/types.js";
 import type { AgentProvider } from "./agents/codex-exec.js";
 import { DEFAULT_FORBIDDEN_ENV, environmentSnapshot, extractTraceback, knownRepair, parseRepairAction, rememberRepair, rememberedEnvironment, REPAIR_INSTRUCTIONS, repairPolicyViolations, runRepairCommand, tail, writeEscalation, type EvidencePack, type RepairAction } from "./core/self-repair.js";
+import { planSupervisorTick, type LiveWorker, type QueuedExperiment, type SupervisorPolicy } from "./core/supervisor.js";
 import { failureSignature, candidateDependencies, checkResources, classifyLaunchFailure, dependencyStatus, detectSystemicFailure, missingEnvironment, parseTimeVerbose, resolveEnvContract, resolveLaunchPolicy, resourcesFromOutput, type Dependency, type DependencyStatus, type LaunchClassification, type RecordedFailure, type ResourceVerdict } from "./core/launch-guard.js";
 import { appendImprovement, ledgerPaths, readImprovementLedger, renderImprovementLedger, verifyImprovementLedger } from "./core/improvement-ledger.js";
 import { classifyTechnique, planScoutRound, promoteScoutScreens, resolveScoutPolicy, scoutBrief, scoutLedgerFromEvents, summarizeScoutLedger, techniqueLabel, TECHNIQUE_CLASSES, type ScoutPolicy } from "./core/scout.js";
@@ -8217,6 +8218,100 @@ launch.command("clear").description("Lift a systemic launch halt after fixing th
   console.log("Launch halt cleared.");
 });
 program.addCommand(launch);
+program.command("supervise")
+  .description("Long-lived supervisor over all lanes: launches ready work, restarts stuck workers from their checkpoint, parks and retries exit-75 work, and rebalances toward lanes with ratchet wins while keeping technique families diverse")
+  .option("--workers <n>", "concurrent experiment workers", "2")
+  .option("--stall-minutes <minutes>", "no heartbeat for this long means a worker is stuck", "30")
+  .option("--max-restarts <n>", "restarts per worker before it is retired and escalated", "2")
+  .option("--interval-seconds <seconds>", "tick interval", "30")
+  .option("--parked-backoff-minutes <minutes>", "wait before retrying parked work", "10")
+  .option("--exit-when-idle", "stop once nothing is queued, parked-ready or running")
+  .option("--max-minutes <minutes>", "stop after this long (workers are left to finish)")
+  .action(async (options: { workers: string; stallMinutes: string; maxRestarts: string; intervalSeconds: string; parkedBackoffMinutes: string; exitWhenIdle?: boolean; maxMinutes?: string }) => {
+    const adapter = activeCompetition();
+    const policy: Partial<SupervisorPolicy> = { workers: Math.max(1, Number(options.workers) || 1), stallMinutes: Number(options.stallMinutes), maxRestarts: Number(options.maxRestarts), parkedBackoffMinutes: Number(options.parkedBackoffMinutes) };
+    const logDir = join(stateDirectory, "supervisor");
+    mkdirSync(logDir, { recursive: true });
+    const workers = new Map<string, { child: ReturnType<typeof spawn>; worker: LiveWorker; settled: Promise<number | null> }>();
+    const finished = new Set<string>();
+    const started = Date.now();
+    const record = (type: string, payload: Record<string, unknown>) => { const store = new ResearchStore(statePath); store.appendEvent(type, payload); store.close(); };
+    const launchWorker = (experimentId: string, lane: string, restarts: number, reason: string) => {
+      const store = new ResearchStore(statePath);
+      const status = (store.experiments().find((entry) => entry.id === experimentId)?.payload as { status?: unknown; reducedRunId?: unknown } | undefined);
+      store.close();
+      // Checkpoint: a completed screen resumes at the full stage instead of re-screening.
+      const args = ["experiment", "run", experimentId, ...(status?.status === "screened" && typeof status.reducedRunId === "string" ? ["--skip-reduced"] : [])];
+      const out = openSync(join(logDir, `${experimentId}.log`), "a");
+      const child = spawn(process.execPath, [process.argv[1], ...args], { cwd: root, detached: true, stdio: ["ignore", out, out], env: process.env });
+      closeSync(out);
+      const worker: LiveWorker = { experimentId, lane, startedAt: new Date().toISOString(), restarts };
+      const settled = new Promise<number | null>((resolveExit) => child.on("exit", (code) => { worker.exited = { code, at: new Date().toISOString() }; resolveExit(code); }));
+      workers.set(experimentId, { child, worker, settled });
+      record("supervisor.launched", { experimentId, lane, restarts, reason, pid: child.pid, args });
+      console.log(`launch ${experimentId} [${lane}] ${reason}`);
+    };
+    const stopWorker = async (experimentId: string) => {
+      const entry = workers.get(experimentId);
+      if (!entry || entry.worker.exited) return;
+      // Our own child's process group only.
+      try { process.kill(-entry.child.pid!, "SIGTERM"); } catch { /* already gone */ }
+      await Promise.race([entry.settled, new Promise((resolveWait) => setTimeout(resolveWait, 10_000))]);
+      if (!entry.worker.exited) try { process.kill(-entry.child.pid!, "SIGKILL"); } catch { /* gone */ }
+      await entry.settled;
+    };
+    const warned = new Set<string>();
+    while (true) {
+      // Settle exited workers: 0 done, 75 parked (retried after backoff), anything else failed after its own repair loop.
+      for (const [experimentId, entry] of [...workers]) {
+        if (!entry.worker.exited) continue;
+        const code = entry.worker.exited.code;
+        workers.delete(experimentId);
+        if (code === 75) record("supervisor.parked", { experimentId, at: entry.worker.exited.at });
+        else { finished.add(experimentId); record("supervisor.worker.exited", { experimentId, exitCode: code }); }
+        console.log(`${experimentId} exited ${code}${code === 75 ? " (parked; will retry)" : ""}`);
+      }
+      const store = new ResearchStore(statePath);
+      const hypotheses = new Map(store.hypotheses().map((entry) => [entry.id, entry.payload]));
+      const parked = new Map<string, string>();
+      for (const event of store.eventsByTypes(["supervisor.parked", "experiment.dependency.waiting"])) parked.set(String((event.payload as { experimentId?: unknown }).experimentId), event.createdAt ?? new Date().toISOString());
+      const queue: QueuedExperiment[] = store.experiments().filter((entry) => (entry.payload as { status?: unknown }).status === "proposed" && !finished.has(entry.id)).map((entry) => {
+        const hypothesis = hypotheses.get(String((entry.payload as { hypothesisId?: unknown }).hypothesisId)) as { title?: string; formulationFamily?: string; mechanism?: string } | undefined;
+        return { experimentId: entry.id, lane: classifyTechnique({ family: hypothesis?.formulationFamily, title: hypothesis?.title, mechanism: hypothesis?.mechanism }), ready: launchReadiness(adapter.config, hypothesis).ready, ...(parked.has(entry.id) ? { parkedAt: parked.get(entry.id) } : {}) };
+      });
+      const heartbeats = new Map<string, string>();
+      for (const event of store.eventsByType("run.heartbeat")) { const payload = event.payload as { experimentId?: string; heartbeatAt?: string }; if (payload.experimentId && payload.heartbeatAt) heartbeats.set(payload.experimentId, payload.heartbeatAt); }
+      const history = store.eventsByType("supervisor.launched").map((event) => ({ experimentId: String((event.payload as { experimentId?: unknown }).experimentId), lane: String((event.payload as { lane?: unknown }).lane), at: event.createdAt ?? "" }));
+      store.close();
+      const live = [...workers.values()].map(({ worker }) => ({ ...worker, ...(heartbeats.has(worker.experimentId) ? { lastHeartbeatAt: heartbeats.get(worker.experimentId) } : {}) }));
+      const decision = planSupervisorTick({ queue, workers: live, ledger: readImprovementLedger(stateDirectory), history, now: Date.now(), policy });
+      for (const warning of decision.warnings) if (!warned.has(warning)) { warned.add(warning); record("supervisor.diversity.warning", { warning }); console.log(warning); }
+      for (const { experimentId, reason } of decision.restart) {
+        const entry = workers.get(experimentId)!;
+        await stopWorker(experimentId);
+        workers.delete(experimentId);
+        record("supervisor.restarted", { experimentId, reason, restarts: entry.worker.restarts + 1 });
+        launchWorker(experimentId, entry.worker.lane, entry.worker.restarts + 1, `restart: ${reason}`);
+      }
+      for (const { experimentId, reason } of decision.retire) {
+        await stopWorker(experimentId);
+        workers.delete(experimentId);
+        finished.add(experimentId);
+        const retireStore = new ResearchStore(statePath);
+        const entry = retireStore.experiments().find((candidate) => candidate.id === experimentId);
+        if (entry) retireStore.saveExperiment({ id: experimentId, payload: { ...(entry.payload as Record<string, unknown>), status: "proposed", escalated: reason } });
+        retireStore.close();
+        writeEscalation(stateDirectory, { experimentId, stage: "supervisor", reason, violations: [], evidence: { signature: "stuck-worker", reason, exitCode: null, stderrTail: tail(existsSync(join(logDir, `${experimentId}.log`)) ? readFileSync(join(logDir, `${experimentId}.log`), "utf8") : "", 20) } });
+        record("supervisor.retired", { experimentId, reason });
+        console.log(`retire ${experimentId}: ${reason} (escalated)`);
+      }
+      for (const { experimentId, lane, reason } of decision.launch) launchWorker(experimentId, lane, 0, reason);
+      const idle = workers.size === 0 && !queue.some((entry) => entry.ready && !finished.has(entry.experimentId));
+      if (options.exitWhenIdle && idle) { console.log("Supervisor idle; exiting."); break; }
+      if (options.maxMinutes && Date.now() - started > Number(options.maxMinutes) * 60_000) { console.log("Supervisor time budget reached; leaving workers to finish."); break; }
+      await new Promise((resolveTick) => setTimeout(resolveTick, Math.max(1, Number(options.intervalSeconds)) * 1000));
+    }
+  });
 experiment.command("abandon")
   .argument("<ids...>", "experiment identifiers")
   .requiredOption("--reason <reason>", "why the run was stopped (kept on record)")
