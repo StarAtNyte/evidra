@@ -64,6 +64,9 @@ test("env contract: required env, time -v parsing, hosted limits with margin and
   assert.match(over.reasons[0], /85% of hosted 16 GB/);
   assert.equal(over.predictedHostedWallSeconds, 3200);
   assert.equal(checkResources(undefined, contract).ok, true, "unmeasured runs are not rejected");
+  const informed = checkResources({ wallSeconds: 4000 }, resolveEnvContract({ hosted: { wallSeconds: 3600 }, wallScale: 1, measuredWallRatio: { value: 0.77 } }));
+  assert.equal(informed.ok, false, "acceptance stays on the conservative wallScale");
+  assert.equal(informed.measuredHostedWallSeconds, 3080);
 });
 
 function workspace(t, launch, evaluator) {

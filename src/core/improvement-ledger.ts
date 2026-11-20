@@ -35,7 +35,7 @@ export interface ImprovementEntry {
   /** Per-stratum gate evidence (for example per dataset). */
   segments?: Array<{ segment: string; role: string; lower?: number; upper?: number; meanImprovement?: number; matched?: number; passed: boolean | null }>;
   /** Measured run resources and the hosted-limit check (peak RSS, wall). */
-  resources?: { peakRssMb?: number; wallSeconds?: number; predictedHostedWallSeconds?: number; ok: boolean; reasons: string[] };
+  resources?: { peakRssMb?: number; wallSeconds?: number; predictedHostedWallSeconds?: number; measuredHostedWallSeconds?: number; ok: boolean; reasons: string[] };
   prev: string;
   sha: string;
 }

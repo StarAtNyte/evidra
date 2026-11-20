@@ -8716,7 +8716,7 @@ experiment.command("run")
               mode: ratchetDecision.mode,
               reason,
               ...(ratchetDecision.paired ? { ci: { lower: ratchetDecision.paired.lower, upper: ratchetDecision.paired.upper, confidence: ratchetDecision.paired.confidence, matched: ratchetDecision.paired.matched, probabilityImproved: ratchetDecision.paired.probabilityImproved } } : {}),
-              ...(runResources ? { resources: { ...(runResources.peakRssMb !== undefined ? { peakRssMb: runResources.peakRssMb } : {}), ...(runResources.wallSeconds !== undefined ? { wallSeconds: runResources.wallSeconds } : {}), ...(runResources.predictedHostedWallSeconds !== undefined ? { predictedHostedWallSeconds: runResources.predictedHostedWallSeconds } : {}), ok: runResources.ok, reasons: runResources.reasons } } : {}),
+              ...(runResources ? { resources: { ...(runResources.peakRssMb !== undefined ? { peakRssMb: runResources.peakRssMb } : {}), ...(runResources.wallSeconds !== undefined ? { wallSeconds: runResources.wallSeconds } : {}), ...(runResources.predictedHostedWallSeconds !== undefined ? { predictedHostedWallSeconds: runResources.predictedHostedWallSeconds } : {}), ...(runResources.measuredHostedWallSeconds !== undefined ? { measuredHostedWallSeconds: runResources.measuredHostedWallSeconds } : {}), ok: runResources.ok, reasons: runResources.reasons } } : {}),
               ...(ratchetDecision.segments?.length ? { segments: ratchetDecision.segments.map((entry) => ({ segment: entry.segment, role: entry.role, passed: entry.passed, ...(entry.paired ? { lower: entry.paired.lower, upper: entry.paired.upper, meanImprovement: entry.paired.meanImprovement, matched: entry.paired.matched } : {}) })) } : {}),
             });
           } catch (error) {

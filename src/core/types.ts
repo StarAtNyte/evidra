@@ -132,6 +132,8 @@ export const CompetitionConfigSchema = z.object({
       memorySafetyFraction: z.number().gt(0).max(1).default(0.85),
       wallSafetyFraction: z.number().gt(0).max(1).default(0.85),
       wallScale: z.number().positive().default(1),
+      /** Informational: a measured hosted/local wall ratio and where it came from. Recorded, never used to accept. */
+      measuredWallRatio: z.object({ value: z.number().positive(), source: z.string().optional() }).optional(),
     }).optional(),
   }).optional(),
   /** Broad exploration: screen several technique classes per round, promote only the best screens. */

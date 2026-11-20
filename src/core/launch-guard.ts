@@ -218,11 +218,13 @@ export interface EnvContract {
   wallSafetyFraction: number;
   /** Multiply a local wall time by this to predict the hosted wall time (e.g. 4090 -> H100). */
   wallScale: number;
+  /** Informational measured hosted/local wall ratio; reported alongside the conservative prediction. */
+  measuredWallRatio?: { value: number; source?: string };
 }
 
 export function resolveEnvContract(config: Partial<EnvContract> | undefined): EnvContract | undefined {
   if (!config) return undefined;
-  return { requiredEnv: config.requiredEnv ?? [], timeFile: config.timeFile, devices: config.devices ?? [], localMemoryCapGb: config.localMemoryCapGb, localCores: config.localCores, hosted: config.hosted, memorySafetyFraction: config.memorySafetyFraction ?? 0.85, wallSafetyFraction: config.wallSafetyFraction ?? 0.85, wallScale: config.wallScale ?? 1 };
+  return { requiredEnv: config.requiredEnv ?? [], timeFile: config.timeFile, devices: config.devices ?? [], localMemoryCapGb: config.localMemoryCapGb, localCores: config.localCores, hosted: config.hosted, memorySafetyFraction: config.memorySafetyFraction ?? 0.85, wallSafetyFraction: config.wallSafetyFraction ?? 0.85, wallScale: config.wallScale ?? 1, measuredWallRatio: config.measuredWallRatio };
 }
 
 export interface ResourceVerdict {
@@ -230,6 +232,8 @@ export interface ResourceVerdict {
   reasons: string[];
   limits: { memoryMb?: number; wallSeconds?: number };
   predictedHostedWallSeconds?: number;
+  /** Local wall x measured ratio, for information only. */
+  measuredHostedWallSeconds?: number;
 }
 
 /** Reject a run whose peak memory or predicted hosted wall time breaks the hosted limits with margin. */
@@ -241,5 +245,5 @@ export function checkResources(resources: RunResources | undefined, contract: En
   if (memoryMb !== undefined && resources.peakRssMb !== undefined && resources.peakRssMb > memoryMb) reasons.push(`peak RSS ${resources.peakRssMb.toFixed(0)} MB exceeds ${(contract.memorySafetyFraction * 100).toFixed(0)}% of hosted ${contract.hosted.memoryGb} GB (${memoryMb.toFixed(0)} MB)`);
   const predicted = resources.wallSeconds !== undefined ? resources.wallSeconds * contract.wallScale : undefined;
   if (wallSeconds !== undefined && predicted !== undefined && predicted > wallSeconds) reasons.push(`predicted hosted wall ${predicted.toFixed(0)} s (local ${resources.wallSeconds!.toFixed(0)} s x ${contract.wallScale}) exceeds ${(contract.wallSafetyFraction * 100).toFixed(0)}% of ${contract.hosted.wallSeconds} s`);
-  return { ok: reasons.length === 0, reasons, limits: { ...(memoryMb !== undefined ? { memoryMb } : {}), ...(wallSeconds !== undefined ? { wallSeconds } : {}) }, ...(predicted !== undefined ? { predictedHostedWallSeconds: predicted } : {}) };
+  return { ok: reasons.length === 0, reasons, limits: { ...(memoryMb !== undefined ? { memoryMb } : {}), ...(wallSeconds !== undefined ? { wallSeconds } : {}) }, ...(predicted !== undefined ? { predictedHostedWallSeconds: predicted } : {}), ...(resources.wallSeconds !== undefined && contract.measuredWallRatio ? { measuredHostedWallSeconds: resources.wallSeconds * contract.measuredWallRatio.value } : {}) };
 }
