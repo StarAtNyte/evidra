@@ -244,6 +244,10 @@ export function pairedBootstrap(reference: readonly UnitScore[], candidate: read
     if (bucket) bucket.push(difference); else clusters.set(clusterKey, [difference]);
   }
   const matched = wins + losses + ties;
+  if (options.clusterBy && matched > 0 && clusters.size === matched && !candidate.some((unit) => unit.segments[options.clusterBy!] !== undefined) && !reference.some((unit) => unit.segments[options.clusterBy!] !== undefined)) {
+    // Fail loudly: resampling single units when clusters were requested understates the variance.
+    throw new Error(`pairedBootstrap: cluster column "${options.clusterBy}" is not present in the unit scores; load it (segment or cluster column) or drop clusterBy`);
+  }
   const unmatchedReference = reference.filter((unit) => !candidateIds.has(unit.unit)).length;
   const unmatchedCandidate = candidate.length - matched;
   const groups = [...clusters.values()];

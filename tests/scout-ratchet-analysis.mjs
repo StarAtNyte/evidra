@@ -215,3 +215,72 @@ test("workers keep the user session bus so systemd-run --user evaluators work", 
     if (saved.d === undefined) delete process.env.DBUS_SESSION_BUS_ADDRESS; else process.env.DBUS_SESSION_BUS_ADDRESS = saved.d;
   }
 });
+
+test("respondent-cluster bootstrap reproduces pair_cells.py's ratio-estimator CI (unequal cells per respondent)", async (t) => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  try { execFileSync("python3", ["-c", "import numpy, pandas"]); } catch { t.skip("python3 with numpy/pandas unavailable"); return; }
+  const { pairedBootstrap, mulberry32 } = await import("../dist/core/unit-scores.js");
+  const { loadRunUnitScores } = await import("../dist/core/campaign-analysis.js");
+  const dir = mkdtempSync(join(tmpdir(), "evidra-pair-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const random = mulberry32(11);
+  const gauss = () => Math.sqrt(-2 * Math.log(1 - random())) * Math.cos(2 * Math.PI * random());
+  const R = 0.75;
+  const base = ["rid,item,logp"], cand = ["rid,item,logp"], refUnits = ["unit,rid,dataset,score"], candUnits = ["unit,rid,dataset,score"];
+  for (let r = 0; r < 300; r += 1) {
+    const cells = 5 + Math.floor(random() * 56);
+    const effect = 0.01 + 0.01 * gauss();
+    for (let c = 0; c < cells; c += 1) {
+      const b = -1 + 0.3 * gauss();
+      const x = b + effect + 0.002 * gauss();
+      base.push(`r${r},i${c},${b}`); cand.push(`r${r},i${c},${x}`);
+      refUnits.push(`r${r}|i${c},r${r},ds,${b / R}`); candUnits.push(`r${r}|i${c},r${r},ds,${x / R}`);
+    }
+  }
+  for (const [name, rows] of Object.entries({ "base.csv": base, "cand.csv": cand, "ref_units.csv": refUnits, "cand_units.csv": candUnits })) writeFileSync(join(dir, name), `${rows.join("\n")}\n`);
+  // pair_cells.py, verbatim logic (CSV instead of parquet).
+  const python = `import sys, numpy as np, pandas as pd
+b = pd.read_csv(sys.argv[1]).groupby("rid").logp.agg(["sum", "size"])
+x = pd.read_csv(sys.argv[2]).groupby("rid").logp.agg(["sum", "size"]).reindex(b.index)
+R = float(sys.argv[3]); d = (x["sum"] - b["sum"]).to_numpy(); n = b["size"].to_numpy()
+idx = np.random.default_rng(0).integers(0, len(d), (2000, len(d)))
+bs = d[idx].sum(1) / n[idx].sum(1) / R
+print(d.sum() / n.sum() / R, *np.percentile(bs, [2.5, 97.5]))`;
+  const [mean, lower, upper] = execFileSync("python3", ["-c", python, join(dir, "base.csv"), join(dir, "cand.csv"), String(R)], { encoding: "utf8" }).trim().split(/\s+/).map(Number);
+  // The ratchet's loader with segment columns that do NOT include the cluster column (the bug).
+  const config = { evaluator: { command: ["python3", "evaluate.py"], unitScores: { idColumn: "unit", scoreColumn: "score", segmentColumns: ["dataset"] } }, ratchet: { clusterBy: "rid" } };
+  const ref = loadRunUnitScores(join(dir, "ref_units.csv"), config).units;
+  const cnd = loadRunUnitScores(join(dir, "cand_units.csv"), config).units;
+  const clustered = pairedBootstrap(ref, cnd, { direction: "maximize", clusterBy: "rid", iterations: 2000 });
+  assert.equal(clustered.clusters, 300);
+  assert.ok(Math.abs(clustered.meanImprovement - mean) < 1e-9, "same ratio point estimate");
+  assert.ok(Math.abs(clustered.lower - lower) / Math.abs(lower) < 0.05, `lower ${clustered.lower} vs pair_cells ${lower}`);
+  assert.ok(Math.abs(clustered.upper - upper) / Math.abs(upper) < 0.05, `upper ${clustered.upper} vs pair_cells ${upper}`);
+  const perCell = pairedBootstrap(ref, cnd, { direction: "maximize", iterations: 2000 });
+  assert.ok((perCell.upper - perCell.lower) < (upper - lower) / 3, "the per-cell bootstrap (the old behaviour) is far too narrow");
+  assert.throws(() => pairedBootstrap(ref.map((unit) => ({ ...unit, segments: {} })), cnd.map((unit) => ({ ...unit, segments: {} })), { direction: "maximize", clusterBy: "rid" }), /cluster column "rid" is not present/);
+});
+
+test("ledger corrections are appended, keep the hash chain, and override the original in the accepted view", async (t) => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { appendImprovement, effectiveImprovements, readImprovementLedger, verifyImprovementLedger, renderImprovementLedger } = await import("../dist/core/improvement-ledger.js");
+  const dir = mkdtempSync(join(tmpdir(), "evidra-ledger-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const base = { experimentId: "e1", runId: "r1", stage: "full", metricName: "m", direction: "maximize", improvement: 0.001, mode: "paired_bootstrap" };
+  appendImprovement(dir, { ...base, accepted: true, verdict: "keep", reason: "per-unit CI", ci: { lower: 0.0004, upper: 0.0016, confidence: 0.95, matched: 1000, probabilityImproved: 1 } });
+  const correction = { ...base, correctionOf: 1, accepted: false, verdict: "noisy", reason: "cluster CI", ci: { lower: -0.0002, upper: 0.0022, confidence: 0.95, matched: 1000, probabilityImproved: 0.9 } };
+  appendImprovement(dir, correction);
+  appendImprovement(dir, correction);
+  const entries = readImprovementLedger(dir);
+  assert.equal(entries.length, 2, "corrections are idempotent");
+  assert.equal(verifyImprovementLedger(entries).valid, true);
+  assert.equal(entries[0].verdict, "keep", "the original is never rewritten");
+  assert.deepEqual(effectiveImprovements(entries).map((entry) => entry.verdict), ["noisy"]);
+  assert.match(renderImprovementLedger(entries), /0 accepted full-evaluation step/);
+  assert.match(renderImprovementLedger(entries), /#2 corrects #1: noisy/);
+});

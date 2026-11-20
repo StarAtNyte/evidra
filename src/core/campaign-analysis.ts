@@ -42,13 +42,18 @@ function pythonFor(config: Pick<CompetitionConfig, "evaluator">): string | undef
 const tableCache = new Map<string, UnitScoreTable>();
 
 /** Load a unit-score artifact with the competition's column settings; artifacts are immutable, so cache by path. */
-export function loadRunUnitScores(path: string, config: Pick<CompetitionConfig, "evaluator">): UnitScoreTable {
-  const cached = tableCache.get(path);
-  if (cached) return cached;
+export function loadRunUnitScores(path: string, config: Pick<CompetitionConfig, "evaluator"> & { ratchet?: { clusterBy?: string } }): UnitScoreTable {
   const unitScores: Partial<UnitScoreConfig> = config.evaluator.unitScores ?? {};
-  const table = loadUnitScores(path, { idColumn: unitScores.idColumn, scoreColumn: unitScores.scoreColumn, segmentColumns: unitScores.segmentColumns, python: pythonFor(config), logpColumn: unitScores.logpColumn, fallbackColumn: unitScores.fallbackColumn, scaleColumn: unitScores.scaleColumn });
+  // Cluster and fold columns must be loaded even when they are not analysis segments; otherwise a
+  // "respondent-cluster" bootstrap silently degrades to a per-unit one and its CI is far too narrow.
+  const structural = [config.ratchet?.clusterBy, unitScores.foldBy].filter((column): column is string => typeof column === "string" && column.length > 0);
+  const segmentColumns = unitScores.segmentColumns ? [...new Set([...unitScores.segmentColumns, ...structural])] : undefined;
+  const key = `${path}\u0000${(segmentColumns ?? []).join(",")}`;
+  const cached = tableCache.get(key);
+  if (cached) return cached;
+  const table = loadUnitScores(path, { idColumn: unitScores.idColumn, scoreColumn: unitScores.scoreColumn, segmentColumns, python: pythonFor(config), logpColumn: unitScores.logpColumn, fallbackColumn: unitScores.fallbackColumn, scaleColumn: unitScores.scaleColumn });
   if (tableCache.size > 16) tableCache.delete(tableCache.keys().next().value as string);
-  tableCache.set(path, table);
+  tableCache.set(key, table);
   return table;
 }
 
@@ -61,8 +66,8 @@ export function pairedRatchetEvidence(config: Pick<CompetitionConfig, "evaluator
   if (!config.evaluator.unitScores) return { note: "evaluator.unitScores is not configured" };
   if (!referencePath || !candidatePath) return { note: `unit scores missing for the ${referencePath ? "candidate" : "reference"}` };
   try {
-    const reference = loadRunUnitScores(referencePath, config);
-    const candidate = loadRunUnitScores(candidatePath, config);
+    const reference = loadRunUnitScores(referencePath, { ...config, ratchet: { clusterBy: policy.clusterBy } });
+    const candidate = loadRunUnitScores(candidatePath, { ...config, ratchet: { clusterBy: policy.clusterBy } });
     const options = { direction: unitScoreDirection(config), iterations: policy.iterations, confidence: policy.confidence, clusterBy: policy.clusterBy, trim: policy.trim };
     const paired = pairedBootstrap(reference.units, candidate.units, options);
     const column = policy.segmentColumn;

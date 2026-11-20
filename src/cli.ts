@@ -140,7 +140,7 @@ import type { AgentProvider } from "./agents/codex-exec.js";
 import { DEFAULT_FORBIDDEN_ENV, environmentSnapshot, extractTraceback, knownRepair, parseRepairAction, rememberRepair, rememberedEnvironment, REPAIR_INSTRUCTIONS, repairPolicyViolations, runRepairCommand, tail, writeEscalation, type EvidencePack, type RepairAction } from "./core/self-repair.js";
 import { planSupervisorTick, type LiveWorker, type QueuedExperiment, type SupervisorPolicy } from "./core/supervisor.js";
 import { failureSignature, candidateDependencies, checkResources, classifyLaunchFailure, dependencyStatus, detectSystemicFailure, missingEnvironment, parseTimeVerbose, resolveEnvContract, resolveLaunchPolicy, resourcesFromOutput, type Dependency, type DependencyStatus, type LaunchClassification, type RecordedFailure, type ResourceVerdict } from "./core/launch-guard.js";
-import { appendImprovement, ledgerPaths, readImprovementLedger, renderImprovementLedger, verifyImprovementLedger } from "./core/improvement-ledger.js";
+import { appendImprovement, effectiveImprovements, ledgerPaths, readImprovementLedger, renderImprovementLedger, verifyImprovementLedger } from "./core/improvement-ledger.js";
 import { classifyTechnique, planScoutRound, promoteScoutScreens, resolveScoutPolicy, scoutBrief, scoutLedgerFromEvents, summarizeScoutLedger, techniqueLabel, TECHNIQUE_CLASSES, type ScoutPolicy } from "./core/scout.js";
 import { analyzeUnitLoss, renderLossAnalysis } from "./core/loss-analysis.js";
 import { unitScoresFromPredictionRows } from "./core/error-analysis.js";
@@ -2924,6 +2924,49 @@ program.command("improvements")
     }
     if (options.json) { console.log(JSON.stringify({ path: ledgerPaths(stateDirectory).json, chain, entries }, null, 2)); return; }
     console.log(entries.length ? renderImprovementLedger(entries) : `No ratchet steps recorded yet (${ledgerPaths(stateDirectory).markdown}).`);
+  });
+
+program.command("improvements-rescore")
+  .description("Re-score ledger entries with the current paired estimator; append correction entries where the CI or verdict changed (the hash chain is never rewritten)")
+  .option("--dry-run", "show what would change without appending")
+  .action((options: { dryRun?: boolean }) => {
+    const adapter = activeCompetition();
+    const store = new ResearchStore(statePath);
+    try {
+      const entries = readImprovementLedger(stateDirectory);
+      const policy = resolveRatchetPolicy(adapter.config.ratchet);
+      const baseline = store.eventsByType("baseline.completed").at(-1)?.payload as { runId?: unknown; artifactPaths?: unknown } | undefined;
+      const runArtifacts = (runId: string | undefined) => {
+        if (!runId) return undefined;
+        if (runId === baseline?.runId || runId.startsWith("baseline")) return unitScoresArtifactPath(baseline?.artifactPaths);
+        return unitScoresArtifactPath((store.runs().find((run) => run.id === runId)?.payload as { artifacts?: unknown } | undefined)?.artifacts);
+      };
+      let changed = 0;
+      for (const entry of effectiveImprovements(entries)) {
+        if (!entry.ci || entry.stage !== "full") continue;
+        const original = entry.correctionOf ?? entry.seq;
+        const checked = store.eventsByType("experiment.ratchet.checked").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === entry.experimentId)?.payload as { referenceRunId?: string; comparison?: { direction?: string; delta?: number | null } } | undefined;
+        const referencePath = runArtifacts(checked?.referenceRunId ?? entry.referenceId);
+        const candidatePath = runArtifacts(entry.runId);
+        if (!referencePath || !candidatePath) { console.log(`#${original} ${entry.experimentId}: unit scores not resolvable; skipped`); continue; }
+        const evidence = pairedRatchetEvidence(adapter.config, referencePath, candidatePath, policy);
+        if (!evidence.paired) { console.log(`#${original}: ${evidence.note}`); continue; }
+        const scalarImproved = typeof entry.improvement === "number" ? entry.improvement > 0 : checked?.comparison?.direction === "improved";
+        const decision = applySegmentGates(decideRatchet({ scalarImproved, scalarDelta: entry.improvement ?? null, paired: evidence.paired, policy }), judgeSegments(evidence.perSegment ?? {}, policy));
+        const paired = evidence.paired;
+        const same = Math.abs(paired.lower - entry.ci.lower) < 1e-9 && Math.abs(paired.upper - entry.ci.upper) < 1e-9 && decision.verdict === entry.verdict;
+        console.log(`#${original} ${entry.experimentId}: ${entry.verdict} CI [${entry.ci.lower.toPrecision(4)}, ${entry.ci.upper.toPrecision(4)}] -> ${decision.verdict} CI [${paired.lower.toPrecision(4)}, ${paired.upper.toPrecision(4)}] (${paired.clusters} clusters)${same ? " unchanged" : ""}`);
+        for (const segment of decision.segments ?? []) console.log(`    ${segment.role} ${segment.segment}: ${segment.passed ? "pass" : "FAIL"}${segment.paired ? ` [${segment.paired.lower.toPrecision(4)}, ${segment.paired.upper.toPrecision(4)}]` : ""}`);
+        if (same || options.dryRun) continue;
+        const { seq: _seq, recordedAt: _recordedAt, prev: _prev, sha: _sha, ...rest } = entry;
+        appendImprovement(stateDirectory, { ...rest, correctionOf: original, accepted: decision.accept, verdict: decision.verdict, mode: decision.mode, reason: `re-scored with the respondent-cluster ratio estimator (${paired.clusters} clusters): ${decision.reason}`, ci: { lower: paired.lower, upper: paired.upper, confidence: paired.confidence, matched: paired.matched, probabilityImproved: paired.probabilityImproved }, ...(decision.segments?.length ? { segments: decision.segments.map((segment) => ({ segment: segment.segment, role: segment.role, passed: segment.passed, ...(segment.paired ? { lower: segment.paired.lower, upper: segment.paired.upper, meanImprovement: segment.paired.meanImprovement, matched: segment.paired.matched } : {}) })) } : {}) });
+        changed += 1;
+      }
+      console.log(options.dryRun ? "Dry run; nothing appended." : `${changed} correction(s) appended; chain ${verifyImprovementLedger(readImprovementLedger(stateDirectory)).valid ? "intact" : "BROKEN"}.`);
+      if (!options.dryRun && changed && entries.some((entry) => entry.accepted) ) store.appendEvent("improvements.rescored", { corrections: changed });
+    } finally {
+      store.close();
+    }
   });
 
 const analyze = new Command("analyze").description("Data analysis: localize loss and estimate headroom from per-unit evaluator scores");
