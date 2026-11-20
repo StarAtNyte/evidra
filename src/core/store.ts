@@ -505,7 +505,10 @@ export class ResearchStore {
     // but SQLite still needs a bounded wait when another writer owns the
     // commit lock; without this, healthy parallel lanes can fail with a
     // misleading `database is locked` error.
-    this.db.pragma("busy_timeout = 5000");
+    // Parallel `experiment run` workers (scout rounds) all migrate the schema at start; on a loaded,
+    // niced host 5 s was not enough and one worker died with `database is locked`.
+    const busyMs = Number(process.env.EVIDRA_SQLITE_BUSY_MS ?? 60_000);
+    this.db.pragma(`busy_timeout = ${Number.isFinite(busyMs) && busyMs > 0 ? Math.floor(busyMs) : 60_000}`);
     this.db.pragma("journal_mode = WAL");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS projects (

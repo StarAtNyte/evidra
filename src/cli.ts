@@ -451,6 +451,21 @@ function scoutScreenEvidence(store: ResearchStore, config: ReturnType<typeof act
   });
 }
 
+/** Pair each screen against the champion, promote the best, and record both ledgers. Safe to re-run (crash recovery). */
+function judgeScoutScreens(resultStore: ResearchStore, config: ReturnType<typeof activeCompetition>["config"], policy: ScoutPolicy, experimentIds: string[], describe: (experimentId: string) => { techniqueClass: string; family: string; title: string }): { promoted: string[] } {
+  const adapter = { config };
+      const screens = scoutScreenEvidence(resultStore, adapter.config, experimentIds);
+      const promotion = promoteScoutScreens(screens.map((screen) => ({ experimentId: screen.experimentId, metric: screen.improvement ?? undefined, valid: screen.valid && screen.improvement !== null, ...(screen.ci ? { rank: screen.ci.lower } : {}) })), policy, "maximize", 0);
+      for (const decision of promotion.decisions) {
+        const screen = screens.find((entry) => entry.experimentId === decision.experimentId)!;
+        const described = describe(decision.experimentId);
+        resultStore.appendEvent("research.scout.recorded", { experimentId: decision.experimentId, stage: "screen", improvement: screen.improvement, valid: screen.valid, promoted: decision.promoted, reason: decision.reason, mode: screen.mode, metric: screen.metric ?? null, ...described });
+        appendImprovement(stateDirectory, { campaignStartedAt: activeCampaignStart(resultStore), experimentId: decision.experimentId, runId: screen.runId, stage: "screen", title: described.title, family: described.family, techniqueClass: described.techniqueClass, metricName: adapter.config.metric.name, direction: adapter.config.metric.direction, referenceId: screen.referenceId, candidateMetric: screen.metric ?? null, improvement: screen.improvement, accepted: decision.promoted, verdict: decision.promoted ? "promoted" : screen.valid ? "screened_out" : "screen_failed", mode: screen.mode, reason: `${decision.reason}${screen.note ? `; ${screen.note}` : ""}`, ...(screen.ci ? { ci: screen.ci } : {}) });
+        console.log(`${decision.promoted ? "PROMOTE" : "drop   "} ${described.title} [${described.techniqueClass}] improvement ${screen.improvement ?? "n/a"} (${screen.mode}${screen.ci ? ` CI [${screen.ci.lower.toPrecision(3)}, ${screen.ci.upper.toPrecision(3)}]` : ""}) - ${decision.reason}`);
+      }
+  return promotion;
+}
+
 /** Tried technique classes this campaign: scout screens plus every other attempt, oldest first. */
 function campaignScoutLedger(store: ResearchStore, metric: { name: string; direction: "maximize" | "minimize" }): ReturnType<typeof scoutLedgerFromEvents> {
   const since = activeCampaignStart(store);
@@ -3031,7 +3046,9 @@ scout.command("run")
     const hasReduced = Boolean(adapter.config.execution?.reducedValidationCommand);
     const queue = [...experiments];
     const runs = new Map<string, number>();
-    await Promise.all(Array.from({ length: Math.max(1, Math.min(Number(options.parallel) || 1, queue.length)) }, async () => {
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(Number(options.parallel) || 1, queue.length)) }, async (_, worker) => {
+      // Stagger worker start so their store migrations do not contend for the SQLite write lock.
+      await new Promise((resolve) => setTimeout(resolve, worker * 5_000));
       for (let next = queue.shift(); next; next = queue.shift()) runs.set(next.experimentId, (await cli(["experiment", "run", next.experimentId, ...(hasReduced ? ["--reduced-only"] : [])])).exitCode);
     }));
     const resultStore = new ResearchStore(statePath);
@@ -3047,15 +3064,7 @@ scout.command("run")
         console.log("No execution.reducedValidationCommand: variants were run at full evaluation and judged by the ratchet (see evidra improvements).");
         return;
       }
-      const screens = scoutScreenEvidence(resultStore, adapter.config, experiments.map((entry) => entry.experimentId));
-      const promotion = promoteScoutScreens(screens.map((screen) => ({ experimentId: screen.experimentId, metric: screen.improvement ?? undefined, valid: screen.valid && screen.improvement !== null })), policy, "maximize", 0);
-      for (const decision of promotion.decisions) {
-        const screen = screens.find((entry) => entry.experimentId === decision.experimentId)!;
-        const described = describe(decision.experimentId);
-        resultStore.appendEvent("research.scout.recorded", { experimentId: decision.experimentId, stage: "screen", improvement: screen.improvement, valid: screen.valid, promoted: decision.promoted, reason: decision.reason, mode: screen.mode, metric: screen.metric ?? null, ...described });
-        appendImprovement(stateDirectory, { campaignStartedAt: activeCampaignStart(resultStore), experimentId: decision.experimentId, runId: screen.runId, stage: "screen", title: described.title, family: described.family, techniqueClass: described.techniqueClass, metricName: adapter.config.metric.name, direction: adapter.config.metric.direction, referenceId: screen.referenceId, candidateMetric: screen.metric ?? null, improvement: screen.improvement, accepted: decision.promoted, verdict: decision.promoted ? "promoted" : screen.valid ? "screened_out" : "screen_failed", mode: screen.mode, reason: `${decision.reason}${screen.note ? `; ${screen.note}` : ""}`, ...(screen.ci ? { ci: screen.ci } : {}) });
-        console.log(`${decision.promoted ? "PROMOTE" : "drop   "} ${described.title} [${described.techniqueClass}] improvement ${screen.improvement ?? "n/a"} (${screen.mode}${screen.ci ? ` CI [${screen.ci.lower.toPrecision(3)}, ${screen.ci.upper.toPrecision(3)}]` : ""}) - ${decision.reason}`);
-      }
+      const promotion = judgeScoutScreens(resultStore, adapter.config, policy, experiments.map((entry) => entry.experimentId), describe);
       if (options.screenOnly) { if (promotion.promoted.length) console.log(`Promoted but not run (--screen-only): ${promotion.promoted.join(", ")}. Run: evidra experiment run <id> --skip-reduced`); return; }
       resultStore.close();
       for (const experimentId of promotion.promoted) await cli(["experiment", "run", experimentId, "--skip-reduced"]);
@@ -3065,6 +3074,32 @@ scout.command("run")
       finalStore.close();
     } finally {
       try { resultStore.close(); } catch { /* already closed */ }
+    }
+  });
+scout.command("judge")
+  .argument("[experiments...]", "screened experiment ids; default: every screened experiment without a scout verdict")
+  .option("--promote-top <n>", "screens promoted")
+  .description("(Re)judge completed screens: paired promotion and ledgers; recovers a scout round interrupted after screening")
+  .action((ids: string[], options: { promoteTop?: string }) => {
+    const adapter = activeCompetition();
+    const policy = resolveScoutPolicy({ ...adapter.config.scout, enabled: true, ...(options.promoteTop ? { promoteTop: Number(options.promoteTop) } : {}) }, undefined);
+    const store = new ResearchStore(statePath);
+    try {
+      const judged = new Set(store.eventsByType("research.scout.recorded").filter((event) => (event.payload as { stage?: unknown; valid?: unknown }).stage === "screen" && (event.payload as { valid?: unknown }).valid === true).map((event) => (event.payload as { experimentId: string }).experimentId));
+      const targets = ids.length ? ids : store.experiments().filter((entry) => (entry.payload as { status?: unknown }).status === "screened" && !judged.has(entry.id)).map((entry) => entry.id);
+      if (!targets.length) { console.log("No unjudged screens."); return; }
+      const hypotheses = new Map(store.hypotheses().map((entry) => [entry.id, entry.payload as { title?: unknown; formulationFamily?: unknown; mechanism?: unknown }]));
+      const describe = (experimentId: string) => {
+        const hypothesisId = (store.experiments().find((entry) => entry.id === experimentId)?.payload as { hypothesisId?: unknown } | undefined)?.hypothesisId;
+        const hypothesis = typeof hypothesisId === "string" ? hypotheses.get(hypothesisId) : undefined;
+        const title = typeof hypothesis?.title === "string" ? hypothesis.title : experimentId;
+        const family = typeof hypothesis?.formulationFamily === "string" ? hypothesis.formulationFamily : "unspecified";
+        return { techniqueClass: classifyTechnique({ family, title, mechanism: typeof hypothesis?.mechanism === "string" ? hypothesis.mechanism : undefined }), family, title };
+      };
+      const promotion = judgeScoutScreens(store, adapter.config, policy, targets, describe);
+      if (promotion.promoted.length) console.log(`Promote: ${promotion.promoted.join(", ")} (run: evidra experiment run <id> --skip-reduced)`);
+    } finally {
+      store.close();
     }
   });
 program.addCommand(scout);

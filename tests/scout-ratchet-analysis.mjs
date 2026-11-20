@@ -62,6 +62,8 @@ test("screens are promoted only when they beat the reference screen", () => {
   assert.deepEqual(promoteScoutScreens(outcomes, { promoteTop: 2, minScreenDelta: 0 }, "maximize", 0.62).promoted, ["b"]);
   assert.deepEqual(promoteScoutScreens(outcomes, { promoteTop: 1, minScreenDelta: 0 }, "maximize").promoted, ["b"], "without a reference, rank decides");
   assert.deepEqual(promoteScoutScreens(outcomes, { promoteTop: 2, minScreenDelta: 0 }, "minimize", 0.62).promoted, ["a"]);
+  const ranked = [{ experimentId: "noisy", metric: 0.045, rank: 0.004, valid: true }, { experimentId: "tight", metric: 0.01, rank: 0.009, valid: true }];
+  assert.deepEqual(promoteScoutScreens(ranked, { promoteTop: 1, minScreenDelta: 0 }, "maximize", 0).promoted, ["tight"], "paired screens rank by CI lower bound, not by a noisy mean");
   assert.equal(scoutLedgerFromEvents([{ payload: { experimentId: "a", techniqueClass: "neural_net", stage: "screen", improvement: 0.1, valid: true } }, { payload: { bogus: true } }]).length, 1);
 });
 

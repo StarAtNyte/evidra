@@ -196,6 +196,8 @@ export interface ScreenOutcome {
   experimentId: string;
   metric?: number;
   valid: boolean;
+  /** Ordering key, higher first (e.g. the paired CI lower bound); defaults to the oriented metric. */
+  rank?: number;
 }
 
 /**
@@ -206,7 +208,7 @@ export function promoteScoutScreens(outcomes: readonly ScreenOutcome[], policy: 
   const sign = direction === "maximize" ? 1 : -1;
   const scored = outcomes.map((outcome) => ({ outcome, improvement: outcome.valid && typeof outcome.metric === "number" && Number.isFinite(outcome.metric) && referenceMetric !== undefined ? sign * (outcome.metric - referenceMetric) : null }));
   const eligible = scored.filter(({ outcome }) => outcome.valid && typeof outcome.metric === "number" && Number.isFinite(outcome.metric))
-    .sort((left, right) => sign * ((right.outcome.metric as number) - (left.outcome.metric as number)));
+    .sort((left, right) => (right.outcome.rank ?? sign * (right.outcome.metric as number)) - (left.outcome.rank ?? sign * (left.outcome.metric as number)));
   const promoted: string[] = [];
   const decisions = scored.map(({ outcome, improvement }) => ({ experimentId: outcome.experimentId, improvement, promoted: false, reason: outcome.valid ? "" : "screen failed or reported no metric" }));
   for (const { outcome, improvement } of eligible) {
