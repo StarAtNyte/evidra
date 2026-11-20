@@ -69,6 +69,8 @@ export interface LossAnalysisReport {
   runs: Array<{ id: string; label?: string; units: number; meanScore: number; matchedWithPrimary: number; pairedImprovement?: number; pairedStandardError?: number }>;
   oracle?: { perUnitBestOfRuns: number; bestSingleRun: number; gain: number };
   routing: RoutingHeadroom[];
+  /** Cross-fitted shrink-toward-fallback headroom (needs unit mixture inputs). */
+  calibration: CalibrationHeadroom[];
   hypotheses: LossHypothesis[];
   notes: string[];
 }
@@ -81,6 +83,17 @@ export interface LossAnalysisOptions {
   topSegments?: number;
   /** Minimum units for a segment to be reported. */
   minSegmentUnits?: number;
+  /** Segment column that defines cross-fitting folds (e.g. respondent), so correlated units stay in one fold. */
+  foldBy?: string;
+}
+
+export interface CalibrationHeadroom {
+  /** Segment column the shrinkage weight is chosen per ("__all__" for one global weight). */
+  column: string;
+  /** Aggregate gain from mixing toward the fallback with the weight chosen on the other fold. */
+  crossFittedGain: number;
+  inSampleGain: number;
+  weights: Record<string, number>;
 }
 
 function mean(values: readonly number[]): number {
@@ -92,6 +105,48 @@ function standardError(values: readonly number[]): number {
   const average = mean(values);
   const variance = values.reduce((sum, value) => sum + (value - average) ** 2, 0) / (values.length - 1);
   return Math.sqrt(variance / values.length);
+}
+
+const SHRINK_GRID = [0, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5];
+
+function mixedScore(mix: { logp: number; fallback: number; scale: number }, weight: number): number {
+  if (weight === 0) return mix.logp / mix.scale;
+  const a = Math.log(1 - weight) + mix.logp;
+  const b = Math.log(weight) + mix.fallback;
+  const high = Math.max(a, b);
+  return (high + Math.log(Math.exp(a - high) + Math.exp(b - high))) / mix.scale;
+}
+
+/** Cross-fitted per-segment shrinkage toward a fallback predictor (posthoc calibration as a headroom estimate). */
+function calibrationHeadroom(units: readonly UnitScore[], split: Map<string, (unit: UnitScore) => string>, foldOf: (unit: UnitScore) => 0 | 1, sign: number): CalibrationHeadroom[] {
+  const mixed = units.filter((unit) => unit.mix);
+  if (mixed.length < 20 || sign < 0) return [];
+  const columns: Array<[string, (unit: UnitScore) => string]> = [["__all__", () => "all"], ...split];
+  const result: CalibrationHeadroom[] = [];
+  for (const [column, keyOf] of columns) {
+    // totals[fold][segment][w] = sum of mixed scores; base = w=0
+    const totals: [Map<string, number[]>, Map<string, number[]>] = [new Map(), new Map()];
+    for (const unit of mixed) {
+      const key = keyOf(unit);
+      const bucket = totals[foldOf(unit)];
+      const row = bucket.get(key) ?? SHRINK_GRID.map(() => 0);
+      SHRINK_GRID.forEach((weight, index) => { row[index] += mixedScore(unit.mix!, weight); });
+      bucket.set(key, row);
+    }
+    const best = (row: number[]): number => row.reduce((bestIndex, value, index) => (value > row[bestIndex] ? index : bestIndex), 0);
+    let inSample = 0; let cross = 0; const weights: Record<string, number> = {};
+    const keys = new Set([...totals[0].keys(), ...totals[1].keys()]);
+    for (const key of keys) {
+      const left = totals[0].get(key); const right = totals[1].get(key);
+      const combined = SHRINK_GRID.map((_, index) => (left?.[index] ?? 0) + (right?.[index] ?? 0));
+      const chosen = best(combined);
+      weights[key] = SHRINK_GRID[chosen];
+      inSample += combined[chosen] - combined[0];
+      if (left && right) cross += (right[best(left)] - right[0]) + (left[best(right)] - left[0]);
+    }
+    result.push({ column, crossFittedGain: cross / mixed.length, inSampleGain: inSample / mixed.length, weights: Object.fromEntries(Object.entries(weights).slice(0, 40)) });
+  }
+  return result.sort((left, right) => right.crossFittedGain - left.crossFittedGain);
 }
 
 /** Stable 2-fold split by unit id so cross-fitting is reproducible. */
@@ -135,6 +190,7 @@ export function analyzeUnitLoss(runs: readonly LossRun[], options: LossAnalysisO
   const topSegments = Math.max(1, options.topSegments ?? 12);
   const primary = runs[0];
   const units = primary.table.units;
+  const foldOf = (unit: UnitScore): 0 | 1 => fold(options.foldBy ? String(unit.segments[options.foldBy] ?? unit.unit) : unit.unit);
   const scores = units.map((unit) => unit.score);
   const meanScore = mean(scores);
   const notes: string[] = [];
@@ -213,7 +269,7 @@ export function analyzeUnitLoss(runs: readonly LossRun[], options: LossAnalysisO
       const counts: [Map<string, number>, Map<string, number>] = [new Map(), new Map()];
       for (const unit of shared) {
         const key = keyOf(unit);
-        const f = fold(unit.unit);
+        const f = foldOf(unit);
         const totals = inSample.get(key) ?? byRun.map(() => 0);
         const foldTotals = perFold[f].get(key) ?? byRun.map(() => 0);
         byRun.forEach((map, index) => { const value = map.get(unit.unit)!; totals[index] += value; foldTotals[index] += value; });
@@ -242,11 +298,13 @@ export function analyzeUnitLoss(runs: readonly LossRun[], options: LossAnalysisO
   }
 
   const se = standardError(scores);
-  const hypotheses = lossHypotheses({ gapTable, routing, oracle, worstDecileLossShare, runs: runSummaries, standardError: se, segments });
+  const calibration = calibrationHeadroom(units, split, foldOf, sign);
+  const hypotheses = lossHypotheses({ gapTable, routing, oracle, worstDecileLossShare, runs: runSummaries, standardError: se, segments, calibration });
+  if (calibration.length && calibration[0].crossFittedGain <= Math.max(0, se * 0.1)) notes.push(`Cross-fitted shrinkage toward the fallback gains at most ${format(Math.max(0, calibration[0].crossFittedGain))} (in-sample ${format(Math.max(...calibration.map((entry) => entry.inSampleGain)))}): the model is not over-confident; post-hoc calibration is not where the loss is.`);
   if (runSummaries.slice(1).length && runSummaries.slice(1).every((run) => run.pairedImprovement !== undefined && run.pairedStandardError !== undefined && Math.abs(run.pairedImprovement) < 2 * run.pairedStandardError)) {
     notes.push("Every comparison run is within 2 paired standard errors of the primary: recent changes are indistinguishable from noise. Change structure (a different technique class), not knobs.");
   }
-  return { schemaVersion: 1, primaryRunId: primary.id, direction: options.direction, units: units.length, meanScore, standardError: se, ...(worstDecileLossShare !== undefined ? { worstDecileLossShare } : {}), segments: segments.slice(0, 400), gapTable, runs: runSummaries, ...(oracle ? { oracle } : {}), routing: routing.slice(0, 12), hypotheses, notes };
+  return { schemaVersion: 1, primaryRunId: primary.id, direction: options.direction, units: units.length, meanScore, standardError: se, ...(worstDecileLossShare !== undefined ? { worstDecileLossShare } : {}), segments: segments.slice(0, 400), gapTable, runs: runSummaries, ...(oracle ? { oracle } : {}), routing: routing.slice(0, 12), calibration, hypotheses, notes };
 }
 
 function hypothesis(input: Omit<LossHypothesis, "techniqueClass">): LossHypothesis {
@@ -258,7 +316,7 @@ function format(value: number): string {
 }
 
 /** Turn the measured decomposition into concrete, falsifiable hypotheses for the director. */
-function lossHypotheses(input: { gapTable: SegmentLoss[]; routing: RoutingHeadroom[]; oracle?: LossAnalysisReport["oracle"]; worstDecileLossShare?: number; runs: LossAnalysisReport["runs"]; standardError: number; segments: SegmentLoss[] }): LossHypothesis[] {
+function lossHypotheses(input: { gapTable: SegmentLoss[]; routing: RoutingHeadroom[]; oracle?: LossAnalysisReport["oracle"]; worstDecileLossShare?: number; runs: LossAnalysisReport["runs"]; standardError: number; segments: SegmentLoss[]; calibration: CalibrationHeadroom[] }): LossHypothesis[] {
   const result: LossHypothesis[] = [];
   const noise = Number.isFinite(input.standardError) ? input.standardError : 0;
   const worst = input.gapTable[0];
@@ -296,7 +354,19 @@ function lossHypotheses(input: { gapTable: SegmentLoss[]; routing: RoutingHeadro
       structural: true,
     }));
   }
-  const heterogeneous = [...input.segments].filter((segment) => segment.units > 0).sort((left, right) => Math.abs(right.excessShare) - Math.abs(left.excessShare))[0];
+  const measuredCalibration = input.calibration[0];
+  if (measuredCalibration && measuredCalibration.crossFittedGain > Math.max(0, noise * 0.1)) {
+    result.push(hypothesis({
+      title: `Cross-fitted shrinkage toward the fallback per ${measuredCalibration.column}`,
+      formulationFamily: "segment-wise calibration (proper scoring)",
+      mechanism: `Mixing predictions toward the fallback predictor with a weight chosen per ${measuredCalibration.column} on one fold and applied to the other gains ${format(measuredCalibration.crossFittedGain)} (in-sample ${format(measuredCalibration.inSampleGain)}).`,
+      evidence: [`weights: ${Object.entries(measuredCalibration.weights).slice(0, 6).map(([key, weight]) => `${key}:${weight}`).join(", ")}`],
+      expectedGain: measuredCalibration.crossFittedGain,
+      boundTest: "Fit the weights on training folds only inside the submission and score held-out respondents.",
+      structural: false,
+    }));
+  }
+  const heterogeneous = input.calibration.length ? undefined : [...input.segments].filter((segment) => segment.units > 0).sort((left, right) => Math.abs(right.excessShare) - Math.abs(left.excessShare))[0];
   if (heterogeneous && Math.abs(heterogeneous.excessShare) > 0.05) {
     result.push(hypothesis({
       title: `Cross-fitted calibration per ${heterogeneous.column}`,
@@ -343,6 +413,7 @@ export function lossAnalysisBrief(report: LossAnalysisReport): Record<string, un
     runs: report.runs,
     ...(report.oracle ? { oracle: { ...report.oracle, note: "optimistic upper bound: per-unit best-of-runs also picks up per-unit noise" } } : {}),
     routing: report.routing.slice(0, 4).map((entry) => ({ column: entry.column, crossFittedGain: entry.crossFittedGain, inSampleGain: entry.inSampleGain })),
+    calibration: report.calibration.slice(0, 4).map((entry) => ({ per: entry.column, crossFittedGain: entry.crossFittedGain, inSampleGain: entry.inSampleGain })),
     dataHypotheses: report.hypotheses,
     notes: report.notes,
   };
@@ -367,6 +438,7 @@ export function renderLossAnalysis(report: LossAnalysisReport): string {
       ...report.runs.map((run) => `| ${run.id} | ${run.units} | ${format(run.meanScore)} | ${run.pairedImprovement !== undefined ? format(run.pairedImprovement) : "-"} | ${run.pairedStandardError !== undefined ? format(run.pairedStandardError) : "-"} |`), "");
   }
   if (report.oracle) lines.push(`Per-unit oracle over runs: ${format(report.oracle.perUnitBestOfRuns)} vs best single ${format(report.oracle.bestSingleRun)} (gain ${format(report.oracle.gain)}).`, "");
+  if (report.calibration.length) lines.push("## Calibration headroom (cross-fitted shrink toward fallback)", "", "| per | cross-fitted gain | in-sample gain |", "|---|---|---|", ...report.calibration.slice(0, 8).map((entry) => `| ${entry.column} | ${format(entry.crossFittedGain)} | ${format(entry.inSampleGain)} |`), "");
   if (report.routing.length) lines.push("## Routing headroom", "", "| column | cross-fitted gain | in-sample gain |", "|---|---|---|", ...report.routing.slice(0, 8).map((entry) => `| ${entry.column} | ${format(entry.crossFittedGain)} | ${format(entry.inSampleGain)} |`), "");
   if (report.hypotheses.length) lines.push("## Hypotheses from the data", "", ...report.hypotheses.flatMap((entry) => [`- **${entry.title}** (${entry.techniqueClass}, expected +${format(entry.expectedGain)}${entry.structural ? ", structural" : ""}): ${entry.mechanism}`, `  - bound test: ${entry.boundTest}`]), "");
   if (report.notes.length) lines.push("## Notes", "", ...report.notes.map((note) => `- ${note}`), "");

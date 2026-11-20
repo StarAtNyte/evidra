@@ -46,7 +46,7 @@ export function loadRunUnitScores(path: string, config: Pick<CompetitionConfig, 
   const cached = tableCache.get(path);
   if (cached) return cached;
   const unitScores: Partial<UnitScoreConfig> = config.evaluator.unitScores ?? {};
-  const table = loadUnitScores(path, { idColumn: unitScores.idColumn, scoreColumn: unitScores.scoreColumn, segmentColumns: unitScores.segmentColumns, python: pythonFor(config) });
+  const table = loadUnitScores(path, { idColumn: unitScores.idColumn, scoreColumn: unitScores.scoreColumn, segmentColumns: unitScores.segmentColumns, python: pythonFor(config), logpColumn: unitScores.logpColumn, fallbackColumn: unitScores.fallbackColumn, scaleColumn: unitScores.scaleColumn });
   if (tableCache.size > 16) tableCache.delete(tableCache.keys().next().value as string);
   tableCache.set(path, table);
   return table;
@@ -113,7 +113,7 @@ export function campaignLossAnalysis(store: AnalysisStore, config: Pick<Competit
   if (!runs.length) return undefined;
   try {
     const lossRuns: LossRun[] = runs.map((run) => ({ id: run.id, label: run.label, table: loadRunUnitScores(run.path, config) }));
-    const report = analyzeUnitLoss(lossRuns, { direction: unitScoreDirection(config) });
+    const report = analyzeUnitLoss(lossRuns, { direction: unitScoreDirection(config), foldBy: config.evaluator.unitScores?.foldBy });
     return { report, brief: lossAnalysisBrief(report) };
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };

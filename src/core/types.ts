@@ -83,6 +83,13 @@ export const CompetitionConfigSchema = z.object({
       direction: z.enum(["minimize", "maximize"]).optional(),
       /** Python interpreter used for Parquet/Feather; defaults to the evaluator's interpreter when it is Python. */
       python: z.string().min(1).optional(),
+      /** Raw outcome log-prob, a fallback predictor's log-prob (e.g. the crowd marginal), and the scale
+       * (score = logp / scale): enables cross-fitted shrink-toward-fallback calibration headroom. */
+      logpColumn: z.string().min(1).optional(),
+      fallbackColumn: z.string().min(1).optional(),
+      scaleColumn: z.string().min(1).optional(),
+      /** Cluster column for cross-fitting folds (e.g. respondent), so routing/calibration estimates are honest. */
+      foldBy: z.string().min(1).optional(),
     }).optional(),
   }),
   /** How a completed run earns the champion slot. */

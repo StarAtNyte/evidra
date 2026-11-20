@@ -12,6 +12,10 @@ export interface UnitScore {
   unit: string;
   score: number;
   segments: Record<string, string | number>;
+  /** Optional mixture inputs: raw log-prob of the outcome, the same for a fallback predictor (e.g. the
+   * marginal), and the scale that maps logp to score (score = logp / scale). Enables cross-fitted
+   * shrink-toward-fallback headroom estimates. */
+  mix?: { logp: number; fallback: number; scale: number };
 }
 
 export interface UnitScoreTable {
@@ -32,6 +36,9 @@ export interface UnitScoreOptions {
   maxRows?: number;
   /** Python interpreter used to read Parquet/Feather when present. */
   python?: string;
+  logpColumn?: string;
+  fallbackColumn?: string;
+  scaleColumn?: string;
 }
 
 const ID_CANDIDATES = ["unit", "unit_id", "id", "row_id", "cell_id", "item_id", "key", "uid"];
@@ -98,8 +105,9 @@ export function unitScoresFromRecords(records: Array<Record<string, unknown>>, o
   const scoreColumn = options.scoreColumn ?? SCORE_CANDIDATES.map((name) => lower.get(name)).find(Boolean)
     ?? columns.find((column) => column !== idColumn && records.slice(0, 50).every((record) => numeric(record[column]) !== undefined));
   if (!scoreColumn) throw new Error(`No score column found in ${source}; set unitScores.scoreColumn (columns: ${columns.join(", ") || "none"}).`);
+  const mixColumns = new Set([options.logpColumn, options.fallbackColumn, options.scaleColumn].filter((column): column is string => Boolean(column)));
   const segmentColumns = options.segmentColumns ?? columns.filter((column) => {
-    if (column === idColumn || column === scoreColumn) return false;
+    if (column === idColumn || column === scoreColumn || mixColumns.has(column)) return false;
     const values = new Set(records.slice(0, 5000).map((record) => String(record[column] ?? "")));
     const allNumeric = records.slice(0, 200).every((record) => numeric(record[column]) !== undefined);
     return allNumeric || values.size <= 200;
@@ -116,7 +124,10 @@ export function unitScoresFromRecords(records: Array<Record<string, unknown>>, o
       const value = numeric(raw);
       segments[column] = value ?? String(raw ?? "");
     }
-    units.push({ unit, score, segments });
+    const logp = options.logpColumn ? numeric(record[options.logpColumn]) : undefined;
+    const fallback = options.fallbackColumn ? numeric(record[options.fallbackColumn]) : undefined;
+    const scale = options.scaleColumn ? numeric(record[options.scaleColumn]) : 1;
+    units.push({ unit, score, segments, ...(logp !== undefined && fallback !== undefined && scale !== undefined && scale !== 0 ? { mix: { logp, fallback, scale } } : {}) });
   });
   return { units, scoreColumn, idColumn, segmentColumns, skippedRows, source };
 }

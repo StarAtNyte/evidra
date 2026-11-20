@@ -176,3 +176,20 @@ test("per-segment gates: deciding splits must clear the bar and guards must not 
   assert.equal(guardLoss.accept, false);
   assert.equal(guardLoss.verdict, "regressed");
 });
+
+test("cross-fitted shrinkage toward a fallback finds over-confidence and folds by cluster", () => {
+  // Over-confident model: on 'hard' items it puts tiny mass on outcomes that do happen.
+  const rows = Array.from({ length: 800 }, (_, index) => {
+    const hard = index % 4 === 0;
+    const logp = hard && index % 8 === 0 ? Math.log(0.01) : Math.log(0.9);
+    return { unit: `c${index}`, score: logp, segments: { item: hard ? "hard" : "easy", rid: `r${Math.floor(index / 4)}` }, mix: { logp, fallback: Math.log(0.4), scale: 1 } };
+  });
+  const table = { units: rows, scoreColumn: "score", idColumn: "unit", segmentColumns: ["item"], skippedRows: 0, source: "t" };
+  const report = analyzeUnitLoss([{ id: "m", table }], { direction: "maximize", foldBy: "rid" });
+  const perItem = report.calibration.find((entry) => entry.column === "item");
+  assert.ok(perItem.crossFittedGain > 0.01, `per-item shrinkage helps (${perItem.crossFittedGain})`);
+  assert.ok(perItem.weights.hard > perItem.weights.easy);
+  assert.ok(report.hypotheses.some((entry) => entry.title.startsWith("Cross-fitted shrinkage")));
+  const calibrated = analyzeUnitLoss([{ id: "m", table: { ...table, units: rows.map((row) => ({ ...row, mix: { ...row.mix, fallback: row.mix.logp - 3 } })) } }], { direction: "maximize" });
+  assert.ok(calibrated.notes.some((note) => /not over-confident/.test(note)));
+});
