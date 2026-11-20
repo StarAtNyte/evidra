@@ -5,7 +5,7 @@ import { formatHarnessFeedback, parseHarnessFeedbackRole, projectHarnessFailureF
 import { workspaceBackupDestination } from "./core/backup-path.js";
 import { reconcileRemoteExperiment } from "./core/remote-reconciliation.js";
 import { Command } from "commander";
-import { appendFileSync, copyFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync, realpathSync } from "node:fs";
+import { appendFileSync, copyFileSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync, realpathSync } from "node:fs";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
@@ -133,7 +133,7 @@ import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTas
 import { runSafetyBenchmark } from "./core/safety-bench.js";
 import { runOrchestrationBenchmark } from "./core/orchestration-bench.js";
 import { runGovernanceBenchmark } from "./core/governance-bench.js";
-import { championExperimentIds, explorationHypothesis, holdoutAllows, holdoutReference, implementationOf, isAgentVisibleEvent, normalizeFamily, parentExperimentId, searchState, selectRatchetReference, decideRatchet, resolveRatchetPolicy }  from "./core/ratchet.js";
+import { championExperimentIds, explorationHypothesis, holdoutAllows, holdoutReference, implementationOf, isAgentVisibleEvent, normalizeFamily, parentExperimentId, searchState, selectRatchetReference, decideRatchet, resolveRatchetPolicy, applySegmentGates, judgeSegments }  from "./core/ratchet.js";
 import { campaignLossAnalysis, loadRunUnitScores, pairedRatchetEvidence, unitScoreDirection, unitScoreFiles, unitScoresArtifactPath } from "./core/campaign-analysis.js";
 import { appendImprovement, ledgerPaths, readImprovementLedger, renderImprovementLedger, verifyImprovementLedger } from "./core/improvement-ledger.js";
 import { classifyTechnique, planScoutRound, promoteScoutScreens, resolveScoutPolicy, scoutBrief, scoutLedgerFromEvents, summarizeScoutLedger, techniqueLabel, TECHNIQUE_CLASSES, type ScoutPolicy } from "./core/scout.js";
@@ -418,6 +418,37 @@ function scoutReferenceScreen(store: ResearchStore, policy: ScoutPolicy): number
   if (!championId) return undefined;
   const screen = store.eventsByType("experiment.stage.reduced_validation.completed").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === championId)?.payload as { metric?: unknown } | undefined;
   return typeof screen?.metric === "number" && Number.isFinite(screen.metric) ? screen.metric : undefined;
+}
+
+/**
+ * Screen evidence for scout promotion. With unit scores on both sides, a
+ * screen is paired against the champion (or baseline) on the units the screen
+ * covered, so a one-split screen is compared with the same split of the
+ * reference rather than with a differently-scoped aggregate.
+ */
+function scoutScreenEvidence(store: ResearchStore, config: ReturnType<typeof activeCompetition>["config"], experimentIds: string[]): Array<{ experimentId: string; runId?: string; valid: boolean; metric?: number; improvement: number | null; mode: string; referenceId?: string; ci?: { lower: number; upper: number; confidence: number; matched: number; probabilityImproved: number }; note?: string }> {
+  const championId = championExperimentIds(store, activeCampaignStart(store)).at(-1);
+  const championRunId = championId ? (store.experiments().find((entry) => entry.id === championId)?.payload as { runId?: unknown } | undefined)?.runId : undefined;
+  const championPath = typeof championRunId === "string" ? unitScoresArtifactPath((store.runs().find((run) => run.id === championRunId)?.payload as { artifacts?: unknown } | undefined)?.artifacts) : undefined;
+  const baseline = store.eventsByType("baseline.completed").at(-1)?.payload as { runId?: unknown; artifactPaths?: unknown } | undefined;
+  const referencePath = championPath ?? unitScoresArtifactPath(baseline?.artifactPaths);
+  const referenceId = championPath ? championId : typeof baseline?.runId === "string" ? baseline.runId : undefined;
+  const referenceScreen = scoutReferenceScreen(store, resolveScoutPolicy(config.scout, undefined));
+  const policy = resolveRatchetPolicy(config.ratchet);
+  return experimentIds.map((experimentId) => {
+    const screen = store.eventsByType("experiment.screening.completed").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === experimentId)?.payload as { runId?: unknown; metric?: unknown; unitScoresPath?: unknown } | undefined;
+    const metric = typeof screen?.metric === "number" && Number.isFinite(screen.metric) ? screen.metric : undefined;
+    const runId = typeof screen?.runId === "string" ? screen.runId : undefined;
+    if (!screen || metric === undefined) return { experimentId, runId, valid: false, improvement: null, mode: "reduced_screen", note: "screen failed or reported no metric" };
+    const candidatePath = typeof screen.unitScoresPath === "string" ? screen.unitScoresPath : undefined;
+    const evidence = pairedRatchetEvidence(config, referencePath, candidatePath, policy);
+    if (evidence.paired && evidence.paired.matched >= policy.minUnits) {
+      const paired = evidence.paired;
+      return { experimentId, runId, valid: true, metric, improvement: paired.meanImprovement, mode: "paired_screen", referenceId, ci: { lower: paired.lower, upper: paired.upper, confidence: paired.confidence, matched: paired.matched, probabilityImproved: paired.probabilityImproved } };
+    }
+    const sign = config.metric.direction === "maximize" ? 1 : -1;
+    return { experimentId, runId, valid: true, metric, improvement: referenceScreen === undefined ? null : sign * (metric - referenceScreen), mode: "reduced_screen", note: evidence.note ?? (referenceScreen === undefined ? "no reference screen" : undefined) };
+  });
 }
 
 /** Tried technique classes this campaign: scout screens plus every other attempt, oldest first. */
@@ -2958,7 +2989,101 @@ scout.command("classify").argument("<text...>", "a method family or hypothesis t
   const id = classifyTechnique({ family: text.join(" ") });
   console.log(`${id}: ${techniqueLabel(id)}`);
 });
+scout.command("run")
+  .argument("<variants>", "JSON file: [{title, family, mechanism?, env: {NAME: value}}] - one complete variant per entry")
+  .option("--width <n>", "candidates per round (2-5); defaults to scout.width")
+  .option("--promote-top <n>", "screens promoted to full evaluation")
+  .option("--screen-only", "stop after screening; promotion is recorded but not run")
+  .option("--parallel <n>", "screens launched at once (the evaluator may still serialize, e.g. on a GPU lock)", "4")
+  .option("--timeout-minutes <minutes>", "per-experiment budget", "240")
+  .description("Run one deterministic scout round without an LLM director: diversity-filter the variants, screen them, promote the best")
+  .action(async (file: string, options: { width?: string; promoteTop?: string; screenOnly?: boolean; parallel: string; timeoutMinutes: string }) => {
+    const adapter = activeCompetition();
+    const variants = JSON.parse(readFileSync(file, "utf8")) as Array<{ title?: unknown; family?: unknown; mechanism?: unknown; env?: unknown }>;
+    if (!Array.isArray(variants) || !variants.length) throw new Error("Variants file must be a non-empty JSON array.");
+    const policy = resolveScoutPolicy({ ...adapter.config.scout, enabled: true, ...(options.promoteTop ? { promoteTop: Number(options.promoteTop) } : {}) }, options.width ? Number(options.width) : undefined);
+    const store = new ResearchStore(statePath);
+    const stamp = Date.now();
+    const candidates = variants.map((variant, index) => {
+      if (typeof variant.title !== "string" || !variant.title.trim()) throw new Error(`Variant ${index} needs a title.`);
+      const env = variant.env && typeof variant.env === "object" ? Object.entries(variant.env as Record<string, unknown>).map(([name, value]) => ({ name, value: String(value) })) : [];
+      const id = `hyp_scout_${stamp}_${index}_${variant.title.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 32)}`;
+      const family = typeof variant.family === "string" ? variant.family : variant.title;
+      const mechanism = typeof variant.mechanism === "string" ? variant.mechanism : `scout variant ${env.map((entry) => `${entry.name}=${entry.value}`).join(" ")}`;
+      store.saveHypothesis({ id, payload: { id, title: variant.title, formulationFamily: family, mechanism, outcomeType: "metric", implementationMode: "modify", proposedChange: env.map((entry) => `${entry.name}=${entry.value}`).join(" ") || "none", falsificationTest: "screen does not beat the champion on paired units", expectedMetricDelta: { low: 0, median: 0, high: 0 }, experimentEnvironment: env } });
+      return { id, title: variant.title, family, mechanism };
+    });
+    const round = planScoutRound(candidates, campaignScoutLedger(store, adapter.config.metric), policy);
+    store.appendEvent("research.scout.planned", { source: "scout run", policy, selected: round.selected, rejected: round.rejected });
+    for (const rejected of round.rejected) console.log(`skip ${rejected.id}: ${rejected.reason}`);
+    store.close();
+    const script = process.argv[1];
+    const cli = (args: string[]) => runProcess([process.execPath, script, ...args], root, 7 * 24 * 60 * 60_000, (stream, chunk) => (stream === "stderr" ? process.stderr : process.stdout).write(chunk));
+    const experiments: Array<{ hypothesisId: string; experimentId: string; techniqueClass: string }> = [];
+    for (const selected of round.selected) {
+      const proposed = await cli(["experiment", "propose", selected.id, "--timeout-minutes", options.timeoutMinutes]);
+      if (proposed.exitCode !== 0) { console.log(`propose failed for ${selected.id}`); continue; }
+      const lookup = new ResearchStore(statePath);
+      const experimentId = lookup.experiments().find((entry) => (entry.payload as { hypothesisId?: unknown }).hypothesisId === selected.id)?.id;
+      lookup.close();
+      if (experimentId) experiments.push({ hypothesisId: selected.id, experimentId, techniqueClass: selected.techniqueClass });
+    }
+    const hasReduced = Boolean(adapter.config.execution?.reducedValidationCommand);
+    const queue = [...experiments];
+    const runs = new Map<string, number>();
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(Number(options.parallel) || 1, queue.length)) }, async () => {
+      for (let next = queue.shift(); next; next = queue.shift()) runs.set(next.experimentId, (await cli(["experiment", "run", next.experimentId, ...(hasReduced ? ["--reduced-only"] : [])])).exitCode);
+    }));
+    const resultStore = new ResearchStore(statePath);
+    try {
+      const describe = (experimentId: string) => {
+        const entry = experiments.find((item) => item.experimentId === experimentId)!;
+        const candidate = candidates.find((item) => item.id === entry.hypothesisId)!;
+        return { techniqueClass: entry.techniqueClass, family: candidate.family, title: candidate.title };
+      };
+      if (!hasReduced) {
+        const champions = new Set(championExperimentIds(resultStore, activeCampaignStart(resultStore)));
+        for (const { experimentId } of experiments) resultStore.appendEvent("research.scout.recorded", { experimentId, stage: "full", improvement: null, valid: runs.get(experimentId) === 0, accepted: champions.has(experimentId), ...describe(experimentId) });
+        console.log("No execution.reducedValidationCommand: variants were run at full evaluation and judged by the ratchet (see evidra improvements).");
+        return;
+      }
+      const screens = scoutScreenEvidence(resultStore, adapter.config, experiments.map((entry) => entry.experimentId));
+      const promotion = promoteScoutScreens(screens.map((screen) => ({ experimentId: screen.experimentId, metric: screen.improvement ?? undefined, valid: screen.valid && screen.improvement !== null })), policy, "maximize", 0);
+      for (const decision of promotion.decisions) {
+        const screen = screens.find((entry) => entry.experimentId === decision.experimentId)!;
+        const described = describe(decision.experimentId);
+        resultStore.appendEvent("research.scout.recorded", { experimentId: decision.experimentId, stage: "screen", improvement: screen.improvement, valid: screen.valid, promoted: decision.promoted, reason: decision.reason, mode: screen.mode, metric: screen.metric ?? null, ...described });
+        appendImprovement(stateDirectory, { campaignStartedAt: activeCampaignStart(resultStore), experimentId: decision.experimentId, runId: screen.runId, stage: "screen", title: described.title, family: described.family, techniqueClass: described.techniqueClass, metricName: adapter.config.metric.name, direction: adapter.config.metric.direction, referenceId: screen.referenceId, candidateMetric: screen.metric ?? null, improvement: screen.improvement, accepted: decision.promoted, verdict: decision.promoted ? "promoted" : screen.valid ? "screened_out" : "screen_failed", mode: screen.mode, reason: `${decision.reason}${screen.note ? `; ${screen.note}` : ""}`, ...(screen.ci ? { ci: screen.ci } : {}) });
+        console.log(`${decision.promoted ? "PROMOTE" : "drop   "} ${described.title} [${described.techniqueClass}] improvement ${screen.improvement ?? "n/a"} (${screen.mode}${screen.ci ? ` CI [${screen.ci.lower.toPrecision(3)}, ${screen.ci.upper.toPrecision(3)}]` : ""}) - ${decision.reason}`);
+      }
+      if (options.screenOnly) { if (promotion.promoted.length) console.log(`Promoted but not run (--screen-only): ${promotion.promoted.join(", ")}. Run: evidra experiment run <id> --skip-reduced`); return; }
+      resultStore.close();
+      for (const experimentId of promotion.promoted) await cli(["experiment", "run", experimentId, "--skip-reduced"]);
+      const finalStore = new ResearchStore(statePath);
+      const champions = new Set(championExperimentIds(finalStore, activeCampaignStart(finalStore)));
+      for (const experimentId of promotion.promoted) finalStore.appendEvent("research.scout.recorded", { experimentId, stage: "full", improvement: null, valid: true, accepted: champions.has(experimentId), ...describe(experimentId) });
+      finalStore.close();
+    } finally {
+      try { resultStore.close(); } catch { /* already closed */ }
+    }
+  });
 program.addCommand(scout);
+
+program.command("hypothesis")
+  .description("Record a hand-written hypothesis (no LLM) so it can be proposed and run as an experiment")
+  .requiredOption("--title <title>", "short name")
+  .option("--family <family>", "method family (classified into a technique class)")
+  .option("--mechanism <text>", "why it should work")
+  .option("--env <assignments...>", "experiment environment overrides NAME=value")
+  .option("--mode <mode>", "modify or verify", "modify")
+  .action((options: { title: string; family?: string; mechanism?: string; env?: string[]; mode: string }) => {
+    const env = (options.env ?? []).map((assignment) => { const index = assignment.indexOf("="); if (index < 1) throw new Error(`--env expects NAME=value, got ${assignment}`); return { name: assignment.slice(0, index), value: assignment.slice(index + 1) }; });
+    const id = `hyp_${Date.now()}_${options.title.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 32)}`;
+    const store = new ResearchStore(statePath);
+    store.saveHypothesis({ id, payload: { id, title: options.title, formulationFamily: options.family ?? options.title, mechanism: options.mechanism ?? "", outcomeType: "metric", implementationMode: options.mode === "verify" ? "verify" : "modify", proposedChange: env.map((entry) => `${entry.name}=${entry.value}`).join(" ") || options.title, falsificationTest: "paired ratchet does not keep it", expectedMetricDelta: { low: 0, median: 0, high: 0 }, experimentEnvironment: env } });
+    store.close();
+    console.log(`${id}  [${classifyTechnique({ family: options.family ?? options.title, title: options.title })}]\nNext: evidra experiment propose ${id} && evidra experiment run <experiment id>`);
+  });
 
 const memory = new Command("memory").description("Search durable research claims, hypotheses, and sources");
 memory.command("search").argument("<query>").action((query: string) => {
@@ -7976,6 +8101,17 @@ experiment.command("run")
       const reducedEnvironment = await captureEnvironment(root, experimentCwd, reducedResult.command ?? reducedCommand, manifest.resources.executor, manifest.resources.gpu);
       const reducedEvidenceStore = new ResearchStore(statePath);
       const reduced = persistExecutionStageResult({ store: reducedEvidenceStore, experimentId: id, stage: "reduced_validation", result: reducedResult, primaryMetricName, command: reducedCommand, cwd: experimentCwd, executor: manifest.resources.executor, artifactRoot: join(root, ".sota", "artifacts"), environment: reducedEnvironment });
+      // Keep the screen's per-unit scores so scout promotion can pair it against the champion.
+      let reducedUnitScores: string | undefined;
+      if (reduced.status === "completed") {
+        for (const [name, source] of Object.entries(unitScoreFiles(adapter.config, reducedResult.cwd ?? experimentCwd))) {
+          const screenDir = join(root, ".sota", "artifacts", reduced.runId);
+          mkdirSync(screenDir, { recursive: true });
+          reducedUnitScores = join(screenDir, name);
+          copyFileSync(source, reducedUnitScores);
+          rmSync(source, { force: true });
+        }
+      }
       reducedEvidenceStore.close();
       executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", reduced.status === "completed" ? "completed" : "failed");
       const reducedStore = new ResearchStore(statePath);
@@ -8003,7 +8139,7 @@ experiment.command("run")
       if (options.reducedOnly) {
         const screenedStore = new ResearchStore(statePath);
         screenedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "screened", reducedRunId: reduced.runId, reducedMetric: reduced.metrics[primaryMetricName] ?? null, executionPlan } });
-        screenedStore.appendEvent("experiment.screening.completed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[primaryMetricName] ?? null, metrics: reduced.metrics, command: reducedCommand });
+        screenedStore.appendEvent("experiment.screening.completed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[primaryMetricName] ?? null, metrics: reduced.metrics, command: reducedCommand, ...(reducedUnitScores ? { unitScoresPath: reducedUnitScores } : {}) });
         screenedStore.close();
         console.log(`Experiment ${id}: reduced screening completed`);
         console.log(`Run: ${reduced.runId}`);
@@ -8292,7 +8428,7 @@ experiment.command("run")
           ? unitScoresArtifactPath((baselinePayload as { artifactPaths?: unknown } | undefined)?.artifactPaths)
           : unitScoresArtifactPath((resultStore.runs().find((entry) => entry.id === ratchet.sourceId)?.payload as { artifacts?: unknown } | undefined)?.artifacts);
         const pairedEvidence = pairedRatchetEvidence(adapter.config, referenceUnitScores, unitScoresArtifactPath(artifactPaths), ratchetPolicy);
-        const ratchetDecision = decideRatchet({ scalarImproved: ratchetComparison.direction === "improved", scalarDelta: ratchetComparison.delta === null ? null : primaryMetricDirection === "minimize" ? -ratchetComparison.delta : ratchetComparison.delta, paired: pairedEvidence.paired, policy: ratchetPolicy });
+        const ratchetDecision = applySegmentGates(decideRatchet({ scalarImproved: ratchetComparison.direction === "improved", scalarDelta: ratchetComparison.delta === null ? null : primaryMetricDirection === "minimize" ? -ratchetComparison.delta : ratchetComparison.delta, paired: pairedEvidence.paired, policy: ratchetPolicy }), judgeSegments(pairedEvidence.perSegment ?? {}, ratchetPolicy));
         resultStore.appendEvent("experiment.ratchet.checked", { experimentId: id, originalBaseline: baselineMetric, reference: ratchet, referenceRunId: ratchet.sourceId, referenceMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, comparison: ratchetComparison, decision: ratchetDecision, ...(pairedEvidence.note ? { unitScoreNote: pairedEvidence.note } : {}) });
         const ledgerHypothesis = hypothesis?.payload as { title?: unknown; formulationFamily?: unknown; mechanism?: unknown; proposedChange?: unknown } | undefined;
         const recordRatchetStep = (accepted: boolean, verdict: string, reason: string, stage: "full" | "holdout" = "full"): void => {
@@ -8318,6 +8454,7 @@ experiment.command("run")
               mode: ratchetDecision.mode,
               reason,
               ...(ratchetDecision.paired ? { ci: { lower: ratchetDecision.paired.lower, upper: ratchetDecision.paired.upper, confidence: ratchetDecision.paired.confidence, matched: ratchetDecision.paired.matched, probabilityImproved: ratchetDecision.paired.probabilityImproved } } : {}),
+              ...(ratchetDecision.segments?.length ? { segments: ratchetDecision.segments.map((entry) => ({ segment: entry.segment, role: entry.role, passed: entry.passed, ...(entry.paired ? { lower: entry.paired.lower, upper: entry.paired.upper, meanImprovement: entry.paired.meanImprovement, matched: entry.paired.matched } : {}) })) } : {}),
             });
           } catch (error) {
             resultStore.appendEvent("experiment.improvement_ledger.failed", { experimentId: id, error: error instanceof Error ? error.message : String(error) });

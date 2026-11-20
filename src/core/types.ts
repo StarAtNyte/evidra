@@ -95,6 +95,10 @@ export const CompetitionConfigSchema = z.object({
     /** Resample whole clusters (a segment column such as respondent id) instead of single units. */
     clusterBy: z.string().min(1).optional(),
     trim: z.number().min(0).max(0.45).default(0),
+    /** Per-stratum gates: a unit-score segment column (e.g. dataset), the deciding segments, and guard segments. */
+    segmentColumn: z.string().min(1).optional(),
+    requireSegments: z.array(z.string().min(1)).optional(),
+    guardSegments: z.array(z.string().min(1)).optional(),
   }).optional(),
   /** Broad exploration: screen several technique classes per round, promote only the best screens. */
   scout: z.object({

@@ -57,13 +57,24 @@ export function unitScoreDirection(config: Pick<CompetitionConfig, "evaluator" |
 }
 
 /** Paired evidence between two runs' unit-score artifacts, or an explanation of why there is none. */
-export function pairedRatchetEvidence(config: Pick<CompetitionConfig, "evaluator" | "metric">, referencePath: string | undefined, candidatePath: string | undefined, policy: RatchetPolicy): { paired?: PairedBootstrapResult; note?: string } {
+export function pairedRatchetEvidence(config: Pick<CompetitionConfig, "evaluator" | "metric">, referencePath: string | undefined, candidatePath: string | undefined, policy: RatchetPolicy): { paired?: PairedBootstrapResult; perSegment?: Record<string, PairedBootstrapResult>; note?: string } {
   if (!config.evaluator.unitScores) return { note: "evaluator.unitScores is not configured" };
   if (!referencePath || !candidatePath) return { note: `unit scores missing for the ${referencePath ? "candidate" : "reference"}` };
   try {
     const reference = loadRunUnitScores(referencePath, config);
     const candidate = loadRunUnitScores(candidatePath, config);
-    return { paired: pairedBootstrap(reference.units, candidate.units, { direction: unitScoreDirection(config), iterations: policy.iterations, confidence: policy.confidence, clusterBy: policy.clusterBy, trim: policy.trim }) };
+    const options = { direction: unitScoreDirection(config), iterations: policy.iterations, confidence: policy.confidence, clusterBy: policy.clusterBy, trim: policy.trim };
+    const paired = pairedBootstrap(reference.units, candidate.units, options);
+    const column = policy.segmentColumn;
+    const wanted = [...(policy.requireSegments ?? []), ...(policy.guardSegments ?? [])];
+    if (!column || !wanted.length) return { paired };
+    const perSegment: Record<string, PairedBootstrapResult> = {};
+    for (const segment of wanted) {
+      const pick = (units: typeof reference.units) => units.filter((unit) => String(unit.segments[column]) === segment);
+      const candidateUnits = pick(candidate.units);
+      if (candidateUnits.length) perSegment[segment] = pairedBootstrap(pick(reference.units), candidateUnits, options);
+    }
+    return { paired, perSegment };
   } catch (error) {
     return { note: `unit scores unreadable: ${error instanceof Error ? error.message : String(error)}` };
   }

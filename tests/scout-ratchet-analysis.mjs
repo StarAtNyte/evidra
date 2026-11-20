@@ -160,3 +160,19 @@ test("prediction rows feed the same loss decomposition", () => {
   assert.equal(report.gapTable[0].value, "north");
   assert.ok(report.gapTable[0].recoverableToMean > 0);
 });
+
+test("per-segment gates: deciding splits must clear the bar and guards must not lose", async () => {
+  const { applySegmentGates, judgeSegments } = await import("../dist/core/ratchet.js");
+  const ref = (n, shift = 0) => units(Array.from({ length: n }, (_, index) => Math.sin(index) + shift));
+  const good = pairedBootstrap(ref(100), ref(100, 0.01), { direction: "maximize" });
+  const bad = pairedBootstrap(ref(100), ref(100, -0.01), { direction: "maximize" });
+  const policy = resolveRatchetPolicy({ requireSegments: ["tx_s1", "tx_s2"], guardSegments: ["me_s1", "nh_s2"], segmentColumn: "dataset" });
+  const overall = decideRatchet({ scalarImproved: true, scalarDelta: 0.01, paired: good, policy });
+  const pass = applySegmentGates(overall, judgeSegments({ tx_s1: good, tx_s2: good, me_s1: good }, policy));
+  assert.equal(pass.accept, true);
+  assert.match(pass.reason, /unevaluated guards: nh_s2/);
+  assert.equal(applySegmentGates(overall, judgeSegments({ tx_s1: good }, policy)).accept, false, "a missing deciding split blocks");
+  const guardLoss = applySegmentGates(overall, judgeSegments({ tx_s1: good, tx_s2: good, me_s1: bad }, policy));
+  assert.equal(guardLoss.accept, false);
+  assert.equal(guardLoss.verdict, "regressed");
+});

@@ -224,6 +224,20 @@ export interface RatchetPolicy {
   minUnits: number;
   clusterBy?: string;
   trim: number;
+  /** Segment column (for example dataset) for per-stratum gates. */
+  segmentColumn?: string;
+  /** Segments whose own paired CI lower bound must also clear minLowerBound (the deciding splits). */
+  requireSegments?: string[];
+  /** Segments that must not show a CI-significant loss (upper bound < 0); unevaluated guards are reported, not blocking. */
+  guardSegments?: string[];
+}
+
+export interface SegmentEvidence {
+  segment: string;
+  role: "require" | "guard";
+  paired?: import("./unit-scores.js").PairedBootstrapResult;
+  passed: boolean | null;
+  note: string;
 }
 
 export const DEFAULT_RATCHET_POLICY: RatchetPolicy = { mode: "auto", confidence: 0.95, minLowerBound: 0, iterations: 2000, minUnits: 30, trim: 0 };
@@ -246,6 +260,36 @@ export interface RatchetDecision {
   reason: string;
   scalarImproved: boolean;
   paired?: import("./unit-scores.js").PairedBootstrapResult;
+  segments?: SegmentEvidence[];
+}
+
+/** Judge per-segment evidence: required segments must clear the bar, guards must not lose significantly. */
+export function judgeSegments(perSegment: Record<string, import("./unit-scores.js").PairedBootstrapResult | undefined>, policy: RatchetPolicy): SegmentEvidence[] {
+  const evidence: SegmentEvidence[] = [];
+  for (const segment of policy.requireSegments ?? []) {
+    const paired = perSegment[segment];
+    if (!paired || paired.matched < policy.minUnits) evidence.push({ segment, role: "require", ...(paired ? { paired } : {}), passed: false, note: `required segment ${segment} has ${paired?.matched ?? 0} matched units` });
+    else evidence.push({ segment, role: "require", paired, passed: paired.lower > policy.minLowerBound, note: `${segment} CI [${paired.lower.toPrecision(3)}, ${paired.upper.toPrecision(3)}]` });
+  }
+  for (const segment of policy.guardSegments ?? []) {
+    const paired = perSegment[segment];
+    if (!paired || paired.matched < policy.minUnits) evidence.push({ segment, role: "guard", ...(paired ? { paired } : {}), passed: null, note: `guard ${segment} not evaluated` });
+    else evidence.push({ segment, role: "guard", paired, passed: paired.upper >= 0, note: `${segment} CI [${paired.lower.toPrecision(3)}, ${paired.upper.toPrecision(3)}]` });
+  }
+  return evidence;
+}
+
+/** Apply per-segment gates on top of an overall decision. */
+export function applySegmentGates(decision: RatchetDecision, segments: SegmentEvidence[]): RatchetDecision {
+  if (!segments.length) return decision;
+  const failedRequire = segments.filter((entry) => entry.role === "require" && entry.passed === false);
+  const failedGuard = segments.filter((entry) => entry.role === "guard" && entry.passed === false);
+  const unevaluated = segments.filter((entry) => entry.passed === null).map((entry) => entry.segment);
+  const suffix = `${unevaluated.length ? `; unevaluated guards: ${unevaluated.join(", ")}` : ""}`;
+  if (!decision.accept) return { ...decision, segments, reason: `${decision.reason}${suffix}` };
+  if (failedGuard.length) return { ...decision, accept: false, verdict: "regressed", segments, reason: `guard segment loss: ${failedGuard.map((entry) => entry.note).join("; ")}` };
+  if (failedRequire.length) return { ...decision, accept: false, verdict: "noisy", segments, reason: `required segments not resolved: ${failedRequire.map((entry) => entry.note).join("; ")}` };
+  return { ...decision, segments, reason: `${decision.reason}; all required segments clear: ${segments.filter((entry) => entry.role === "require").map((entry) => entry.note).join("; ")}${suffix}` };
 }
 
 /** Decide one ratchet step from the scalar comparison and, when available, per-unit paired evidence. */

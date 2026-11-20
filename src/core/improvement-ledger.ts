@@ -32,6 +32,8 @@ export interface ImprovementEntry {
   mode: string;
   reason: string;
   ci?: { lower: number; upper: number; confidence: number; matched: number; probabilityImproved: number };
+  /** Per-stratum gate evidence (for example per dataset). */
+  segments?: Array<{ segment: string; role: string; lower?: number; upper?: number; meanImprovement?: number; matched?: number; passed: boolean | null }>;
   prev: string;
   sha: string;
 }
