@@ -148,6 +148,8 @@ test("loss analysis localizes the loss, estimates cross-fitted routing headroom,
   const routing = report.routing.find((entry) => entry.column === "country");
   assert.ok(routing.crossFittedGain > 0.05, `routing by country recovers B's advantage (${routing.crossFittedGain})`);
   assert.equal(routing.choices.NG, "B");
+  const ng = report.differences.find((entry) => entry.runId === "B" && entry.column === "country" && entry.value === "NG");
+  assert.ok(ng.meanDifference < -0.25, "A trails B on NG by B's advantage");
   assert.ok(report.oracle.gain > 0);
   const titles = report.hypotheses.map((entry) => entry.title);
   assert.ok(titles.includes("Targeted model for item=q3"));

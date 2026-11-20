@@ -71,6 +71,8 @@ export interface LossAnalysisReport {
   routing: RoutingHeadroom[];
   /** Cross-fitted shrink-toward-fallback headroom (needs unit mixture inputs). */
   calibration: CalibrationHeadroom[];
+  /** Where the primary differs from each comparison run: per-segment paired difference (primary minus run, oriented) and its share of the aggregate. */
+  differences: Array<{ runId: string; column: string; value: string; units: number; meanDifference: number; contribution: number }>;
   hypotheses: LossHypothesis[];
   notes: string[];
 }
@@ -297,6 +299,23 @@ export function analyzeUnitLoss(runs: readonly LossRun[], options: LossAnalysisO
     routing.sort((left, right) => right.crossFittedGain - left.crossFittedGain);
   }
 
+  const differences: LossAnalysisReport["differences"] = [];
+  for (let index = 1; index < runs.length; index += 1) {
+    const map = byRun[index];
+    for (const [column, keyOf] of split) {
+      const groups = new Map<string, { sum: number; count: number }>();
+      for (const unit of units) {
+        const other = map.get(unit.unit);
+        if (other === undefined) continue;
+        const key = keyOf(unit);
+        const entry = groups.get(key) ?? { sum: 0, count: 0 };
+        entry.sum += sign * (unit.score - other); entry.count += 1;
+        groups.set(key, entry);
+      }
+      for (const [value, entry] of groups) if (entry.count >= minSegmentUnits) differences.push({ runId: runs[index].id, column, value, units: entry.count, meanDifference: entry.sum / entry.count, contribution: entry.sum / units.length });
+    }
+  }
+  differences.sort((left, right) => Math.abs(right.contribution) - Math.abs(left.contribution));
   const se = standardError(scores);
   const calibration = calibrationHeadroom(units, split, foldOf, sign);
   const hypotheses = lossHypotheses({ gapTable, routing, oracle, worstDecileLossShare, runs: runSummaries, standardError: se, segments, calibration });
@@ -304,7 +323,7 @@ export function analyzeUnitLoss(runs: readonly LossRun[], options: LossAnalysisO
   if (runSummaries.slice(1).length && runSummaries.slice(1).every((run) => run.pairedImprovement !== undefined && run.pairedStandardError !== undefined && Math.abs(run.pairedImprovement) < 2 * run.pairedStandardError)) {
     notes.push("Every comparison run is within 2 paired standard errors of the primary: recent changes are indistinguishable from noise. Change structure (a different technique class), not knobs.");
   }
-  return { schemaVersion: 1, primaryRunId: primary.id, direction: options.direction, units: units.length, meanScore, standardError: se, ...(worstDecileLossShare !== undefined ? { worstDecileLossShare } : {}), segments: segments.slice(0, 400), gapTable, runs: runSummaries, ...(oracle ? { oracle } : {}), routing: routing.slice(0, 12), calibration, hypotheses, notes };
+  return { schemaVersion: 1, primaryRunId: primary.id, direction: options.direction, units: units.length, meanScore, standardError: se, ...(worstDecileLossShare !== undefined ? { worstDecileLossShare } : {}), segments: segments.slice(0, 400), gapTable, runs: runSummaries, ...(oracle ? { oracle } : {}), routing: routing.slice(0, 12), calibration, differences: differences.slice(0, 60), hypotheses, notes };
 }
 
 function hypothesis(input: Omit<LossHypothesis, "techniqueClass">): LossHypothesis {
@@ -415,6 +434,7 @@ export function lossAnalysisBrief(report: LossAnalysisReport): Record<string, un
     ...(report.oracle ? { oracle: { ...report.oracle, note: "optimistic upper bound: per-unit best-of-runs also picks up per-unit noise" } } : {}),
     routing: report.routing.slice(0, 4).map((entry) => ({ column: entry.column, crossFittedGain: entry.crossFittedGain, inSampleGain: entry.inSampleGain })),
     calibration: report.calibration.slice(0, 4).map((entry) => ({ per: entry.column, crossFittedGain: entry.crossFittedGain, inSampleGain: entry.inSampleGain })),
+    differences: report.differences.slice(0, 8),
     dataHypotheses: report.hypotheses,
     notes: report.notes,
   };
@@ -438,6 +458,7 @@ export function renderLossAnalysis(report: LossAnalysisReport): string {
     lines.push("## Runs", "", "| run | units | mean | paired vs primary | SE |", "|---|---|---|---|---|",
       ...report.runs.map((run) => `| ${run.id} | ${run.units} | ${format(run.meanScore)} | ${run.pairedImprovement !== undefined ? format(run.pairedImprovement) : "-"} | ${run.pairedStandardError !== undefined ? format(run.pairedStandardError) : "-"} |`), "");
   }
+  if (report.differences.length) lines.push(`## Where ${report.primaryRunId} differs from the comparison runs`, "", "| vs run | segment | units | mean difference | contribution to aggregate |", "|---|---|---|---|---|", ...report.differences.filter((entry) => entry.column !== "__none__").slice(0, 16).map((entry) => `| ${entry.runId} | ${entry.column}=${entry.value} | ${entry.units} | ${format(entry.meanDifference)} | ${format(entry.contribution)} |`), "");
   if (report.oracle) lines.push(`Per-unit oracle over runs: ${format(report.oracle.perUnitBestOfRuns)} vs best single ${format(report.oracle.bestSingleRun)} (gain ${format(report.oracle.gain)}).`, "");
   if (report.calibration.length) lines.push("## Calibration headroom (cross-fitted shrink toward fallback)", "", "| per | cross-fitted gain | in-sample gain |", "|---|---|---|", ...report.calibration.slice(0, 8).map((entry) => `| ${entry.column} | ${format(entry.crossFittedGain)} | ${format(entry.inSampleGain)} |`), "");
   if (report.routing.length) lines.push("## Routing headroom", "", "| column | cross-fitted gain | in-sample gain |", "|---|---|---|", ...report.routing.slice(0, 8).map((entry) => `| ${entry.column} | ${format(entry.crossFittedGain)} | ${format(entry.inSampleGain)} |`), "");
