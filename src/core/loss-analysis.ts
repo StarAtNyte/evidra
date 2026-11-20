@@ -308,7 +308,8 @@ export function analyzeUnitLoss(runs: readonly LossRun[], options: LossAnalysisO
 }
 
 function hypothesis(input: Omit<LossHypothesis, "techniqueClass">): LossHypothesis {
-  return { ...input, techniqueClass: classifyTechnique({ family: input.formulationFamily, title: input.title, mechanism: input.mechanism }) };
+  // Classify by the family only: titles and mechanisms quote segment names (e.g. "gtype=gated<-PREDICT") that would mislead the keyword classifier.
+  return { ...input, techniqueClass: classifyTechnique({ family: input.formulationFamily }) };
 }
 
 function format(value: number): string {

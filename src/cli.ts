@@ -2929,8 +2929,12 @@ analyze.command("loss")
   .option("--segments <columns>", "comma-separated segment columns (default: inferred)")
   .option("--predictions", "treat files as prediction artifacts (actual/predicted rows) and score 0/1 or absolute error")
   .option("--python <path>", "Python interpreter for Parquet/Feather")
+  .option("--logp-column <name>", "raw outcome log-prob column (with --fallback-column: calibration headroom)")
+  .option("--fallback-column <name>", "fallback predictor's outcome log-prob column, e.g. the crowd marginal")
+  .option("--scale-column <name>", "score = logp / scale (e.g. the dataset's reference R)")
+  .option("--fold-by <column>", "cross-fitting fold cluster, e.g. respondent id")
   .option("--json", "emit the full report as JSON")
-  .action((files: string[], options: { direction?: string; labels?: string; idColumn?: string; scoreColumn?: string; segments?: string; predictions?: boolean; python?: string; json?: boolean }) => {
+  .action((files: string[], options: { direction?: string; labels?: string; idColumn?: string; scoreColumn?: string; segments?: string; predictions?: boolean; python?: string; logpColumn?: string; fallbackColumn?: string; scaleColumn?: string; foldBy?: string; json?: boolean }) => {
     const labels = options.labels?.split(",").map((label) => label.trim()) ?? [];
     const direction = options.predictions ? "minimize" : options.direction === "minimize" || options.direction === "maximize" ? options.direction : undefined;
     if (!direction) throw new Error("--direction maximize|minimize is required for unit-score files.");
@@ -2938,9 +2942,9 @@ analyze.command("loss")
       id: labels[index] || basename(file),
       table: options.predictions
         ? unitScoresFromPredictionRows(parsePredictionRows(file.endsWith(".jsonl") ? readFileSync(file, "utf8") : JSON.parse(readFileSync(file, "utf8")) as unknown))
-        : loadUnitScores(file, { idColumn: options.idColumn, scoreColumn: options.scoreColumn, segmentColumns: options.segments?.split(",").map((column) => column.trim()).filter(Boolean), python: options.python }),
+        : loadUnitScores(file, { idColumn: options.idColumn, scoreColumn: options.scoreColumn, segmentColumns: options.segments?.split(",").map((column) => column.trim()).filter(Boolean), python: options.python, logpColumn: options.logpColumn, fallbackColumn: options.fallbackColumn, scaleColumn: options.scaleColumn }),
     }));
-    const report = analyzeUnitLoss(runs, { direction });
+    const report = analyzeUnitLoss(runs, { direction, foldBy: options.foldBy });
     console.log(options.json ? JSON.stringify(report, null, 2) : renderLossAnalysis(report));
   });
 analyze.command("campaign")
