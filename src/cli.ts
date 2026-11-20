@@ -140,6 +140,7 @@ import type { AgentProvider } from "./agents/codex-exec.js";
 import { DEFAULT_FORBIDDEN_ENV, environmentSnapshot, extractTraceback, knownRepair, parseRepairAction, rememberRepair, rememberedEnvironment, REPAIR_INSTRUCTIONS, repairPolicyViolations, runRepairCommand, tail, writeEscalation, type EvidencePack, type RepairAction } from "./core/self-repair.js";
 import { planSupervisorTick, type LiveWorker, type QueuedExperiment, type SupervisorPolicy } from "./core/supervisor.js";
 import { failureSignature, candidateDependencies, checkResources, classifyLaunchFailure, dependencyStatus, detectSystemicFailure, missingEnvironment, parseTimeVerbose, resolveEnvContract, resolveLaunchPolicy, resourcesFromOutput, type Dependency, type DependencyStatus, type LaunchClassification, type RecordedFailure, type ResourceVerdict } from "./core/launch-guard.js";
+import { loadCardFile, rankTheoryCards, cardStatus, analysisNumbersFromBrief, ideationBrief, isWild, planIdeationRound, readTheoryLedger, recordTheoryVerdict, completeTheoryWriteup, validateTheoryCard, type AnalysisNumbers, type AnyCard } from "./core/theory-cards.js";
 import { appendImprovement, effectiveImprovements, ledgerPaths, readImprovementLedger, renderImprovementLedger, verifyImprovementLedger } from "./core/improvement-ledger.js";
 import { classifyTechnique, planScoutRound, promoteScoutScreens, resolveScoutPolicy, scoutBrief, scoutLedgerFromEvents, summarizeScoutLedger, techniqueLabel, TECHNIQUE_CLASSES, type ScoutPolicy } from "./core/scout.js";
 import { analyzeUnitLoss, renderLossAnalysis } from "./core/loss-analysis.js";
@@ -406,6 +407,83 @@ async function holdoutMetricFor(cwd: string, command: string[], environment: Nod
  * overridden by --scout. The flag is recorded once per campaign so a resume
  * keeps scout mode without repeating it.
  */
+/** Latest loss-analysis numbers per state directory, used to check theory-card arithmetic. */
+const ideationAnalysis = new Map<string, AnalysisNumbers>();
+
+/**
+ * Write a ratchet or screen verdict back onto the hypothesis's theory card (confirmed/falsified),
+ * flag predicted-vs-observed disagreements, and refresh the loss decomposition.
+ */
+function recordCardVerdict(stateDirectory: string, store: ResearchStore, config: ReturnType<typeof activeCompetition>["config"], hypothesis: unknown, experimentId: string, outcome: { ratchetVerdict: string; observedGain: number | null; ci?: { lower: number; upper: number }; segments?: Array<{ segment: string; paired?: { meanImprovement: number; lower: number; upper: number } }> }): void {
+  const raw = (hypothesis as { theoryCard?: unknown } | undefined)?.theoryCard;
+  if (raw === undefined || raw === null) return;
+  try {
+    const { card } = validateTheoryCard(raw);
+    if (!card) return;
+    const target = card.prediction?.segment ?? (!isWild(card) ? card.expectedGain.inputs.segment : undefined);
+    const matched = target ? outcome.segments?.find((entry) => entry.paired && (entry.segment === target || target.endsWith(`=${entry.segment}`))) : undefined;
+    const verdict = recordTheoryVerdict(stateDirectory, card, { experimentId, ratchetVerdict: outcome.ratchetVerdict, observedGain: outcome.observedGain, ...(outcome.ci ? { ci: { lower: outcome.ci.lower, upper: outcome.ci.upper } } : {}), ...(matched?.paired ? { segmentObserved: { segment: matched.segment, meanImprovement: matched.paired.meanImprovement, lower: matched.paired.lower, upper: matched.paired.upper } } : {}) });
+    store.appendEvent("research.theory.verdict", { ...verdict });
+    if (verdict.mechanismMismatch) store.appendEvent("research.theory.mismatch", { cardId: verdict.cardId, experimentId, mismatch: verdict.mechanismMismatch, predictedGain: verdict.predictedGain, observedGain: verdict.observedGain });
+    const refreshed = campaignLossAnalysis(store, config, campaignSearchState(store, config.metric).champion?.experimentId);
+    if (refreshed && "brief" in refreshed) {
+      ideationAnalysis.set(stateDirectory, analysisNumbersFromBrief(refreshed.brief));
+      store.appendEvent("research.loss_analysis.refreshed", { afterExperimentId: experimentId, cardId: verdict.cardId, gapTable: (refreshed.brief as { gapTable?: unknown[] }).gapTable?.slice(0, 5) ?? [] });
+    }
+  } catch (error) {
+    store.appendEvent("research.theory.verdict_failed", { experimentId, error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+/**
+ * Theory-card gate for one director round: cards without their math are sent back (deferred) before
+ * any compute; the valid ones are planned with a wild-card quota, gain x probability / cost ranking,
+ * and one technique class per round. Returns a deferral reason per hypothesis (undefined = proceed).
+ */
+function ideationGate(stateDirectory: string, store: ResearchStore, config: ReturnType<typeof activeCompetition>["config"], cycle: number, hypotheses: ReadonlyArray<{ title: string; theoryCard?: unknown }>, already: ReadonlyArray<string | undefined>, defaultScreens: number): Array<string | undefined> {
+  const settings = config.ideation;
+  if (!settings || settings.theoryCards === false) return hypotheses.map(() => undefined);
+  const analysis = ideationAnalysis.get(stateDirectory) ?? {};
+  const reasons: Array<string | undefined> = hypotheses.map(() => undefined);
+  const valid: Array<{ index: number; card: AnyCard }> = [];
+  const sentBack: Array<{ title: string; issues: string[] }> = [];
+  for (const [index, hypothesis] of hypotheses.entries()) {
+    if (already[index]) continue;
+    if (hypothesis.theoryCard === undefined || hypothesis.theoryCard === null) { reasons[index] = "theory card missing: sent back to the director"; sentBack.push({ title: hypothesis.title, issues: ["no theoryCard"] }); continue; }
+    const checked = validateTheoryCard(hypothesis.theoryCard, analysis, { wildMaxCost: settings.wildMaxCost });
+    if (!checked.card || checked.issues.length) {
+      const issues = checked.issues.map((issue) => `${issue.field}: ${issue.message}`);
+      reasons[index] = `theory card sent back: ${issues.join("; ")}`;
+      sentBack.push({ title: hypothesis.title, issues });
+      continue;
+    }
+    if (!isWild(checked.card)) for (const pending of readTheoryLedger(stateDirectory).filter((entry) => entry.theoryPending && entry.cardId === (checked.card!.id ?? checked.card!.title))) completeTheoryWriteup(stateDirectory, pending.cardId, checked.card);
+    valid.push({ index, card: { ...checked.card, id: checked.card.id ?? hypothesis.title } });
+  }
+  if (sentBack.length) store.appendEvent("research.ideation.sent_back", { cycle, cards: sentBack });
+  const tried: Record<string, number> = {};
+  for (const entry of readImprovementLedger(stateDirectory)) if (entry.techniqueClass) tried[entry.techniqueClass] = (tried[entry.techniqueClass] ?? 0) + 1;
+  const plan = planIdeationRound(valid.map((entry) => entry.card), readTheoryLedger(stateDirectory), { screens: settings.screens ?? defaultScreens, wildQuota: settings.wildQuota, triedClasses: tried, ...(analysis.noiseFloor !== undefined ? { defaultSpread: analysis.noiseFloor } : {}) });
+  for (const { card, reason } of plan.deferred) {
+    const entry = valid.find((candidate) => candidate.card === card);
+    if (entry) reasons[entry.index] = `ideation: not selected this round (${reason})`;
+  }
+  const citations = valid.flatMap(({ card }) => (!isWild(card) ? card.citations : []).map((citation) => ({ card: card.title, ...citation })));
+  store.appendEvent("research.ideation.planned", { cycle, wildSlots: plan.wildSlots, breadthIssues: plan.breadthIssues, citations, selected: plan.selected.map((entry) => ({ title: entry.card.title, origin: entry.card.origin, techniqueClass: entry.techniqueClass, slot: entry.slot, score: entry.score, reason: entry.reason, ...(entry.card.origin === "new_theory" ? { status: "new/unproven" } : {}) })) });
+  if (plan.breadthIssues.length) store.appendEvent("research.ideation.sent_back", { cycle, round: plan.breadthIssues });
+  return reasons;
+}
+
+function campaignIdeationContext(stateDirectory: string, store: ResearchStore, config: ReturnType<typeof activeCompetition>["config"]): Record<string, unknown> | null {
+  const settings = config.ideation;
+  if (!settings || settings.theoryCards === false) return null;
+  const sentBack = store.eventsByType("research.ideation.sent_back").slice(-2).flatMap((event) => {
+    const payload = event.payload as { cards?: Array<{ title: string; issues: string[] }>; round?: string[] };
+    return [...(payload.cards ?? []), ...(payload.round ? [{ title: "round", issues: payload.round }] : [])];
+  });
+  return ideationBrief(readTheoryLedger(stateDirectory), { wildQuota: settings.wildQuota, wildMaxCost: settings.wildMaxCost, sentBack });
+}
+
 function campaignScoutPolicy(store: ResearchStore, config: ReturnType<typeof activeCompetition>["config"], cliWidth?: string): ScoutPolicy {
   const since = activeCampaignStart(store);
   const requested = cliWidth !== undefined ? Number(cliWidth) : undefined;
@@ -3165,6 +3243,31 @@ scout.command("judge")
   });
 program.addCommand(scout);
 
+const theory = new Command("theory").description("Theory cards: check a card's math, rank cards, show the theory ledger");
+theory.command("check")
+  .argument("<files...>", "theory card JSON files")
+  .description("Validate cards (math, citations, arithmetic against the loss analysis, selection-noise risk) and rank the valid ones")
+  .option("--json", "print JSON")
+  .action((files: string[], options: { json?: boolean }) => {
+    const ledger = readTheoryLedger(stateDirectory);
+    const analysis = ideationAnalysis.get(stateDirectory) ?? {};
+    const results = files.map((file) => ({ file, ...validateTheoryCard(loadCardFile(resolve(file)), analysis, { wildMaxCost: activeCompetition().config.ideation?.wildMaxCost ?? 1 }) }));
+    const valid = results.filter((entry) => entry.card && !entry.issues.length).map((entry) => entry.card!);
+    const ranked = rankTheoryCards(valid, ledger);
+    if (options.json) { console.log(JSON.stringify({ results: results.map((entry) => ({ file: entry.file, issues: entry.issues, risk: entry.risk })), ranked: ranked.map((entry) => ({ title: entry.card.title, score: entry.score, reason: entry.reason })) }, null, 2)); return; }
+    for (const entry of results) console.log(`${entry.file}: ${entry.issues.length ? `sent back\n  ${entry.issues.map((issue) => `${issue.field}: ${issue.message}`).join("\n  ")}` : `ok (${cardStatus(entry.card!, ledger)})`}`);
+    for (const entry of ranked) console.log(`  ${entry.score.toExponential(2)}  ${entry.card.title}  ${entry.reason}`);
+    if (results.some((entry) => entry.issues.length)) process.exitCode = 1;
+  });
+theory.command("ledger")
+  .description("Show recorded theory verdicts (confirmed/falsified), mechanism mismatches and pending write-ups")
+  .action(() => {
+    const ledger = readTheoryLedger(stateDirectory);
+    if (!ledger.length) { console.log("No theory verdicts yet."); return; }
+    for (const entry of ledger) console.log(`${entry.verdict.padEnd(12)} ${entry.origin.padEnd(11)} ${entry.techniqueClass.padEnd(22)} predicted ${entry.predictedGain.toExponential(2)} observed ${entry.observedGain === null ? "n/a" : entry.observedGain.toExponential(2)}  ${entry.title}${entry.theoryPending ? "  [promoted; theory write-up pending]" : ""}${entry.mechanismMismatch ? `\n    mechanism: ${entry.mechanismMismatch}` : ""}`);
+  });
+program.addCommand(theory);
+
 program.command("hypothesis")
   .description("Record a hand-written hypothesis (no LLM) so it can be proposed and run as an experiment")
   .requiredOption("--title <title>", "short name")
@@ -3174,12 +3277,19 @@ program.command("hypothesis")
   .option("--paired-reference <path>", "unit-score file the screen and ratchet should pair against (e.g. the parent's), instead of the champion")
   .option("--depends-on <paths...>", "artifacts this candidate needs; each must carry the readiness marker (path or path:markerFile)")
   .option("--mode <mode>", "modify or verify", "modify")
-  .action((options: { title: string; family?: string; mechanism?: string; env?: string[]; dependsOn?: string[]; pairedReference?: string; mode: string }) => {
+  .option("--theory-card <file>", "theory card JSON (see evidra theory check); rejected cards are not recorded")
+  .action((options: { title: string; family?: string; mechanism?: string; env?: string[]; dependsOn?: string[]; pairedReference?: string; mode: string; theoryCard?: string }) => {
+    let theoryCard: unknown;
+    if (options.theoryCard) {
+      theoryCard = loadCardFile(resolve(options.theoryCard));
+      const checked = validateTheoryCard(theoryCard, ideationAnalysis.get(stateDirectory) ?? {}, { wildMaxCost: activeCompetition().config.ideation?.wildMaxCost ?? 1 });
+      if (checked.issues.length) { for (const issue of checked.issues) console.error(`${issue.field}: ${issue.message}`); throw new Error("theory card rejected; fix it before any compute is spent"); }
+    }
     const dependsOn = (options.dependsOn ?? []).map((entry) => { const [path, file] = entry.split(":"); return { path, ...(file ? { readyWhen: { file } } : {}) }; });
     const env = (options.env ?? []).map((assignment) => { const index = assignment.indexOf("="); if (index < 1) throw new Error(`--env expects NAME=value, got ${assignment}`); return { name: assignment.slice(0, index), value: assignment.slice(index + 1) }; });
     const id = `hyp_${Date.now()}_${options.title.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 32)}`;
     const store = new ResearchStore(statePath);
-    store.saveHypothesis({ id, payload: { id, title: options.title, formulationFamily: options.family ?? options.title, mechanism: options.mechanism ?? "", outcomeType: "metric", implementationMode: options.mode === "verify" ? "verify" : "modify", proposedChange: env.map((entry) => `${entry.name}=${entry.value}`).join(" ") || options.title, falsificationTest: "paired ratchet does not keep it", expectedMetricDelta: { low: 0, median: 0, high: 0 }, experimentEnvironment: env, ...(dependsOn.length ? { dependsOn } : {}), ...(options.pairedReference ? { pairedReference: options.pairedReference } : {}) } });
+    store.saveHypothesis({ id, payload: { id, title: options.title, formulationFamily: options.family ?? options.title, mechanism: options.mechanism ?? "", outcomeType: "metric", implementationMode: options.mode === "verify" ? "verify" : "modify", proposedChange: env.map((entry) => `${entry.name}=${entry.value}`).join(" ") || options.title, falsificationTest: "paired ratchet does not keep it", expectedMetricDelta: { low: 0, median: 0, high: 0 }, experimentEnvironment: env, ...(dependsOn.length ? { dependsOn } : {}), ...(options.pairedReference ? { pairedReference: options.pairedReference } : {}), ...(theoryCard !== undefined ? { theoryCard } : {}) } });
     store.close();
     console.log(`${id}  [${classifyTechnique({ family: options.family ?? options.title, title: options.title })}]\nNext: evidra experiment propose ${id} && evidra experiment run <experiment id>`);
   });
@@ -6674,13 +6784,15 @@ research
           const directorScoutPolicy = campaignScoutPolicy(verifiedStateStore, adapter.config, options.scout);
           const scoutContext = directorScoutPolicy.enabled ? scoutBrief(campaignScoutLedger(verifiedStateStore, adapter.config.metric), directorScoutPolicy) : null;
           const lossAnalysis = campaignLossAnalysis(verifiedStateStore, adapter.config, experimentHistory.champion?.experimentId);
+          if (lossAnalysis && "brief" in lossAnalysis) ideationAnalysis.set(stateDirectory, analysisNumbersFromBrief(lossAnalysis.brief));
+          const ideationContext = campaignIdeationContext(stateDirectory, verifiedStateStore, adapter.config);
           if (lossAnalysis && "report" in lossAnalysis) {
             verifiedStateStore.appendEvent("research.loss_analysis.completed", { cycle, primaryRunId: lossAnalysis.report.primaryRunId, units: lossAnalysis.report.units, standardError: lossAnalysis.report.standardError, gapTable: lossAnalysis.report.gapTable.slice(0, 5), routing: lossAnalysis.report.routing.slice(0, 3), oracle: lossAnalysis.report.oracle ?? null, hypotheses: lossAnalysis.report.hypotheses.map((entry) => ({ title: entry.title, techniqueClass: entry.techniqueClass, expectedGain: entry.expectedGain })) });
           } else if (lossAnalysis && "error" in lossAnalysis) {
             verifiedStateStore.appendEvent("research.loss_analysis.failed", { cycle, error: lossAnalysis.error });
           }
           verifiedStateStore.close();
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, ...experimentHistory, ...(scoutContext ? { scout: scoutContext } : {}), ...(lossAnalysis && "brief" in lossAnalysis ? { lossAnalysis: lossAnalysis.brief } : {}), constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, authoritativeEvidence: researchMemory.authoritativeObservations, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, laneToolResults: laneToolObservationContext(laneReports), crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness, goalProgress, triggerContext: campaign.triggerContext ? { eventType: campaign.triggerContext.eventType, eventCreatedAt: campaign.triggerContext.eventCreatedAt, trust: "external_wakeup_signal" } : null }, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, taskId: cycleTaskId, goalId: phaseGoal?.id ?? null, parentTaskId: cycleTaskId, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, onToolBudgetExhausted: (details) => {
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, ...experimentHistory, ...(scoutContext ? { scout: scoutContext } : {}), ...(lossAnalysis && "brief" in lossAnalysis ? { lossAnalysis: lossAnalysis.brief } : {}), ...(ideationContext ? { ideation: ideationContext } : {}), constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, authoritativeEvidence: researchMemory.authoritativeObservations, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, laneToolResults: laneToolObservationContext(laneReports), crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness, goalProgress, triggerContext: campaign.triggerContext ? { eventType: campaign.triggerContext.eventType, eventCreatedAt: campaign.triggerContext.eventCreatedAt, trust: "external_wakeup_signal" } : null }, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, taskId: cycleTaskId, goalId: phaseGoal?.id ?? null, parentTaskId: cycleTaskId, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, onToolBudgetExhausted: (details) => {
             const exhaustedStore = new ResearchStore(statePath);
             exhaustedStore.appendEvent("research.director.tool_budget.exhausted", { cycle, goalId: phaseGoal?.id ?? null, ...details });
             exhaustedStore.close();
@@ -6975,7 +7087,9 @@ research
         return [{ operator: payload.operator, actualMinutes: payload.durationSeconds / 60, status: payload.valid === true ? "completed" : "failed", context: { executor: typeof (payload as { executor?: unknown }).executor === "string" ? (payload as { executor: string }).executor : undefined, gpu: typeof (payload as { gpu?: unknown }).gpu === "string" ? (payload as { gpu: string }).gpu : undefined, provider: typeof (payload as { provider?: unknown }).provider === "string" ? (payload as { provider: string }).provider : undefined, model: typeof (payload as { model?: unknown }).model === "string" ? (payload as { model: string }).model : undefined } }];
       });
       const falsificationByHypothesisId = new Map(researchMemory.falsificationAgenda.map((item) => [item.hypothesisId, item]));
-      const incompleteVerificationReasons = decision.hypotheses.map((hypothesis) => incompleteVerificationProposal(hypothesis) ?? unreadyReason(adapter.config, hypothesis));
+      const verificationReasons = decision.hypotheses.map((hypothesis) => incompleteVerificationProposal(hypothesis) ?? unreadyReason(adapter.config, hypothesis));
+      const ideationReasons = ideationGate(stateDirectory, decisionStore, adapter.config, cycle, decision.hypotheses, verificationReasons, campaignScoutPolicy(decisionStore, adapter.config, options.scout).width);
+      const incompleteVerificationReasons = verificationReasons.map((reason, index) => reason ?? ideationReasons[index]);
       for (const [index, reason] of incompleteVerificationReasons.entries()) {
         if (reason) decisionStore.appendEvent("research.portfolio.candidate_deferred", { cycle, hypothesisId: materialized.hypothesisIds[index], title: decision.hypotheses[index]?.title, reason });
       }
@@ -8273,13 +8387,14 @@ program.command("supervise")
   .option("--max-minutes <minutes>", "stop after this long (workers are left to finish)")
   .action(async (options: { workers: string; stallMinutes: string; maxRestarts: string; intervalSeconds: string; parkedBackoffMinutes: string; exitWhenIdle?: boolean; maxMinutes?: string }) => {
     const adapter = activeCompetition();
-    const policy: Partial<SupervisorPolicy> = { workers: Math.max(1, Number(options.workers) || 1), stallMinutes: Number(options.stallMinutes), maxRestarts: Number(options.maxRestarts), parkedBackoffMinutes: Number(options.parkedBackoffMinutes) };
+    const policy: Partial<SupervisorPolicy> = { workers: Math.max(1, Number(options.workers) || 1), stallMinutes: Number(options.stallMinutes), maxRestarts: Number(options.maxRestarts), parkedBackoffMinutes: Number(options.parkedBackoffMinutes), wildQuota: adapter.config.ideation?.wildQuota ?? 0.2 };
     const logDir = join(stateDirectory, "supervisor");
     mkdirSync(logDir, { recursive: true });
     const workers = new Map<string, { child: ReturnType<typeof spawn>; worker: LiveWorker; settled: Promise<number | null> }>();
     const finished = new Set<string>();
     const started = Date.now();
     const record = (type: string, payload: Record<string, unknown>) => { const store = new ResearchStore(statePath); store.appendEvent(type, payload); store.close(); };
+    const wildExperiments = new Set<string>();
     const launchWorker = (experimentId: string, lane: string, restarts: number, reason: string) => {
       const store = new ResearchStore(statePath);
       const status = (store.experiments().find((entry) => entry.id === experimentId)?.payload as { status?: unknown; reducedRunId?: unknown } | undefined);
@@ -8292,7 +8407,7 @@ program.command("supervise")
       const worker: LiveWorker = { experimentId, lane, startedAt: new Date().toISOString(), restarts };
       const settled = new Promise<number | null>((resolveExit) => child.on("exit", (code) => { worker.exited = { code, at: new Date().toISOString() }; resolveExit(code); }));
       workers.set(experimentId, { child, worker, settled });
-      record("supervisor.launched", { experimentId, lane, restarts, reason, pid: child.pid, args });
+      record("supervisor.launched", { experimentId, lane, restarts, reason, pid: child.pid, args, wild: wildExperiments.has(experimentId) });
       console.log(`launch ${experimentId} [${lane}] ${reason}`);
     };
     const stopWorker = async (experimentId: string) => {
@@ -8320,16 +8435,18 @@ program.command("supervise")
       const parked = new Map<string, string>();
       for (const event of store.eventsByTypes(["supervisor.parked", "experiment.dependency.waiting"])) parked.set(String((event.payload as { experimentId?: unknown }).experimentId), event.createdAt ?? new Date().toISOString());
       const queue: QueuedExperiment[] = store.experiments().filter((entry) => (entry.payload as { status?: unknown }).status === "proposed" && !finished.has(entry.id)).map((entry) => {
-        const hypothesis = hypotheses.get(String((entry.payload as { hypothesisId?: unknown }).hypothesisId)) as { title?: string; formulationFamily?: string; mechanism?: string } | undefined;
-        return { experimentId: entry.id, lane: classifyTechnique({ family: hypothesis?.formulationFamily, title: hypothesis?.title, mechanism: hypothesis?.mechanism }), ready: launchReadiness(adapter.config, hypothesis).ready, ...(parked.has(entry.id) ? { parkedAt: parked.get(entry.id) } : {}) };
+        const hypothesis = hypotheses.get(String((entry.payload as { hypothesisId?: unknown }).hypothesisId)) as { title?: string; formulationFamily?: string; mechanism?: string; theoryCard?: { origin?: unknown } } | undefined;
+        const wild = hypothesis?.theoryCard?.origin === "wild";
+        if (wild) wildExperiments.add(entry.id);
+        return { experimentId: entry.id, wild, lane: classifyTechnique({ family: hypothesis?.formulationFamily, title: hypothesis?.title, mechanism: hypothesis?.mechanism }), ready: launchReadiness(adapter.config, hypothesis).ready, ...(parked.has(entry.id) ? { parkedAt: parked.get(entry.id) } : {}) };
       });
       const heartbeats = new Map<string, string>();
       for (const event of store.eventsByType("run.heartbeat")) { const payload = event.payload as { experimentId?: string; heartbeatAt?: string }; if (payload.experimentId && payload.heartbeatAt) heartbeats.set(payload.experimentId, payload.heartbeatAt); }
-      const history = store.eventsByType("supervisor.launched").map((event) => ({ experimentId: String((event.payload as { experimentId?: unknown }).experimentId), lane: String((event.payload as { lane?: unknown }).lane), at: event.createdAt ?? "" }));
+      const history = store.eventsByType("supervisor.launched").map((event) => ({ experimentId: String((event.payload as { experimentId?: unknown }).experimentId), lane: String((event.payload as { lane?: unknown }).lane), at: event.createdAt ?? "", wild: (event.payload as { wild?: unknown }).wild === true }));
       store.close();
       const live = [...workers.values()].map(({ worker }) => ({ ...worker, ...(heartbeats.has(worker.experimentId) ? { lastHeartbeatAt: heartbeats.get(worker.experimentId) } : {}) }));
       const decision = planSupervisorTick({ queue, workers: live, ledger: readImprovementLedger(stateDirectory), history, now: Date.now(), policy });
-      for (const warning of decision.warnings) if (!warned.has(warning)) { warned.add(warning); record("supervisor.diversity.warning", { warning }); console.log(warning); }
+      for (const warning of decision.warnings) if (!warned.has(warning)) { warned.add(warning); record("supervisor.diversity.warning", { warning, ...(decision.wild ? { wild: decision.wild } : {}) }); console.log(warning); }
       for (const { experimentId, reason } of decision.restart) {
         const entry = workers.get(experimentId)!;
         await stopWorker(experimentId);
@@ -8683,6 +8800,7 @@ experiment.command("run")
             const ledgerHypothesis = hypothesis?.payload as { title?: string; formulationFamily?: string; mechanism?: string } | undefined;
             appendImprovement(stateDirectory, { experimentId: id, runId: reduced.runId, stage: "screen", title: ledgerHypothesis?.title, family: ledgerHypothesis?.formulationFamily, techniqueClass: classifyTechnique({ family: ledgerHypothesis?.formulationFamily, title: ledgerHypothesis?.title, mechanism: ledgerHypothesis?.mechanism }), metricName: primaryMetricName, direction: primaryMetricDirection, referenceId: referenceLabel, referenceMetric: null, candidateMetric: reduced.metrics[primaryMetricName] ?? null, improvement: paired.meanImprovement, accepted: false, verdict, mode: "paired", reason, ci: { lower: paired.lower, upper: paired.upper, confidence: paired.confidence, matched: paired.matched, probabilityImproved: paired.probabilityImproved }, ...(reducedResources ? { resources: { ...(reducedResources.peakRssMb !== undefined ? { peakRssMb: reducedResources.peakRssMb } : {}), ...(reducedResources.wallSeconds !== undefined ? { wallSeconds: reducedResources.wallSeconds } : {}), ok: reducedResources.ok, reasons: reducedResources.reasons } } : {}) });
           } catch (error) { gateStore.appendEvent("experiment.improvement_ledger.failed", { experimentId: id, error: error instanceof Error ? error.message : String(error) }); }
+          recordCardVerdict(stateDirectory, gateStore, adapter.config, hypothesis?.payload, id, { ratchetVerdict: `screen_${verdict}`, observedGain: paired.meanImprovement, ci: { lower: paired.lower, upper: paired.upper } });
           gateStore.close();
           throw new Error(`Experiment ${id} did not earn a full evaluation (${verdict}): ${reason}`);
         }
@@ -9040,6 +9158,7 @@ experiment.command("run")
               ...(runResources ? { resources: { ...(runResources.peakRssMb !== undefined ? { peakRssMb: runResources.peakRssMb } : {}), ...(runResources.wallSeconds !== undefined ? { wallSeconds: runResources.wallSeconds } : {}), ...(runResources.predictedHostedWallSeconds !== undefined ? { predictedHostedWallSeconds: runResources.predictedHostedWallSeconds } : {}), ...(runResources.measuredHostedWallSeconds !== undefined ? { measuredHostedWallSeconds: runResources.measuredHostedWallSeconds } : {}), ok: runResources.ok, reasons: runResources.reasons } } : {}),
               ...(ratchetDecision.segments?.length ? { segments: ratchetDecision.segments.map((entry) => ({ segment: entry.segment, role: entry.role, passed: entry.passed, ...(entry.paired ? { lower: entry.paired.lower, upper: entry.paired.upper, meanImprovement: entry.paired.meanImprovement, matched: entry.paired.matched } : {}) })) } : {}),
             });
+            recordCardVerdict(stateDirectory, resultStore, adapter.config, ledgerHypothesis, id, { ratchetVerdict: verdict, observedGain: ratchetDecision.paired?.meanImprovement ?? (typeof candidateMetric === "number" && typeof referenceMetric === "number" ? (primaryMetricDirection === "minimize" ? referenceMetric - candidateMetric : candidateMetric - referenceMetric) : null), ...(ratchetDecision.paired ? { ci: { lower: ratchetDecision.paired.lower, upper: ratchetDecision.paired.upper } } : {}), ...(ratchetDecision.segments?.length ? { segments: ratchetDecision.segments.map((entry) => ({ segment: entry.segment, ...(entry.paired ? { paired: { meanImprovement: entry.paired.meanImprovement, lower: entry.paired.lower, upper: entry.paired.upper } } : {}) })) } : {}) });
           } catch (error) {
             resultStore.appendEvent("experiment.improvement_ledger.failed", { experimentId: id, error: error instanceof Error ? error.message : String(error) });
           }

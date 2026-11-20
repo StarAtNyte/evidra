@@ -1,0 +1,85 @@
+{
+  "note": "SimulacraBench-shaped cards: respondent x question cells scored by cps_skill (log-loss skill), datasets tx_s1/tx_s2/me_s1/nh_s2. Numbers are illustrative, in the shape of the loss analysis (gapTable recoverable-to-best per dataset, noise floor 2 SE).",
+  "analysis": {
+    "noiseFloor": 0.0006,
+    "headroom": { "dataset=tx_s1": 0.004, "dataset=tx_s2": 0.003, "dataset=me_s1": 0.002, "dataset=nh_s2": 0.012 },
+    "share": { "dataset=tx_s1": 0.31, "dataset=tx_s2": 0.27, "dataset=me_s1": 0.22, "dataset=nh_s2": 0.20 }
+  },
+  "cards": [
+    {
+      "id": "ts-per-dataset",
+      "title": "Per-dataset temperature scaling of the champion",
+      "origin": "literature",
+      "family": "calibration temperature",
+      "citations": [{ "title": "On Calibration of Modern Neural Networks", "venue": "ICML", "year": 2017, "url": "https://arxiv.org/abs/1706.04599" }],
+      "model": "p_hat_T(y|x) = softmax(log p_hat(y|x) / T_d), T_d = argmin_T sum_{i in d} -log softmax(z_i / T)[y_i]",
+      "lossTerm": { "term": "calibration", "why": "KL(p*||p_hat) contains a calibration part that a monotone per-dataset rescaling removes without touching ranking" },
+      "assumptions": ["miscalibration is roughly a single temperature per dataset", "folds are respondent-disjoint"],
+      "estimation": { "estimated": "one temperature per dataset (4 scalars)", "method": "1-D Brent search on held-out log loss", "crossFit": "5-fold respondent-grouped cross-fitting: fit T on 4 folds, score the 5th", "parameters": 4, "dataSize": 120000, "selections": 1 },
+      "expectedGain": { "value": 0.0012, "derivation": "nh_s2 headroom 0.012 x share 0.20 x recover 0.5 = 0.0012", "inputs": { "segment": "dataset=nh_s2", "lossShare": 0.2, "headroom": 0.012, "recoverFraction": 0.5 }, "probability": 0.6 },
+      "algorithm": { "steps": "collect champion logits per cell; per dataset fit T on training folds; apply on the held-out fold", "complexity": "O(n) per Brent iteration, ~30 iterations", "integrationPoint": "post-processing after the stacker in predict()" },
+      "prediction": { "statement": "nh_s2 improves by at least 0.0005 paired, others unchanged within noise", "segment": "dataset=nh_s2", "sign": "positive", "minimumEffect": 0 },
+      "cost": 0.3
+    },
+    {
+      "id": "respondent-shrinkage",
+      "title": "Respondent random-effect shrinkage toward the question prior",
+      "origin": "invention",
+      "family": "hierarchical shrinkage",
+      "model": "logit p(y_ij) = f(x_ij) + b_i, b_i ~ N(0, tau^2); b_hat_i = (n_i / (n_i + sigma^2/tau^2)) * mean_j r_ij",
+      "lossTerm": { "term": "variance_estimation", "why": "respondents with few answers carry noisy residual offsets; partial pooling cuts their variance" },
+      "assumptions": ["respondent effects are exchangeable", "residuals are approximately additive on the logit scale"],
+      "estimation": { "estimated": "tau^2 by method of moments, b_i per respondent", "method": "empirical Bayes", "crossFit": "b_i estimated from the respondent's other questions only (leave-question-out)", "parameters": 1449, "dataSize": 120000, "selections": 3 },
+      "expectedGain": { "value": 0.0009, "derivation": "tx_s1 headroom 0.004 x share 0.31 x recover 0.7 = 0.00087", "inputs": { "segment": "dataset=tx_s1", "lossShare": 0.31, "headroom": 0.004, "recoverFraction": 0.7 }, "probability": 0.4 },
+      "algorithm": { "steps": "compute out-of-question residuals; moment estimate tau^2; shrink; add offset to logits", "complexity": "O(n)", "integrationPoint": "logit offset before the final softmax" },
+      "cost": 0.5
+    },
+    {
+      "id": "answer-entropy-law",
+      "title": "Answer-entropy matching law for survey items",
+      "origin": "new_theory",
+      "family": "analytic closed-form",
+      "model": "p(y|x) ∝ p_hat(y|x)^a * q_k(y)^(1-a) with a = H(q_k) / (H(q_k) + D(x)), D the respondent's disagreement rate",
+      "lossTerm": { "term": "bias_misspecification", "why": "the model under-uses the item marginal q_k when a respondent's history is uninformative" },
+      "assumptions": ["item marginals q_k are stable across datasets", "disagreement rate is measurable from training answers"],
+      "derivation": "Minimise E[-log p] over geometric mixtures of p_hat and q_k; the first-order condition gives a as the share of predictive entropy explained by the item marginal, which reduces to H(q_k)/(H(q_k)+D(x)) under a Gaussian approximation of log-odds.",
+      "prediction": { "statement": "the gain concentrates on items with high marginal entropy; tx_s1 improves and low-entropy items do not move", "segment": "dataset=tx_s1", "sign": "positive", "minimumEffect": 0 },
+      "estimation": { "estimated": "nothing beyond q_k (closed form)", "method": "plug-in", "crossFit": "q_k from training folds only", "parameters": 0, "dataSize": 120000, "selections": 1 },
+      "expectedGain": { "value": 0.0008, "derivation": "tx_s1 headroom 0.004 x share 0.31 x recover 0.65 = 0.0008", "inputs": { "segment": "dataset=tx_s1", "lossShare": 0.31, "headroom": 0.004, "recoverFraction": 0.65 }, "probability": 0.3 },
+      "algorithm": { "steps": "compute q_k and D(x) from training folds; blend in log space; renormalise", "complexity": "O(n K)", "integrationPoint": "post-processing after temperature scaling" },
+      "cost": 0.3
+    },
+    {
+      "id": "bigger-mlp",
+      "title": "Wider MLP head",
+      "origin": "invention",
+      "family": "neural mlp",
+      "model": "a wider network should do better",
+      "lossTerm": { "term": "bias_misspecification", "why": "more capacity" },
+      "assumptions": ["more is better"],
+      "estimation": { "estimated": "weights", "method": "adam", "crossFit": "none", "parameters": 500000, "dataSize": 120000 },
+      "expectedGain": { "value": 0.002, "derivation": "it should help" },
+      "algorithm": { "steps": "double the hidden width", "complexity": "2x the head cost", "integrationPoint": "head" }
+    },
+    {
+      "id": "wild-reverse-order",
+      "title": "Wild: score questions in reverse survey order",
+      "origin": "wild",
+      "family": "chained autoregressive",
+      "hunch": "respondents answer later questions in light of earlier ones; a reverse chain might expose consistency signals",
+      "prediction": { "statement": "tx_s2 improves; if the chain carries no signal the paired CI covers zero", "segment": "dataset=tx_s2", "sign": "positive" },
+      "expectedGain": { "value": 0, "spread": 0.003 },
+      "cost": 0.5
+    },
+    {
+      "id": "wild-retrieval-twins",
+      "title": "Wild: answer like your nearest twin respondent",
+      "origin": "wild",
+      "family": "nearest neighbour retrieval",
+      "hunch": "copy the answer distribution of the most similar respondent in the training set",
+      "prediction": { "statement": "me_s1 improves by more than 0.001", "segment": "dataset=me_s1", "sign": "positive", "minimumEffect": 0.001 },
+      "expectedGain": { "value": 0.0005, "spread": 0.0008 },
+      "cost": 0.5
+    }
+  ]
+}

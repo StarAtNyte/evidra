@@ -161,6 +161,16 @@ export const CompetitionConfigSchema = z.object({
     maxKnobsPerRound: z.number().int().min(0).max(5).default(1),
     referenceScreenMetric: z.number().finite().optional(),
   }).optional(),
+  /** Theory-card ideation: every hypothesis carries its math; a reserved quota screens wild cards. */
+  ideation: z.object({
+    theoryCards: z.boolean().default(true),
+    /** Screens per round (defaults to the scout width). */
+    screens: z.number().int().min(1).max(8).optional(),
+    /** Share of each round's screens reserved for wild cards. */
+    wildQuota: z.number().min(0).max(1).default(0.2),
+    /** A wild card must be a screen at most this costly (1 = one reduced screen). */
+    wildMaxCost: z.number().positive().default(1),
+  }).optional(),
   workspacePath: z.string().optional(),
   baselineCommand: z.array(z.string()).optional(),
   experimentCommand: z.array(z.string()).optional(),
@@ -256,6 +266,8 @@ export type Hypothesis = z.infer<typeof HypothesisSchema>;
 export const ResearchHypothesisSchema = z.object({
   title: z.string().min(1),
   formulationFamily: z.string().min(1).max(80).default("unspecified"),
+  /** Theory card (see core/theory-cards.ts); validated before compute when ideation.theoryCards is on. */
+  theoryCard: z.unknown().optional(),
   /** Self-declared design contrast, used for exploration scheduling, never proof. */
   architectureChange: z.object({
     baseline: z.object({ representation: z.string().trim().min(1).max(500), predictionMechanism: z.string().trim().min(1).max(500), learningObjective: z.string().trim().min(1).max(500), generalizationAssumption: z.string().trim().min(1).max(500) }),

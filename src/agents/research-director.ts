@@ -28,6 +28,8 @@ export function normalizeResearchDecisionPayload(value: unknown): unknown {
       if (hypothesis.expectedOutcome === null) delete hypothesis.expectedOutcome;
       if (hypothesis.architectureChange === null) delete hypothesis.architectureChange;
       if (hypothesis.sourceAdaptation === null) delete hypothesis.sourceAdaptation;
+      if (hypothesis.theoryCard === null) delete hypothesis.theoryCard;
+      else if (typeof hypothesis.theoryCard === "string") { try { hypothesis.theoryCard = JSON.parse(hypothesis.theoryCard); } catch { /* left as text; the card validator sends it back */ } }
       if (hypothesis.sourceAdaptation && typeof hypothesis.sourceAdaptation === "object" && !Array.isArray(hypothesis.sourceAdaptation)) {
         const adaptation = { ...(hypothesis.sourceAdaptation as Record<string, unknown>) };
         if (adaptation.section === null) delete adaptation.section;
@@ -241,10 +243,11 @@ const RESEARCH_DESIGN_OUTPUT_SCHEMA = {
 const RESEARCH_HYPOTHESIS_OUTPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["title", "formulationFamily", "architectureChange", "outcomeType", "implementationMode", "experimentEnvironment", "expectedOutcome", "mechanism", "assumptions", "evidence", "evidenceSourceIds", "parentHypothesisIds", "sourceAdaptation", "implementationSource", "implementationArtifacts", "verificationCommands", "proposedChange", "falsificationTest", "expectedMetricDelta", "computeCostGpuHours", "implementationRisk", "leakageRisk", "dependencies", "ablationFactors"],
+  required: ["title", "formulationFamily", "theoryCard", "architectureChange", "outcomeType", "implementationMode", "experimentEnvironment", "expectedOutcome", "mechanism", "assumptions", "evidence", "evidenceSourceIds", "parentHypothesisIds", "sourceAdaptation", "implementationSource", "implementationArtifacts", "verificationCommands", "proposedChange", "falsificationTest", "expectedMetricDelta", "computeCostGpuHours", "implementationRisk", "leakageRisk", "dependencies", "ablationFactors"],
   properties: {
     title: { type: "string" },
     formulationFamily: { type: "string" },
+    theoryCard: { type: ["string", "null"], description: "JSON theory card (origin literature|invention|new_theory with model, lossTerm, assumptions, estimation, expectedGain, algorithm; or origin wild with hunch + prediction + cheap cost). Required when theory cards are on; see ideation in the context." },
     architectureChange: { anyOf: [{ type: "null" }, { type: "object", additionalProperties: false, required: ["baseline", "proposed"], properties: { baseline: RESEARCH_DESIGN_OUTPUT_SCHEMA, proposed: RESEARCH_DESIGN_OUTPUT_SCHEMA } }], description: "Declared architectural contrast against the actual comparator; null if inapplicable or unknown. This is not evidence of implementation or performance." },
     outcomeType: { type: "string", enum: ["metric", "artifact", "proof", "behavior", "system", "other"] },
     implementationMode: { type: "string", enum: ["modify", "verify"], description: "Use verify when the hypothesis tests existing behavior or gathers evidence without changing source; use modify when an implementation change is required." },

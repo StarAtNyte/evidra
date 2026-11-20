@@ -21,9 +21,11 @@ export interface SupervisorPolicy {
   maxLaneShare: number;
   /** Minutes a parked (exit 75) experiment waits before it is tried again. */
   parkedBackoffMinutes: number;
+  /** Minimum share of recent launches reserved for wild (exploration) cards. */
+  wildQuota: number;
 }
 
-export const DEFAULT_SUPERVISOR_POLICY: SupervisorPolicy = { workers: 2, stallMinutes: 30, maxRestarts: 2, diversityWindow: 6, maxLaneShare: 0.5, parkedBackoffMinutes: 10 };
+export const DEFAULT_SUPERVISOR_POLICY: SupervisorPolicy = { workers: 2, stallMinutes: 30, maxRestarts: 2, diversityWindow: 6, maxLaneShare: 0.5, parkedBackoffMinutes: 10, wildQuota: 0.2 };
 
 export interface QueuedExperiment {
   experimentId: string;
@@ -32,6 +34,8 @@ export interface QueuedExperiment {
   /** Set when the experiment was parked (exit 75) or its dependency was not ready. */
   parkedAt?: string;
   proposedAt?: string;
+  /** A wild (exploration-quota) card. */
+  wild?: boolean;
 }
 
 export interface LiveWorker {
@@ -43,7 +47,7 @@ export interface LiveWorker {
   exited?: { code: number | null; at: string };
 }
 
-export interface LaunchRecord { experimentId: string; lane: string; at: string }
+export interface LaunchRecord { experimentId: string; lane: string; at: string; wild?: boolean }
 
 export interface LedgerOutcome { techniqueClass?: string; accepted: boolean; stage: string; improvement?: number | null }
 
@@ -70,6 +74,7 @@ export interface SupervisorDecision {
   launch: Array<{ experimentId: string; lane: string; reason: string }>;
   warnings: string[];
   lanes: LaneScore[];
+  wild?: { launched: number; window: number; share: number; quota: number };
 }
 
 export function planSupervisorTick(input: {
@@ -109,6 +114,21 @@ export function planSupervisorTick(input: {
   const slots = Math.max(0, policy.workers - live.length - decision.restart.length);
   const picked: string[] = [];
   const pool = [...eligible];
+  // Wild-card quota: count wild launches in the window so exploration cannot silently go to zero.
+  const wildInWindow = window.filter((entry) => entry.wild).length;
+  const wildShare = window.length ? wildInWindow / window.length : 0;
+  decision.wild = { launched: wildInWindow, window: window.length, share: wildShare, quota: policy.wildQuota };
+  if (policy.wildQuota > 0 && window.length >= policy.diversityWindow && wildShare < policy.wildQuota) {
+    decision.warnings.push(`exploration: wild cards took ${(wildShare * 100).toFixed(0)}% of the last ${window.length} launches (quota ${(policy.wildQuota * 100).toFixed(0)}%)`);
+  }
+  if (policy.wildQuota > 0 && slots > 0 && wildShare < policy.wildQuota) {
+    const wildIndex = pool.findIndex((entry) => entry.wild);
+    if (wildIndex >= 0) {
+      const [next] = pool.splice(wildIndex, 1);
+      picked.push(next.lane);
+      decision.launch.push({ experimentId: next.experimentId, lane: next.lane, reason: `wild-card quota (${wildInWindow}/${window.length} recent launches wild, quota ${(policy.wildQuota * 100).toFixed(0)}%)` });
+    }
+  }
   while (decision.launch.length < slots && pool.length) {
     const otherLanesReady = (lane: string) => pool.some((entry) => entry.lane !== lane);
     // Highest-scoring lane first, but never let one lane exceed its share while others wait.
