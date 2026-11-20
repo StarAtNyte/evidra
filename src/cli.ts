@@ -135,8 +135,10 @@ import { runOrchestrationBenchmark } from "./core/orchestration-bench.js";
 import { runGovernanceBenchmark } from "./core/governance-bench.js";
 import { championExperimentIds, explorationHypothesis, holdoutAllows, holdoutReference, implementationOf, isAgentVisibleEvent, normalizeFamily, parentExperimentId, searchState, selectRatchetReference, decideRatchet, resolveRatchetPolicy, applySegmentGates, judgeSegments }  from "./core/ratchet.js";
 import { campaignLossAnalysis, loadRunUnitScores, pairedRatchetEvidence, unitScoreDirection, unitScoreFiles, unitScoresArtifactPath } from "./core/campaign-analysis.js";
-import type { CompetitionConfig } from "./core/types.js";
-import { candidateDependencies, checkResources, classifyLaunchFailure, dependencyStatus, detectSystemicFailure, missingEnvironment, parseTimeVerbose, resolveEnvContract, resolveLaunchPolicy, resourcesFromOutput, type Dependency, type DependencyStatus, type LaunchClassification, type RecordedFailure, type ResourceVerdict } from "./core/launch-guard.js";
+import type { CompetitionConfig, ExperimentManifest } from "./core/types.js";
+import type { AgentProvider } from "./agents/codex-exec.js";
+import { DEFAULT_FORBIDDEN_ENV, environmentSnapshot, extractTraceback, knownRepair, parseRepairAction, rememberRepair, rememberedEnvironment, REPAIR_INSTRUCTIONS, repairPolicyViolations, runRepairCommand, tail, writeEscalation, type EvidencePack, type RepairAction } from "./core/self-repair.js";
+import { failureSignature, candidateDependencies, checkResources, classifyLaunchFailure, dependencyStatus, detectSystemicFailure, missingEnvironment, parseTimeVerbose, resolveEnvContract, resolveLaunchPolicy, resourcesFromOutput, type Dependency, type DependencyStatus, type LaunchClassification, type RecordedFailure, type ResourceVerdict } from "./core/launch-guard.js";
 import { appendImprovement, ledgerPaths, readImprovementLedger, renderImprovementLedger, verifyImprovementLedger } from "./core/improvement-ledger.js";
 import { classifyTechnique, planScoutRound, promoteScoutScreens, resolveScoutPolicy, scoutBrief, scoutLedgerFromEvents, summarizeScoutLedger, techniqueLabel, TECHNIQUE_CLASSES, type ScoutPolicy } from "./core/scout.js";
 import { analyzeUnitLoss, renderLossAnalysis } from "./core/loss-analysis.js";
@@ -3039,7 +3041,6 @@ scout.command("run")
     // Readiness gate: a variant whose dependency (e.g. a submission another agent is still building) is not ready waits.
     const waiting = candidates.flatMap((candidate) => { const reason = unreadyReason(adapter.config, candidate.payload); return reason ? [{ id: candidate.id, reason }] : []; });
     for (const entry of waiting) { console.log(`wait ${entry.id}: ${entry.reason}`); store.appendEvent("research.portfolio.candidate_deferred", { hypothesisId: entry.id, reason: entry.reason }); }
-    if (launchHalt()) { store.close(); process.exitCode = 75; throw new Error(`Launches are halted (${launchHalt()!.reason}). Fix the launch path, then: evidra launch clear`); }
     const readyCandidates = candidates.filter((candidate) => !waiting.some((entry) => entry.id === candidate.id));
     if (!readyCandidates.length) { store.close(); process.exitCode = 75; console.log("No variant is ready; nothing launched."); return; }
     const round = planScoutRound(readyCandidates, campaignScoutLedger(store, adapter.config.metric), policy);
@@ -3064,8 +3065,6 @@ scout.command("run")
       // Stagger worker start so their store migrations do not contend for the SQLite write lock.
       await new Promise((resolve) => setTimeout(resolve, worker * 5_000));
       for (let next = queue.shift(); next; next = queue.shift()) {
-        // A systemic launch failure halts the round instead of burning the remaining screens.
-        if (launchHalt()) { console.log(`skip ${next.experimentId}: launches halted`); continue; }
         runs.set(next.experimentId, (await cli(["experiment", "run", next.experimentId, ...(hasReduced ? ["--reduced-only"] : [])])).exitCode);
       }
     }));
@@ -7935,16 +7934,22 @@ experiment.command("gate")
     console.log(`Experiment ${experimentId} gates\n  leakage audit: ${gates.leakageAuditPassed ? "approved" : "pending"}\n  reviewer: ${gates.reviewerApproved ? "approved" : "pending"}`);
   });
 // ---- Launch-path safety: halts, readiness, preflight, infra-vs-experiment failures ----
-function launchHaltPath(): string { return join(stateDirectory, "launch-halt.json"); }
+function launchHaltPath(): string { return join(stateDirectory, "repair-mode.json"); }
+/** Lane-level repair mode (entered on systemic failure): the next launch repairs the launch path first. */
 function launchHalt(): { reason: string; signature?: string; experiments?: string[]; at: string } | undefined {
   try { return JSON.parse(readFileSync(launchHaltPath(), "utf8")); } catch { return undefined; }
 }
 function haltLaunches(store: ResearchStore, diagnosis: { reason: string; signature?: string; experiments?: string[] }): void {
-  const halt = { ...diagnosis, at: new Date().toISOString() };
+  const mode = { ...diagnosis, at: new Date().toISOString() };
   mkdirSync(stateDirectory, { recursive: true });
-  writeFileSync(launchHaltPath(), `${JSON.stringify(halt, null, 2)}\n`);
-  store.appendEvent("launch.halted", halt);
-  console.error(`LAUNCHES HALTED: ${diagnosis.reason}${diagnosis.experiments?.length ? ` (${diagnosis.experiments.join(", ")})` : ""}. Fix the launch path, then run: evidra launch clear`);
+  writeFileSync(launchHaltPath(), `${JSON.stringify(mode, null, 2)}\n`);
+  store.appendEvent("launch.repair_mode.entered", mode);
+  console.error(`REPAIR MODE: ${diagnosis.reason}${diagnosis.experiments?.length ? ` (${diagnosis.experiments.join(", ")})` : ""}. The next launch repairs the launch path before spending quota; other work continues.`);
+}
+function leaveRepairMode(store: ResearchStore, reason: string): void {
+  if (!launchHalt()) return;
+  rmSync(launchHaltPath(), { force: true });
+  store.appendEvent("launch.repair_mode.left", { reason, at: new Date().toISOString() });
 }
 function hypothesisEnvironmentOf(payload: unknown): Record<string, string> {
   const entries = (payload as { experimentEnvironment?: Array<{ name: string; value: string }> } | undefined)?.experimentEnvironment ?? [];
@@ -7998,17 +8003,155 @@ async function runLaunchPreflight(config: CompetitionConfig, environment: NodeJS
     store.close();
   }
 }
-/** Retry a stage once when its failure is a launch-path failure; the executor re-derives the worker environment. */
-async function retryOnceOnInfra<T extends { status: string; exitCode?: number | null; stdout?: string; stderr?: string }>(config: CompetitionConfig, experimentId: string, stage: string, run: () => Promise<T>): Promise<T> {
-  const first = await run();
-  if (first.status === "completed") return first;
-  const classification = classifyLaunchFailure({ exitCode: first.exitCode ?? null, output: `${first.stderr ?? ""}\n${first.stdout ?? ""}` }, resolveLaunchPolicy(config.launch));
-  if (classification.kind !== "infra" || launchHalt()) return first;
+async function gitChangedPaths(cwd: string): Promise<Map<string, string>> {
+  const status = await runProcess(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd, 60_000).catch(() => undefined);
+  const result = new Map<string, string>();
+  for (const entry of (status?.stdout ?? "").split("\0").filter(Boolean)) {
+    const path = resolve(cwd, entry.slice(3).split(" -> ").at(-1) ?? entry.slice(3));
+    if (/(^|\/)(\.sota|__pycache__|\.git)(\/|$)/.test(path)) continue;
+    let digest = "missing";
+    try { digest = createHash("sha256").update(readFileSync(path)).digest("hex"); } catch { /* deleted or a directory */ }
+    result.set(path, digest);
+  }
+  return result;
+}
+interface RepairContext {
+  config: CompetitionConfig;
+  experimentId: string;
+  cwd: string;
+  environment: NodeJS.ProcessEnv;
+  manifest: ExperimentManifest;
+}
+interface RepairOutcome { action?: RepairAction; source: "memory" | "agent" | "none"; violations: string[]; changedPaths: string[]; signature: string }
+/** One repair turn: a remembered fix for this signature, else the repair agent on the evidence pack, then the policy check. */
+async function repairOnce(context: RepairContext, stage: string, kind: "infra" | "experiment", attempt: number, outcome: { exitCode: number | null; stdout: string; stderr: string; reason: string }, previous: EvidencePack["previousAttempts"], preflight?: EvidencePack["preflight"]): Promise<RepairOutcome> {
+  const repair = context.config.launch?.repair;
+  const signature = failureSignature(`${outcome.stderr}\n${outcome.stdout}`);
+  if (kind === "infra") {
+    const known = knownRepair(stateDirectory, signature);
+    if (known && attempt === 1) return { action: { kind: "env", env: known.env, summary: `remembered fix (${known.successes} prior successes): ${known.summary ?? ""}` }, source: "memory", violations: [], changedPaths: [], signature };
+  }
+  const workspace = activeCompetition().workspacePath(root);
+  const protectedFiles = Object.keys(captureProtectedFiles(context.cwd, [context.config.evaluator.command], [], [context.config.evaluator.estimatorPath]).files).map((path) => resolve(context.cwd, path));
+  const writableRoots = [context.cwd, ...(kind === "infra" ? [workspace] : []), ...(repair?.writableRoots ?? []).map((path) => resolve(workspace, path))];
+  const forbiddenEnv = repair?.forbiddenEnv ?? DEFAULT_FORBIDDEN_ENV;
+  const diff = await runProcess(["git", "diff", "--stat", "HEAD"], context.cwd, 30_000).catch(() => undefined);
+  const pack: EvidencePack = {
+    experimentId: context.experimentId, stage, kind, attempt, exitCode: outcome.exitCode, signature, reason: outcome.reason,
+    stderrTail: tail(outcome.stderr, 60), stdoutTail: tail(outcome.stdout, 30), traceback: extractTraceback(`${outcome.stderr}\n${outcome.stdout}`),
+    environment: environmentSnapshot(context.environment), ...(preflight ? { preflight } : {}), recentDiff: diff?.stdout.slice(0, 8000),
+    cwd: context.cwd, workspace, previousAttempts: previous,
+    policy: { writableRoots, protectedFiles: protectedFiles.map((path) => relative(context.cwd, path)), forbiddenEnv, contract: context.config.launch?.contract },
+  };
+  const before = await gitChangedPaths(context.cwd);
+  const beforeWorkspace = kind === "infra" && workspace !== context.cwd ? await gitChangedPaths(workspace) : new Map<string, string>();
+  let action: RepairAction | undefined;
+  let source: RepairOutcome["source"] = "none";
+  const packPath = join(stateDirectory, "repairs", `${context.experimentId}-${stage}-${attempt}.json`);
+  if (repair?.agentCommand) {
+    action = runRepairCommand(repair.agentCommand, pack, packPath, context.environment);
+    source = "agent";
+  } else {
+    const store = new ResearchStore(statePath);
+    const runtime = (store.campaign() as { runtime?: { provider?: unknown; model?: unknown } } | undefined)?.runtime;
+    store.close();
+    const provider = repair?.provider ?? (isAgentProvider(runtime?.provider) ? runtime!.provider as AgentProvider : undefined);
+    if (provider && isToolCapableProvider(provider)) {
+      try {
+        const result = await runWithLocalFallback({ role: "repair engineer", objective: REPAIR_INSTRUCTIONS, context: { evidencePack: pack } }, { provider, model: repair?.model ?? (typeof runtime?.model === "string" ? runtime.model : provider === "claude" ? DEFAULT_CLAUDE_MODEL : DEFAULT_CODEX_MODEL), cwd: context.cwd, sandbox: "workspace-write", limitPolicy: "stop", reasoningEffort: "high" }, undefined, (message) => console.log(`${context.experimentId} repair · ${message}`));
+        action = parseRepairAction(result.output);
+        source = "agent";
+      } catch (error) {
+        console.log(`${context.experimentId}: repair agent unavailable (${error instanceof Error ? error.message : String(error)})`);
+      }
+    }
+  }
+  const changed = (after: Map<string, string>, prior: Map<string, string>) => [...after].filter(([path, digest]) => prior.get(path) !== digest).map(([path]) => path);
+  const changedPaths = [...changed(await gitChangedPaths(context.cwd), before), ...(kind === "infra" && workspace !== context.cwd ? changed(await gitChangedPaths(workspace), beforeWorkspace) : [])];
+  const violations = action ? repairPolicyViolations(action, changedPaths, { writableRoots, protectedFiles, forbiddenEnv }) : [];
+  if (violations.length && changedPaths.length) {
+    // Out-of-policy edits are rolled back; the proposal goes to the escalation note instead.
+    for (const path of changedPaths) await runProcess(["git", "checkout", "--", path], dirname(path), 30_000).catch(() => undefined);
+  }
   const store = new ResearchStore(statePath);
-  store.appendEvent("experiment.infra.retry", { experimentId, stage, classification });
+  store.appendEvent("repair.attempted", { experimentId: context.experimentId, stage, kind, attempt, signature, source, action: action ?? null, violations, changedPaths: changedPaths.map((path) => relative(root, path)), packPath: relative(root, packPath) });
   store.close();
-  console.log(`${experimentId}: ${stage} hit a launch-path failure (${classification.reason}); retrying once.`);
-  return run();
+  return { action, source, violations, changedPaths, signature };
+}
+function applyRepairEnvironment(context: RepairContext, env: Record<string, string>): void {
+  Object.assign(context.environment, env);
+  context.manifest.resources.environment = { ...(context.manifest.resources.environment ?? {}), ...env };
+}
+function escalate(context: RepairContext, stage: string, outcome: { exitCode: number | null; stderr: string; reason: string }, repair: RepairOutcome, why: string): string {
+  const path = writeEscalation(stateDirectory, { experimentId: context.experimentId, stage, reason: why, violations: repair.violations, evidence: { signature: repair.signature, reason: outcome.reason, exitCode: outcome.exitCode, stderrTail: outcome.stderr }, proposed: repair.action });
+  const store = new ResearchStore(statePath);
+  store.appendEvent("repair.escalated", { experimentId: context.experimentId, stage, reason: why, violations: repair.violations, note: relative(root, path) });
+  store.close();
+  console.error(`${context.experimentId}: escalated to a human (${why}); see ${relative(root, path)}. Other work continues.`);
+  return why;
+}
+type StageResult = { status: string; exitCode?: number | null; stdout?: string; stderr?: string; failureClass?: string | null };
+/**
+ * Run a stage; on failure, repair and re-run instead of giving up. Infra failures: remembered fix,
+ * else the repair agent fixes env or workspace, then the stage re-runs (the fix is remembered on
+ * success). Candidate-code failures: the agent patches the candidate, the quick check (smoke or
+ * reduced) must pass, then the stage re-runs. Bounded by repair.maxAttempts; out-of-policy fixes escalate.
+ */
+async function runStageWithRepair<T extends StageResult>(context: RepairContext, stage: string, run: () => Promise<T>, quickCheck?: () => Promise<StageResult>): Promise<{ result: T; escalated?: string; diagnosis?: string; repairs: number }> {
+  let result = await run();
+  const policy = resolveLaunchPolicy(context.config.launch);
+  const repairConfig = context.config.launch?.repair;
+  if (repairConfig?.enabled === false) return { result, repairs: 0 };
+  const maxAttempts = repairConfig?.maxAttempts ?? 3;
+  const previous: EvidencePack["previousAttempts"] = [];
+  let failure: StageResult = result;
+  for (let attempt = 1; result.status !== "completed" && attempt <= maxAttempts; attempt += 1) {
+    const output = { exitCode: failure.exitCode ?? null, stdout: failure.stdout ?? "", stderr: failure.stderr ?? "" };
+    const classification = classifyLaunchFailure({ exitCode: output.exitCode, output: `${output.stderr}\n${output.stdout}` }, policy);
+    const kind = classification.kind === "infra" ? "infra" : "experiment";
+    // Timeouts and resource exhaustion are measurements of the idea, not code to debug.
+    if (kind === "experiment" && /timeout|oom|memory/i.test(String(failure.failureClass ?? ""))) break;
+    console.log(`${context.experimentId}: ${stage} failed (${kind}: ${classification.reason}); repair attempt ${attempt}/${maxAttempts}.`);
+    const repair = await repairOnce(context, stage, kind, attempt, { ...output, reason: classification.reason }, previous);
+    if (repair.violations.length) return { result, escalated: escalate(context, stage, { ...output, reason: classification.reason }, repair, repair.action?.kind === "escalate" ? repair.action.reason : "the fix is outside policy"), repairs: attempt };
+    if (!repair.action || repair.action.kind === "give_up") {
+      previous.push({ action: repair.action?.kind ?? "none", outcome: repair.action?.kind === "give_up" ? repair.action.reason : "no repair agent answer" });
+      if (!repair.action && kind === "infra") return { result, escalated: escalate(context, stage, { ...output, reason: classification.reason }, repair, "no automatic fix is available for this launch-path failure"), repairs: attempt };
+      if (!repair.action) break;
+      continue;
+    }
+    if (repair.action.kind === "env") applyRepairEnvironment(context, repair.action.env);
+    if (kind === "experiment" && repair.changedPaths.length) {
+      const pinned = await gitChangedPaths(context.cwd);
+      const snapshot = captureImplementationSnapshot(context.cwd, [...pinned.keys()].filter((path) => existsSync(path)).map((path) => relative(context.cwd, path)));
+      const pinStore = new ResearchStore(statePath);
+      pinStore.appendEvent("experiment.implementation.completed", { experimentId: context.experimentId, ...snapshot, repairedBy: "repair-agent", stage, attempt });
+      pinStore.close();
+    }
+    if (kind === "experiment" && quickCheck) {
+      const checked = await quickCheck();
+      if (checked.status !== "completed") {
+        previous.push({ action: repair.action.kind, summary: "summary" in repair.action ? repair.action.summary : undefined, outcome: `quick check still fails: ${tail(checked.stderr || checked.stdout, 5)}` });
+        failure = checked;
+        continue;
+      }
+    }
+    result = await run();
+    failure = result;
+    previous.push({ action: repair.action.kind, summary: "summary" in repair.action ? repair.action.summary : undefined, outcome: result.status === "completed" ? "fixed" : `still failing: ${tail(result.stderr || result.stdout, 5)}` });
+    const store = new ResearchStore(statePath);
+    if (result.status === "completed") {
+      if (kind === "infra") {
+        rememberRepair(stateDirectory, { signature: repair.signature, kind, env: repair.action.kind === "env" ? repair.action.env : {}, summary: "summary" in repair.action ? repair.action.summary : undefined });
+        leaveRepairMode(store, `${stage} repaired`);
+      }
+      store.appendEvent("repair.succeeded", { experimentId: context.experimentId, stage, kind, attempt, source: repair.source, signature: repair.signature });
+      console.log(`${context.experimentId}: ${stage} repaired (${repair.source}, attempt ${attempt}); resuming.`);
+    }
+    store.close();
+  }
+  const diagnosis = result.status === "completed" ? undefined : previous.length ? `repair exhausted after ${previous.length} attempt(s): ${previous.map((entry) => `${entry.action}: ${entry.outcome}`).join(" | ").slice(0, 800)}` : undefined;
+  return { result, repairs: previous.length, ...(diagnosis ? { diagnosis } : {}) };
 }
 /**
  * Record a stage failure. Infra failures are not experiment results: the experiment returns to
@@ -8218,12 +8361,9 @@ experiment.command("run")
       }
       pinnedWorktree = snapshot.worktree;
     }
-    const existingHalt = launchHalt();
-    if (existingHalt) {
-      store.close();
-      process.exitCode = 75;
-      throw new Error(`Launches are halted (${existingHalt.reason}); ${id} was not started and costs no attempt. Fix the launch path, then: evidra launch clear`);
-    }
+    // Remembered launch-path fixes apply to every launch, so a repaired lane stays repaired.
+    const rememberedFixes = rememberedEnvironment(stateDirectory);
+    if (Object.keys(rememberedFixes).length) (manifest.resources as { environment?: Record<string, string> }).environment = { ...rememberedFixes, ...(manifest.resources.environment ?? {}) };
     const readiness = launchReadiness(adapter.config, hypothesis?.payload, manifest.resources.environment ?? {});
     if (!readiness.ready) {
       store.appendEvent("experiment.dependency.waiting", { experimentId: id, pending: readiness.pending });
@@ -8238,15 +8378,22 @@ experiment.command("run")
     stageDeclaredExperimentData(worktreePath, adapter.config.execution?.dataPaths ?? [], adapter.workspacePath(root), adapter.config.execution?.supportFiles ?? []);
     const experimentCwd = join(worktreePath, relative(root, adapter.workspacePath(root)));
     const experimentEnvironment = prepareExperimentEnvironment(manifest, experimentCwd);
-    const preflight = await runLaunchPreflight(adapter.config, experimentEnvironment, experimentCwd);
-    if (!preflight.ok) {
+    const repairContext: RepairContext = { config: adapter.config, experimentId: id, cwd: experimentCwd, environment: experimentEnvironment, manifest };
+    // In repair mode (systemic failure seen) the preflight is re-run, not trusted from cache.
+    const preflightConfig = launchHalt() ? { ...adapter.config, launch: { ...adapter.config.launch, preflightTtlMinutes: 0 } } : adapter.config;
+    const preflightStage = await runStageWithRepair(repairContext, "preflight", async () => {
+      const checked = await runLaunchPreflight(preflightConfig, experimentEnvironment, experimentCwd);
+      // A failing preflight is a launch-path failure by definition.
+      return { status: checked.ok ? "completed" : "failed", exitCode: checked.ok ? 0 : 75, stdout: "", stderr: `preflight: ${checked.reason}\n${checked.output}` };
+    });
+    if (preflightStage.result.status !== "completed") {
       const preflightStore = new ResearchStore(statePath);
-      preflightStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "proposed", launchBlocked: preflight.reason } });
-      haltLaunches(preflightStore, { reason: preflight.reason });
+      preflightStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "proposed", launchBlocked: preflightStage.escalated ?? preflightStage.diagnosis ?? "preflight failed" } });
       preflightStore.close();
       process.exitCode = 75;
-      throw new Error(`Launch preflight failed before ${id} spent any quota: ${preflight.reason}\n${preflight.output.trim()}`);
+      throw new Error(`Launch preflight failed before ${id} spent any quota and could not be repaired automatically: ${preflightStage.escalated ?? preflightStage.diagnosis ?? preflightStage.result.stderr}`);
     }
+    if (launchHalt() && adapter.config.launch?.preflightCommand) { const modeStore = new ResearchStore(statePath); leaveRepairMode(modeStore, "preflight passed"); modeStore.close(); }
     const protectedReference = captureProtectedFiles(adapter.workspacePath(root), [adapter.config.evaluator.command], [], [adapter.config.evaluator.estimatorPath]);
     const changedProtected = changedProtectedFiles(protectedReference, experimentCwd);
     if (changedProtected.length) {
@@ -8332,10 +8479,11 @@ experiment.command("run")
         failedStore.close();
         throw new Error(`Reduced validation feasibility check failed:\n${reducedContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
       }
-      const reducedResult = await retryOnceOnInfra(adapter.config, id, "reduced_validation", () => withExecutionHeartbeat(
+      const reducedStage = await runStageWithRepair(repairContext, "reduced_validation", () => withExecutionHeartbeat(
         () => runReducedValidation(executor, manifest, experimentCwd, reducedCommand, primaryMetricName),
         { storePath: statePath, experimentId: id, stage: "reduced_validation", executor: manifest.resources.executor },
       ));
+      const reducedResult = reducedStage.result;
       const reducedEnvironment = await captureEnvironment(root, experimentCwd, reducedResult.command ?? reducedCommand, manifest.resources.executor, manifest.resources.gpu);
       const reducedEvidenceStore = new ResearchStore(statePath);
       const reduced = persistExecutionStageResult({ store: reducedEvidenceStore, experimentId: id, stage: "reduced_validation", result: reducedResult, primaryMetricName, command: reducedCommand, cwd: experimentCwd, executor: manifest.resources.executor, artifactRoot: join(root, ".sota", "artifacts"), environment: reducedEnvironment });
@@ -8357,11 +8505,13 @@ experiment.command("run")
       if (reduced.status !== "completed") {
         const launchFailure = recordLaunchFailure(reducedStore, adapter.config, id, "reduced_validation", { exitCode: reduced.exitCode ?? null, output: `${reduced.stderr ?? ""}\n${reduced.stdout ?? ""}`, durationSeconds: reducedResult.durationSeconds });
         const infra = launchFailure.kind === "infra";
-        reducedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: infra ? "proposed" : "failed", ...(infra ? { infraFailure: launchFailure.reason } : {}), executionPlan } });
+        const parked = infra || Boolean(reducedStage.escalated);
+        reducedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: parked ? "proposed" : "failed", ...(infra ? { infraFailure: launchFailure.reason } : {}), ...(reducedStage.escalated ? { escalated: reducedStage.escalated } : {}), ...(reducedStage.diagnosis ? { repairDiagnosis: reducedStage.diagnosis } : {}), executionPlan } });
         reducedStore.close();
-        if (infra) process.exitCode = 75;
-        throw new Error(`${infra ? "Launch-path failure (not an experiment result; no attempt counted)" : "Reduced validation failed"} (${reduced.exitCode}): ${infra ? launchFailure.reason : reduced.stderr || reduced.stdout}`);
+        if (parked) process.exitCode = 75;
+        throw new Error(`${reducedStage.escalated ? `Escalated (${reducedStage.escalated}); not counted as a result` : infra ? "Launch-path failure (not an experiment result; no attempt counted)" : "Reduced validation failed"} (${reduced.exitCode}): ${infra ? launchFailure.reason : reducedStage.diagnosis ?? (reduced.stderr || reduced.stdout)}`);
       }
+      leaveRepairMode(reducedStore, "a reduced stage completed");
       const reducedResources = runResourceVerdict(adapter.config, reducedResult.stdout, reducedResult.cwd ?? experimentCwd, { ignoreWall: true });
       if (reducedResources) reducedStore.appendEvent("experiment.resources.checked", { experimentId: id, stage: "reduced_validation", runId: reduced.runId, ...reducedResources });
       if (reducedResources && !reducedResources.ok) {
@@ -8434,10 +8584,12 @@ experiment.command("run")
       attemptStore.close();
     };
     recordAttemptStarted(attempt);
-    let result = await retryOnceOnInfra(adapter.config, id, "full_validation", () => withExecutionHeartbeat(
+    const fullStage = await runStageWithRepair(repairContext, "full_validation", () => withExecutionHeartbeat(
       () => executor.run(manifest, experimentCwd, command, undefined, primaryMetricName),
       { storePath: statePath, experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
-    ));
+    ), reducedCommand || smokeCommand ? () => runReducedValidation(executor, manifest, experimentCwd, (reducedCommand ?? smokeCommand)!, primaryMetricName) : undefined);
+    let result = fullStage.result;
+    if (result.status === "completed") { const modeStore = new ResearchStore(statePath); leaveRepairMode(modeStore, "a full stage completed"); modeStore.close(); }
     if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [primaryMetricName]);
     recordAttempt(attempt, result);
     while (result.status !== "completed") {
@@ -8463,12 +8615,13 @@ experiment.command("run")
       const routeStore = new ResearchStore(statePath);
       routeStore.appendEvent("experiment.recovery.route_changed", { experimentId: id, runId: result.runId, attempts: attempt, ...route });
       const launchFailure = recordLaunchFailure(routeStore, adapter.config, id, "full_validation", { exitCode: result.exitCode ?? null, output: `${result.stderr ?? ""}\n${result.stdout ?? ""}`, durationSeconds: result.durationSeconds });
-      if (launchFailure.kind === "infra") {
-        routeStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "proposed", infraFailure: launchFailure.reason, executionPlan } });
+      if (launchFailure.kind === "infra" || fullStage.escalated) {
+        routeStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "proposed", ...(launchFailure.kind === "infra" ? { infraFailure: launchFailure.reason } : {}), ...(fullStage.escalated ? { escalated: fullStage.escalated } : {}), executionPlan } });
         routeStore.close();
         process.exitCode = 75;
-        throw new Error(`Launch-path failure (not an experiment result; no attempt counted): ${launchFailure.reason}`);
+        throw new Error(`${fullStage.escalated ? `Escalated (${fullStage.escalated})` : `Launch-path failure: ${launchFailure.reason}`}; not an experiment result, no attempt counted.`);
       }
+      if (fullStage.diagnosis) routeStore.appendEvent("repair.exhausted", { experimentId: id, stage: "full_validation", diagnosis: fullStage.diagnosis });
       routeStore.close();
     }
     const usesStandaloneVerification = verificationPlan.standalone;
