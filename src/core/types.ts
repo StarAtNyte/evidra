@@ -117,6 +117,19 @@ export const CompetitionConfigSchema = z.object({
     systemicFailures: z.number().int().min(2).max(50).optional(),
     systemicWindowMinutes: z.number().min(1).max(24 * 60).optional(),
     quickFailureSeconds: z.number().min(0).optional(),
+    /** Self-repair: failures go to a repair agent instead of stopping the campaign. */
+    repair: z.object({
+      enabled: z.boolean().default(true),
+      /** External repairer (reads the evidence pack at $EVIDRA_REPAIR_PACK, prints a JSON action). */
+      agentCommand: z.array(z.string()).min(1).optional(),
+      /** LLM repairer; defaults to the campaign's executor provider. */
+      provider: z.enum(["codex", "claude", "local"]).optional(),
+      model: z.string().optional(),
+      maxAttempts: z.number().int().min(1).max(10).default(3),
+      forbiddenEnv: z.array(z.string()).optional(),
+      /** Extra writable roots besides the experiment worktree and the workspace. */
+      writableRoots: z.array(z.string()).default([]),
+    }).optional(),
     readiness: z.object({
       defaultMarker: z.string().min(1).default("READY"),
       envPaths: z.record(z.string(), z.string()).default({}),

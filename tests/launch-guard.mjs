@@ -1,4 +1,5 @@
 import test from "node:test";
+import { workspace } from "./helpers/launch-workspace.mjs";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
@@ -69,37 +70,9 @@ test("env contract: required env, time -v parsing, hosted limits with margin and
   assert.equal(informed.measuredHostedWallSeconds, 3080);
 });
 
-function workspace(t, launch, evaluator) {
-  const root = mkdtempSync(join(tmpdir(), "evidra-launch-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  writeFileSync(join(root, "evaluate.py"), evaluator);
-  writeFileSync(join(root, "estimator.py"), "");
-  writeFileSync(join(root, ".gitignore"), "__pycache__/\n");
-  mkdirSync(join(root, "subs", "base"), { recursive: true });
-  mkdirSync(join(root, "subs", "v50"), { recursive: true });
-  writeFileSync(join(root, "subs", "v50", "model.py"), "");
-  const config = { id: "toy", name: "toy", taskType: "probabilistic_classification", datasetRevision: "v1", metric: { name: "score", direction: "maximize" }, evaluator: { command: ["python3", "evaluate.py"], estimatorPath: "estimator.py" }, baselineCommand: ["python3", "evaluate.py"], experimentCommand: ["python3", "evaluate.py"], workspacePath: ".", launch: { readiness: { envPaths: { EV_SUBMISSION: "subs/{value}" }, trusted: ["subs/base"] }, ...launch } };
-  writeFileSync(join(root, "competition.json"), JSON.stringify(config));
-  const git = (...args) => execFileSync("git", args, { cwd: root });
-  git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t"); git("add", "-A"); git("commit", "-qm", "init");
-  const cli = (...args) => spawnSync(process.execPath, [join(process.cwd(), "dist/cli.js"), ...args], { cwd: root, encoding: "utf8", env: { ...process.env, EVIDRA_STATE_DIR: join(root, ".sota") } });
-  assert.equal(cli("init", "toy").status, 0);
-  assert.equal(cli("baseline").status, 0);
-  const propose = (title, ...env) => {
-    const hypothesis = cli("hypothesis", "--title", title, "--family", title, "--mode", "verify", "--env", ...env).stdout.match(/hyp_\S+/)[0];
-    cli("experiment", "propose", hypothesis);
-    return JSON.parse(cli("launch", "status", "--json").stdout).waiting.find((entry) => entry.experimentId.includes(hypothesis.slice(4, 20))).experimentId;
-  };
-  const status = (id) => {
-    const out = cli("launch", "status", "--json").stdout;
-    return JSON.parse(out);
-  };
-  return { root, cli, propose, status };
-}
-
 const OK_EVALUATOR = "import json, os\nif os.environ.get('SIM_FAIL'):\n    import sys; print('Failed to connect to bus: No medium found', file=sys.stderr); sys.exit(1)\nprint(json.dumps({'score': 0.5}))\n";
 
-test("e2e: unready candidates wait; a broken launch path halts before any attempt (exit 75)", (t) => {
+test("e2e: unready candidates wait; an unrepairable broken launch path parks the run before any attempt (exit 75)", (t) => {
   const marker = join(tmpdir(), `evidra-bus-${process.pid}-${Date.now()}`);
   const { root, cli, propose } = workspace(t, { preflightCommand: ["sh", "-c", `test -f ${marker} || { echo 'Failed to connect to bus: No medium found' >&2; exit 1; }`] }, OK_EVALUATOR);
   t.after(() => rmSync(marker, { force: true }));
@@ -110,32 +83,30 @@ test("e2e: unready candidates wait; a broken launch path halts before any attemp
   assert.match(wait.stdout, /waiting: .*READY/);
   const broken = cli("experiment", "run", ready);
   assert.equal(broken.status, 75, broken.stderr);
-  assert.match(broken.stderr, /preflight failed .*Failed to connect to bus/);
-  assert.ok(existsSync(join(root, ".sota", "launch-halt.json")));
+  assert.match(broken.stderr, /preflight failed .*could not be repaired automatically/s);
+  assert.ok(existsSync(join(root, ".sota", "ESCALATIONS.md")), "no repair agent: a clear escalation note");
   const report = JSON.parse(cli("launch", "status", "--json").stdout);
-  assert.ok(report.halt);
   assert.ok(report.waiting.some((entry) => entry.experimentId === ready), "the experiment is back to proposed, not failed");
-  assert.equal(cli("experiment", "run", ready).status, 75, "halted launches are refused");
   writeFileSync(marker, "");
-  cli("launch", "clear");
   writeFileSync(join(root, "subs", "v50", "READY"), "");
   const run = cli("experiment", "run", waiting);
   assert.equal(run.status, 0, run.stderr);
+  assert.equal(cli("experiment", "run", ready).status, 0, "nothing was halted: the fixed lane just runs");
 });
 
-test("e2e: infra stage failures are retried once, never count, and N identical ones halt", (t) => {
+test("e2e: unrepaired infra failures never count, and N identical ones put the lane in repair mode (not a halt)", (t) => {
   const { root, cli, propose } = workspace(t, {}, OK_EVALUATOR);
   const ids = ["a", "b", "c"].map((name) => propose(`broken ${name}`, "EV_SUBMISSION=base", "SIM_FAIL=1"));
-  for (const id of ids.slice(0, 2)) {
-    const result = cli("experiment", "run", id);
+  const results = ids.map((id) => cli("experiment", "run", id));
+  for (const result of results) {
     assert.equal(result.status, 75, result.stderr);
     assert.match(result.stderr, /not an experiment result/);
   }
-  const third = cli("experiment", "run", ids[2]);
-  assert.equal(third.status, 75);
-  assert.match(third.stderr, /LAUNCHES HALTED: 3 experiments failed identically/);
+  assert.match(results[2].stderr, /REPAIR MODE: 3 experiments failed identically/);
   const report = JSON.parse(cli("launch", "status", "--json").stdout);
   assert.equal(report.waiting.filter((entry) => ids.includes(entry.experimentId)).length, 3, "all three remain proposed");
-  const events = readFileSync(join(root, ".sota", "launch-halt.json"), "utf8");
-  assert.match(events, /Failed to connect to bus/);
+  assert.match(readFileSync(join(root, ".sota", "repair-mode.json"), "utf8"), /Failed to connect to bus/);
+  const healthy = propose("healthy", "EV_SUBMISSION=base");
+  assert.equal(cli("experiment", "run", healthy).status, 0, "other work still runs in repair mode");
+  assert.equal(existsSync(join(root, ".sota", "repair-mode.json")), false, "a passing launch leaves repair mode");
 });
