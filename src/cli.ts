@@ -3248,12 +3248,15 @@ theory.command("check")
   .argument("<files...>", "theory card JSON files")
   .description("Validate cards (math, citations, arithmetic against the loss analysis, selection-noise risk) and rank the valid ones")
   .option("--json", "print JSON")
-  .action((files: string[], options: { json?: boolean }) => {
+  .option("--analysis <file>", "loss-analysis numbers JSON ({noiseFloor, headroom, share}, or a lossAnalysis brief) to check the arithmetic against")
+  .action((files: string[], options: { json?: boolean; analysis?: string }) => {
     const ledger = readTheoryLedger(stateDirectory);
-    const analysis = ideationAnalysis.get(stateDirectory) ?? {};
+    const suppliedAnalysis = options.analysis ? JSON.parse(readFileSync(resolve(options.analysis), "utf8")) as Record<string, unknown> : undefined;
+    const analysis: AnalysisNumbers = suppliedAnalysis ? ("gapTable" in suppliedAnalysis ? analysisNumbersFromBrief(suppliedAnalysis) : (suppliedAnalysis.analysis ?? suppliedAnalysis) as AnalysisNumbers) : ideationAnalysis.get(stateDirectory) ?? {};
     const results = files.map((file) => ({ file, ...validateTheoryCard(loadCardFile(resolve(file)), analysis, { wildMaxCost: activeCompetition().config.ideation?.wildMaxCost ?? 1 }) }));
     const valid = results.filter((entry) => entry.card && !entry.issues.length).map((entry) => entry.card!);
     const ranked = rankTheoryCards(valid, ledger);
+    if (results.some((entry) => entry.issues.length)) process.exitCode = 1;
     if (options.json) { console.log(JSON.stringify({ results: results.map((entry) => ({ file: entry.file, issues: entry.issues, risk: entry.risk })), ranked: ranked.map((entry) => ({ title: entry.card.title, score: entry.score, reason: entry.reason })) }, null, 2)); return; }
     for (const entry of results) console.log(`${entry.file}: ${entry.issues.length ? `sent back\n  ${entry.issues.map((issue) => `${issue.field}: ${issue.message}`).join("\n  ")}` : `ok (${cardStatus(entry.card!, ledger)})`}`);
     for (const entry of ranked) console.log(`  ${entry.score.toExponential(2)}  ${entry.card.title}  ${entry.reason}`);

@@ -14,29 +14,29 @@ const byId = Object.fromEntries(fixture.cards.map((card) => [card.id, card]));
 const parse = (id) => { const result = validateTheoryCard(byId[id], fixture.analysis); assert.deepEqual(result.issues, [], `${id}: ${JSON.stringify(result.issues)}`); return result.card; };
 
 test("a card without math is sent back before compute", () => {
-  const result = validateTheoryCard(byId["bigger-mlp"], fixture.analysis);
+  const result = validateTheoryCard(byId["mc-cf"], fixture.analysis);
   const fields = result.issues.map((issue) => issue.field);
   assert.ok(fields.includes("model"), "a prose model is not an estimator");
   assert.ok(fields.includes("expectedGain.derivation"), "a gain without numbers is rejected");
-  assert.ok(fields.includes("estimation.parameters"), "500k parameters on 120k cells is flagged");
+  assert.ok(validateTheoryCard({ ...byId["twgate2"], estimation: { ...byId["twgate2"].estimation, parameters: 500000, dataSize: 120000 } }, fixture.analysis).issues.some((issue) => issue.field === "estimation.parameters"), "500k parameters on 120k cells is flagged");
   // Missing sections entirely.
   const bare = validateTheoryCard({ title: "Try a transformer", origin: "invention" });
   assert.ok(bare.issues.length >= 4);
   assert.ok(bare.issues.some((issue) => issue.field === "lossTerm"));
   // Literature without a citation, gain above measured headroom, inconsistent arithmetic.
-  assert.ok(validateTheoryCard({ ...byId["ts-per-dataset"], citations: [] }, fixture.analysis).issues.some((issue) => issue.field === "citations"));
-  assert.ok(validateTheoryCard({ ...byId["ts-per-dataset"], expectedGain: { ...byId["ts-per-dataset"].expectedGain, value: 0.02 } }, fixture.analysis).issues.some((issue) => /headroom/.test(issue.message)));
-  assert.ok(validateTheoryCard({ ...byId["ts-per-dataset"], expectedGain: { ...byId["ts-per-dataset"].expectedGain, value: 0.006 } }, fixture.analysis).issues.some((issue) => /disagrees with its own inputs/.test(issue.message)));
+  assert.ok(validateTheoryCard({ ...byId["twgate2"], citations: [] }, fixture.analysis).issues.some((issue) => issue.field === "citations"));
+  assert.ok(validateTheoryCard({ ...byId["twgate2"], expectedGain: { ...byId["twgate2"].expectedGain, value: 0.02 } }, fixture.analysis).issues.some((issue) => /headroom/.test(issue.message)));
+  assert.ok(validateTheoryCard({ ...byId["twgate2"], expectedGain: { ...byId["twgate2"].expectedGain, value: 0.006 } }, fixture.analysis).issues.some((issue) => /disagrees with its own inputs/.test(issue.message)));
   // New theory must derive and predict.
-  const { derivation, prediction, ...noDerivation } = byId["answer-entropy-law"];
+  const { derivation, prediction, ...noDerivation } = byId["twloo"];
   const issues = validateTheoryCard(noDerivation, fixture.analysis).issues.map((issue) => issue.field);
   assert.ok(issues.includes("derivation") && issues.includes("prediction"));
   // The complete cards pass.
-  for (const id of ["ts-per-dataset", "respondent-shrinkage", "answer-entropy-law"]) parse(id);
+  for (const id of ["twgate2", "tweb", "twloo"]) parse(id);
 });
 
 test("gain inside the selection-noise risk is rejected", () => {
-  const card = { ...byId["respondent-shrinkage"], expectedGain: { ...byId["respondent-shrinkage"].expectedGain, value: 0.0003, inputs: {} }, estimation: { ...byId["respondent-shrinkage"].estimation, selections: 20 } };
+  const card = { ...byId["tweb"], expectedGain: { ...byId["tweb"].expectedGain, value: 0.0003, inputs: {} }, estimation: { ...byId["tweb"].estimation, selections: 20 } };
   const result = validateTheoryCard(card, fixture.analysis);
   assert.ok(result.issues.some((issue) => /selection-noise risk/.test(issue.message)), JSON.stringify(result.issues));
   assert.ok(result.risk.optimism > 0 && result.risk.overfit > 0);
@@ -44,7 +44,7 @@ test("gain inside the selection-noise risk is rejected", () => {
 
 test("a new-theory card is new/unproven until its falsified verdict is recorded", () => {
   const state = mkdtempSync(join(tmpdir(), "evidra-theory-"));
-  const card = parse("answer-entropy-law");
+  const card = parse("twloo");
   assert.equal(cardStatus(card, readTheoryLedger(state)), "new/unproven");
   const verdict = recordTheoryVerdict(state, card, { experimentId: "exp-1", ratchetVerdict: "no_gain", observedGain: -0.00002, ci: { lower: -0.0001, upper: 0.00006 }, segmentObserved: { segment: "tx_s1", meanImprovement: -0.00003, lower: -0.0001, upper: 0.00004 } });
   assert.equal(verdict.verdict, "falsified");
@@ -59,41 +59,44 @@ test("a new-theory card is new/unproven until its falsified verdict is recorded"
 
 test("a mechanism mismatch is flagged when the gain lands outside the predicted segment", () => {
   const state = mkdtempSync(join(tmpdir(), "evidra-theory-"));
-  const card = parse("ts-per-dataset");
-  const verdict = recordTheoryVerdict(state, card, { experimentId: "exp-2", ratchetVerdict: "keep", observedGain: 0.0007, ci: { lower: 0.0002, upper: 0.0012 }, segmentObserved: { segment: "nh_s2", meanImprovement: 0.00001, lower: -0.0004, upper: 0.0004 } });
+  const card = parse("twgate2");
+  const verdict = recordTheoryVerdict(state, card, { experimentId: "exp-2", ratchetVerdict: "keep", observedGain: 0.0007, ci: { lower: 0.0002, upper: 0.0012 }, segmentObserved: { segment: "tx_s1", meanImprovement: 0.00001, lower: -0.0004, upper: 0.0004 } });
   assert.equal(verdict.verdict, "confirmed", "the aggregate claim held");
-  assert.match(verdict.mechanismMismatch, /predicted segment nh_s2 did not/);
+  assert.match(verdict.mechanismMismatch, /predicted segment tx_s1 did not/);
 });
 
 test("ranking orders by expected gain x probability / cost, with class priors from verdicts", () => {
-  const cards = ["ts-per-dataset", "respondent-shrinkage", "answer-entropy-law"].map(parse);
+  const cards = ["twgate2", "tweb", "twloo"].map(parse);
   const ranked = rankTheoryCards(cards, []);
   for (const entry of ranked) assert.ok(Math.abs(entry.score - entry.card.expectedGain.value * entry.probability / entry.card.cost) < 1e-15);
   for (let index = 1; index < ranked.length; index += 1) assert.ok(ranked[index - 1].score >= ranked[index].score);
-  assert.equal(ranked[0].card.id, "ts-per-dataset");
-  // Cost matters: the same card at 10x the cost drops below the others.
-  const expensive = rankTheoryCards([{ ...cards[0], cost: 3 }, cards[1], cards[2]], []);
-  assert.notEqual(expensive[0].card.id, "ts-per-dataset");
+  assert.equal(ranked[0].card.id, "twloo");
+  // Cost matters: the same card at 6x the cost drops below the others.
+  const expensive = rankTheoryCards([cards[0], cards[1], { ...cards[2], cost: 3 }], []);
+  assert.notEqual(expensive[0].card.id, "twloo");
   // Prior verdicts of the same class lower its probability.
   const history = [1, 2, 3].map((index) => ({ cardId: `c${index}`, experimentId: `e${index}`, title: "t", origin: "literature", techniqueClass: cardClass(cards[0]), verdict: "falsified", ratchetVerdict: "no_gain", predictedGain: 0.001, observedGain: 0, recordedAt: "" }));
   const informed = rankTheoryCards(cards, history);
-  assert.ok(informed.find((entry) => entry.card.id === "ts-per-dataset").probability < ranked.find((entry) => entry.card.id === "ts-per-dataset").probability);
+  assert.ok(informed.find((entry) => entry.card.id === "twgate2").probability < ranked.find((entry) => entry.card.id === "twgate2").probability);
 });
 
 test("a round mixes literature and invention, reserves the wild quota, and never repeats a class", () => {
-  const cards = ["ts-per-dataset", "respondent-shrinkage", "answer-entropy-law", "wild-reverse-order", "wild-retrieval-twins"].map(parse);
-  // A duplicate-class card: a second calibration method must not share the round.
-  const duplicate = { ...cards[0], id: "isotonic", title: "Isotonic calibration per dataset", family: "calibration isotonic", expectedGain: { ...cards[0].expectedGain, value: 0.0011 } };
+  const cards = ["twgate2", "tweb", "twloo", "w1-twdens", "w2-hhc"].map(parse);
+  // A duplicate-class card: a second gating method must not share the round. W1 shares a class with
+  // TWLOO, so the top theory keeps it and the wild slot goes to W2.
+  const duplicate = { ...cards[0], id: "gate-dup", title: "Gated router over twin features", family: "gating router", expectedGain: { ...cards[0].expectedGain, value: 0.0011 } };
   const plan = planIdeationRound([...cards, duplicate], [], { screens: 5, wildQuota: 0.2 });
   const classes = plan.selected.map((entry) => entry.techniqueClass);
   assert.equal(new Set(classes).size, classes.length, `classes repeat: ${classes}`);
   assert.equal(plan.wildSlots, 1);
   assert.equal(plan.selected.filter((entry) => entry.slot === "wild").length, 1);
-  assert.ok(plan.deferred.some((entry) => entry.card.id === "isotonic" && /already in this round/.test(entry.reason)));
+  assert.ok(plan.deferred.some((entry) => entry.card.id === "gate-dup" && /already in this round/.test(entry.reason)));
   assert.deepEqual(plan.breadthIssues, []);
+  assert.ok(plan.selected.some((entry) => entry.card.id === "twloo" && entry.slot === "ranked"));
+  assert.equal(plan.selected.find((entry) => entry.slot === "wild").card.id, "w2-hhc");
   const origins = new Set(plan.selected.map((entry) => entry.card.origin));
   assert.ok(origins.has("literature") && (origins.has("invention") || origins.has("new_theory")));
-  assert.deepEqual(roundBreadthIssues([cards[1], cards[2]]), ["no literature/library-mined method in the round"]);
+  assert.deepEqual(roundBreadthIssues([cards[2], parse("twmet")]), ["no literature/library-mined method in the round"]);
   // Quota is configurable and rounds up; zero turns it off.
   assert.equal(planIdeationRound(cards, [], { screens: 5, wildQuota: 0.4 }).wildSlots, 2);
   assert.equal(planIdeationRound(cards, [], { screens: 5, wildQuota: 0 }).selected.filter((entry) => entry.slot === "wild").length, 0);
@@ -102,10 +105,10 @@ test("a round mixes literature and invention, reserves the wild quota, and never
 });
 
 test("wild cards are exempt from the math but need a prediction and a cheap screen", () => {
-  assert.deepEqual(validateTheoryCard(byId["wild-reverse-order"]).issues, []);
-  const { prediction, ...noPrediction } = byId["wild-reverse-order"];
+  assert.deepEqual(validateTheoryCard(byId["w1-twdens"]).issues, []);
+  const { prediction, ...noPrediction } = byId["w1-twdens"];
   assert.ok(validateTheoryCard(noPrediction).issues.some((issue) => issue.field === "prediction"));
-  assert.ok(validateTheoryCard({ ...byId["wild-reverse-order"], cost: 4 }, {}, { wildMaxCost: 1 }).issues.some((issue) => issue.field === "cost"));
+  assert.ok(validateTheoryCard({ ...byId["w1-twdens"], cost: 4 }, {}, { wildMaxCost: 1 }).issues.some((issue) => issue.field === "cost"));
 });
 
 test("wild selection rewards variance and novelty, not expected gain", () => {
@@ -123,14 +126,14 @@ test("wild selection rewards variance and novelty, not expected gain", () => {
 
 test("a wild-card win is promoted and its theory write-up is tracked until done", () => {
   const state = mkdtempSync(join(tmpdir(), "evidra-theory-"));
-  const wild = validateTheoryCard(byId["wild-retrieval-twins"]).card;
+  const wild = validateTheoryCard(byId["w2-hhc"]).card;
   const verdict = recordTheoryVerdict(state, wild, { experimentId: "exp-w", ratchetVerdict: "keep", observedGain: 0.0016, ci: { lower: 0.0011, upper: 0.0021 } });
   assert.equal(verdict.verdict, "confirmed");
   assert.equal(verdict.promoted, true);
   assert.equal(cardStatus(wild, readTheoryLedger(state)), "promoted (theory pending)");
   assert.equal(pendingTheoryWriteups(readTheoryLedger(state)).length, 1);
-  const writeup = { ...parse("respondent-shrinkage"), id: "wild-retrieval-twins", title: "Nearest-twin respondent retrieval" };
-  assert.equal(completeTheoryWriteup(state, "wild-retrieval-twins", writeup), true);
+  const writeup = { ...parse("tweb"), id: "w2-hhc", title: "Hidden-hidden consensus as variance reduction" };
+  assert.equal(completeTheoryWriteup(state, "w2-hhc", writeup), true);
   assert.equal(pendingTheoryWriteups(readTheoryLedger(state)).length, 0);
 });
 
@@ -163,14 +166,24 @@ test("cli: theory check sends back a card without math; a carded experiment writ
   const { workspace } = await import("./helpers/launch-workspace.mjs");
   const { writeFileSync, existsSync } = await import("node:fs");
   const { root, cli } = workspace(t, {}, "import json\nprint(json.dumps({'score': 0.5}))\n");
-  writeFileSync(join(root, "good.json"), JSON.stringify(byId["ts-per-dataset"]));
-  writeFileSync(join(root, "bad.json"), JSON.stringify(byId["bigger-mlp"]));
+  writeFileSync(join(root, "good.json"), JSON.stringify(byId["twgate2"]));
+  writeFileSync(join(root, "bad.json"), JSON.stringify(byId["mc-cf"]));
   const good = cli("theory", "check", "good.json");
   assert.equal(good.status, 0, good.stderr);
   assert.match(good.stdout, /good\.json: ok \(established\)/);
   const bad = cli("theory", "check", "bad.json");
   assert.equal(bad.status, 1);
   assert.match(bad.stdout, /sent back/);
+  // The idea_search.md cards: the checker accepts and rejects exactly as expected.
+  writeFileSync(join(root, "analysis.json"), JSON.stringify(fixture.analysis));
+  for (const card of fixture.cards) writeFileSync(join(root, `${card.id}.json`), JSON.stringify(card));
+  const all = cli("theory", "check", "--json", "--analysis", "analysis.json", ...fixture.cards.map((card) => `${card.id}.json`));
+  assert.equal(all.status, 1, "rejections set a failing exit code");
+  const report = JSON.parse(all.stdout);
+  const outcome = Object.fromEntries(report.results.map((entry) => [entry.file.replace(/\.json$/, ""), entry.issues.map((issue) => issue.field)]));
+  for (const id of fixture.expect.accept) assert.deepEqual(outcome[id], [], `${id} should be accepted`);
+  for (const [id, fields] of Object.entries(fixture.expect.reject)) assert.deepEqual([...new Set(outcome[id])].sort(), [...fields].sort(), `${id} rejected for ${fields}`);
+  assert.equal(report.ranked[0].title, byId["twloo"].title, "TWLOO ranks first, as in idea_search.md");
   const rejected = cli("hypothesis", "--title", "wider mlp", "--theory-card", "bad.json");
   assert.notEqual(rejected.status, 0);
   assert.match(rejected.stderr, /theory card rejected/);
@@ -184,7 +197,7 @@ test("cli: theory check sends back a card without math; a carded experiment writ
   const ledgerPath = join(root, ".sota", "theories.json");
   assert.ok(existsSync(ledgerPath), "the ratchet verdict is written back onto the card");
   const [entry] = JSON.parse(readFileSync(ledgerPath, "utf8"));
-  assert.equal(entry.cardId, "ts-per-dataset");
+  assert.equal(entry.cardId, "twgate2");
   assert.ok(["confirmed", "falsified", "inconclusive"].includes(entry.verdict));
-  assert.match(cli("theory", "ledger").stdout, /Per-dataset temperature scaling/);
+  assert.match(cli("theory", "ledger").stdout, /Continuous trust gate/);
 });

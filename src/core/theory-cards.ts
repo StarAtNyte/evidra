@@ -128,11 +128,14 @@ export function validateTheoryCard(raw: unknown, analysis: AnalysisNumbers = {},
   if (!/\d/.test(card.expectedGain.derivation)) issues.push({ field: "expectedGain.derivation", message: "the expected gain must be computed from numbers (loss share, headroom, recover fraction)" });
   const { segment, lossShare, headroom, recoverFraction } = card.expectedGain.inputs;
   const knownHeadroom = segment ? analysis.headroom?.[segment] : undefined;
-  const ceiling = headroom ?? knownHeadroom;
+  // The measured segment headroom caps the aggregate gain; a card cannot raise it by stating its own.
+  // The card's own headroom (which may be per affected cell) drives its arithmetic check.
+  const ceiling = knownHeadroom ?? headroom;
+  const ownHeadroom = headroom ?? knownHeadroom;
   if (segment && analysis.headroom && knownHeadroom === undefined && headroom === undefined) issues.push({ field: "expectedGain.inputs.segment", message: `segment ${segment} is not in the loss analysis` });
   if (ceiling !== undefined && card.expectedGain.value > ceiling + 1e-12) issues.push({ field: "expectedGain.value", message: `expected gain ${card.expectedGain.value} exceeds the measured headroom ${ceiling} for ${segment ?? "the target"}` });
-  if (ceiling !== undefined && recoverFraction !== undefined) {
-    const implied = ceiling * recoverFraction * (lossShare ?? 1);
+  if (ownHeadroom !== undefined && recoverFraction !== undefined) {
+    const implied = ownHeadroom * recoverFraction * (lossShare ?? 1);
     if (Math.abs(implied - card.expectedGain.value) > Math.max(1e-6, 0.5 * Math.abs(implied))) issues.push({ field: "expectedGain.value", message: `value ${card.expectedGain.value} disagrees with its own inputs (headroom x recover x share = ${implied.toPrecision(3)})` });
   }
   const risk = selectionNoiseRisk(card.estimation, analysis.noiseFloor !== undefined ? analysis.noiseFloor / 2 : undefined);
@@ -318,19 +321,29 @@ export function planIdeationRound(cards: readonly AnyCard[], ledger: readonly Th
   const wildSlots = wild.length && quota > 0 && screens > 0 ? Math.min(wild.length, Math.max(1, Math.ceil(screens * quota - 1e-9))) : 0;
   const used = new Set<string>();
   const plan: IdeationRoundPlan = { selected: [], deferred: [], wildSlots, breadthIssues: [] };
+  // Ranked cards first (the round's best theory is never displaced by a hunch), leaving the reserved
+  // wild slots; wild cards then take their slots in classes not already used; unused wild slots go
+  // back to ranked cards. Classes stay distinct across the whole round.
+  const ranked = rankTheoryCards(normal, ledger).map((entry) => ({ ...entry, techniqueClass: cardClass(entry.card) }));
+  const takeRanked = (limit: number) => {
+    for (const entry of ranked) {
+      if (plan.selected.length >= limit) break;
+      if (plan.selected.some((chosen) => chosen.card === entry.card) || used.has(entry.techniqueClass)) continue;
+      used.add(entry.techniqueClass);
+      plan.selected.push({ card: entry.card, techniqueClass: entry.techniqueClass, slot: "ranked", score: entry.score, reason: entry.reason });
+    }
+  };
+  takeRanked(screens - wildSlots);
+  let wildTaken = 0;
   for (const scored of scoreWildCards(wild, tried, { defaultSpread: options.defaultSpread })) {
-    if (plan.selected.length < wildSlots && !used.has(scored.techniqueClass)) {
+    if (wildTaken < wildSlots && !used.has(scored.techniqueClass)) {
       used.add(scored.techniqueClass);
+      wildTaken += 1;
       plan.selected.push({ card: scored.card, techniqueClass: scored.techniqueClass, slot: "wild", score: scored.score, reason: scored.reason });
-    } else plan.deferred.push({ card: scored.card, reason: used.has(scored.techniqueClass) ? `class ${scored.techniqueClass} already in this round` : "wild quota full" });
+    } else plan.deferred.push({ card: scored.card, reason: wildTaken < wildSlots ? `class ${scored.techniqueClass} already in this round` : "wild quota full" });
   }
-  for (const ranked of rankTheoryCards(normal, ledger)) {
-    const techniqueClass = cardClass(ranked.card);
-    if (plan.selected.length < screens && !used.has(techniqueClass)) {
-      used.add(techniqueClass);
-      plan.selected.push({ card: ranked.card, techniqueClass, slot: "ranked", score: ranked.score, reason: ranked.reason });
-    } else plan.deferred.push({ card: ranked.card, reason: used.has(techniqueClass) ? `class ${techniqueClass} already in this round` : "round full" });
-  }
+  takeRanked(screens);
+  for (const entry of ranked) if (!plan.selected.some((chosen) => chosen.card === entry.card)) plan.deferred.push({ card: entry.card, reason: used.has(entry.techniqueClass) ? `class ${entry.techniqueClass} already in this round` : "round full" });
   plan.breadthIssues = roundBreadthIssues(plan.selected.map((entry) => entry.card));
   return plan;
 }
