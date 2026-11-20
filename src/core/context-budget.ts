@@ -11,7 +11,7 @@ export interface BoundedContext {
 }
 
 const priority = [
-  "operatorSteering", "agentDirectives", "toolInstruction", "phaseGoal", "allocation",
+  "operatorSteering", "agentDirectives", "toolInstruction", "phaseGoal", "allocation", "scout", "lossAnalysis",
   "observation", "authoritativeEvidence", "verifiedState", "availableTools", "evidenceConflicts", "toolResults", "laneToolResults",
   "crossPollination", "peerLaneBoard", "laneReports", "priorLaneReports", "researchMemory", "experienceReplay",
   "literatureFrontier", "literatureBenchmarkEvidence", "openCriticConstraint", "adaptiveHarnessPolicy",
@@ -24,6 +24,8 @@ const priority = [
 // workspace emits an unusually large observation. These are context caps, not
 // storage caps: the complete values remain durable in the store/artifacts.
 const sectionCaps: Record<string, number> = {
+  scout: 4_000,
+  lossAnalysis: 6_000,
   operatorSteering: 6_000,
   agentDirectives: 6_000,
   toolInstruction: 4_000,
@@ -50,7 +52,7 @@ const sectionCaps: Record<string, number> = {
   researchSources: 8_000,
   availableTools: 8_000,
 };
-const protectedSections = new Set(["operatorSteering", "agentDirectives", "toolInstruction", "observation", "authoritativeEvidence", "verifiedState", "phaseGoal", "allocation", "evidenceConflicts"]);
+const protectedSections = new Set(["operatorSteering", "agentDirectives", "toolInstruction", "observation", "authoritativeEvidence", "verifiedState", "phaseGoal", "allocation", "evidenceConflicts", "scout", "lossAnalysis"]);
 const protectedSectionReserve = 512;
 
 function size(value: unknown): number {

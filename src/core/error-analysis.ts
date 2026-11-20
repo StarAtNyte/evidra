@@ -192,3 +192,25 @@ export function comparePredictionRows(baseline: PredictionRow[], candidate: Pred
     groups: [...groupStats.entries()].filter(([group]) => group !== "__all__").map(([group, stats]) => ({ group, ...stats, net: stats.fixed - stats.regressed })).sort((left, right) => right.net - left.net || left.group.localeCompare(right.group)).slice(0, Math.max(0, limit)),
   };
 }
+
+/**
+ * Turn prediction rows into per-unit losses (absolute error for numeric
+ * targets, 0/1 error otherwise) so the loss decomposition and paired ratchet
+ * can run on prediction artifacts as well as on evaluator unit-score files.
+ * Lower is better for the returned scores.
+ */
+export function unitScoresFromPredictionRows(rows: PredictionRow[]): import("./unit-scores.js").UnitScoreTable {
+  const numeric = rows.length > 0 && rows.every((row) => finiteNumber(row.actual) && finiteNumber(row.predicted));
+  const segmentColumns = new Set<string>();
+  const units = rows.map((row, index) => {
+    const segments: Record<string, string | number> = {};
+    if (row.group !== undefined) { segments.group = row.group; segmentColumns.add("group"); }
+    for (const [name, value] of Object.entries(row.metadata ?? {})) {
+      segments[name] = typeof value === "number" ? value : key(value);
+      segmentColumns.add(name);
+    }
+    const score = numeric ? Math.abs((row.predicted as number) - (row.actual as number)) : key(row.actual) === key(row.predicted) ? 0 : 1;
+    return { unit: row.id ?? String(index), score, segments };
+  });
+  return { units, scoreColumn: numeric ? "absolute_error" : "zero_one_error", idColumn: "id", segmentColumns: [...segmentColumns], skippedRows: 0, source: "predictions" };
+}

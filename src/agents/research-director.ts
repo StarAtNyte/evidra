@@ -28,6 +28,8 @@ export function normalizeResearchDecisionPayload(value: unknown): unknown {
       if (hypothesis.expectedOutcome === null) delete hypothesis.expectedOutcome;
       if (hypothesis.architectureChange === null) delete hypothesis.architectureChange;
       if (hypothesis.sourceAdaptation === null) delete hypothesis.sourceAdaptation;
+      if (hypothesis.theoryCard === null) delete hypothesis.theoryCard;
+      else if (typeof hypothesis.theoryCard === "string") { try { hypothesis.theoryCard = JSON.parse(hypothesis.theoryCard); } catch { /* left as text; the card validator sends it back */ } }
       if (hypothesis.sourceAdaptation && typeof hypothesis.sourceAdaptation === "object" && !Array.isArray(hypothesis.sourceAdaptation)) {
         const adaptation = { ...(hypothesis.sourceAdaptation as Record<string, unknown>) };
         if (adaptation.section === null) delete adaptation.section;
@@ -241,10 +243,11 @@ const RESEARCH_DESIGN_OUTPUT_SCHEMA = {
 const RESEARCH_HYPOTHESIS_OUTPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["title", "formulationFamily", "architectureChange", "outcomeType", "implementationMode", "experimentEnvironment", "expectedOutcome", "mechanism", "assumptions", "evidence", "evidenceSourceIds", "parentHypothesisIds", "sourceAdaptation", "implementationSource", "implementationArtifacts", "verificationCommands", "proposedChange", "falsificationTest", "expectedMetricDelta", "computeCostGpuHours", "implementationRisk", "leakageRisk", "dependencies", "ablationFactors"],
+  required: ["title", "formulationFamily", "theoryCard", "architectureChange", "outcomeType", "implementationMode", "experimentEnvironment", "expectedOutcome", "mechanism", "assumptions", "evidence", "evidenceSourceIds", "parentHypothesisIds", "sourceAdaptation", "implementationSource", "implementationArtifacts", "verificationCommands", "proposedChange", "falsificationTest", "expectedMetricDelta", "computeCostGpuHours", "implementationRisk", "leakageRisk", "dependencies", "ablationFactors"],
   properties: {
     title: { type: "string" },
     formulationFamily: { type: "string" },
+    theoryCard: { type: ["string", "null"], description: "JSON theory card (origin literature|invention|new_theory with model, lossTerm, assumptions, estimation, expectedGain, algorithm; or origin wild with hunch + prediction + cheap cost). Required when theory cards are on; see ideation in the context." },
     architectureChange: { anyOf: [{ type: "null" }, { type: "object", additionalProperties: false, required: ["baseline", "proposed"], properties: { baseline: RESEARCH_DESIGN_OUTPUT_SCHEMA, proposed: RESEARCH_DESIGN_OUTPUT_SCHEMA } }], description: "Declared architectural contrast against the actual comparator; null if inapplicable or unknown. This is not evidence of implementation or performance." },
     outcomeType: { type: "string", enum: ["metric", "artifact", "proof", "behavior", "system", "other"] },
     implementationMode: { type: "string", enum: ["modify", "verify"], description: "Use verify when the hypothesis tests existing behavior or gathers evidence without changing source; use modify when an implementation change is required." },
@@ -442,6 +445,8 @@ How to work. The goal is the best result on the declared evaluator. A run is che
 - Experiments compound within method families. formulationFamily names the method family. An attempt in an existing family starts from that family's best implementation; an attempt in a new family starts from the champion (the best run overall). families in context lists each family's best, attempts, and attempts since improvement, so a new architecture gets refined in its own line before it has to beat the champion.
 - Be ambitious. Everything in the editable solution is fair game: new algorithms, new architectures, new mathematical formulations, and rewrites, as well as tuning. When a family stops improving, move to another instead of tweaking it further. For a new architecture, fill architectureChange against the champion.
 - When explorationTurn is true, select a hypothesis from a new family or a young one (fewer than 3 attempts); Evidra enforces this.
+- When scout is present in context, this is a scout round: follow scout.instruction. Propose scout.width hypotheses from different technique classes (prefer scout.untriedClasses), each a complete method rather than a knob change of the champion; Evidra screens them all on the reduced evaluator, promotes only the best screens, and rejects classes in scout.coolingDown.
+- When lossAnalysis is present, ground hypotheses in it: gapTable says which segments carry recoverable loss, routing/oracle say whether existing runs are complementary (learned routing, per-segment selection, stacking), noiseFloor says how small a change the evaluator can resolve, and dataHypotheses are measured starting points with bound tests. Target the largest recoverable gap; an expectedMetricDelta below noiseFloor.minimumDetectableAggregateChange is not worth a run. Use the data to tune models: per-segment hyperparameter selection and calibration must be cross-fitted (choose on one fold, score on another).
 - All else equal, simpler is better: a small gain that adds heavy complexity is worth less than the same gain from deleting code.
 - Failed directions in research memory are negative evidence; do not repeat one unchanged.
 - When you have a concrete idea, decide run with its exact title in selectedHypothesis; do not wait for more evidence. Use inspect only to resolve a named unknown that would change what you run. Propose at most five hypotheses.

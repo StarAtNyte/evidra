@@ -211,3 +211,104 @@ export function holdoutAllows(candidate: number | undefined, reference: number |
 export function isAgentVisibleEvent(event: { type: string }): boolean {
   return event.type !== "experiment.holdout.completed";
 }
+
+/** How the ratchet decides whether a completed run becomes the champion. */
+export interface RatchetPolicy {
+  /** auto: paired bootstrap when both runs have unit scores, else the scalar comparison. */
+  mode: "auto" | "scalar" | "paired";
+  confidence: number;
+  /** Accept only when the CI lower bound on mean per-unit improvement exceeds this. */
+  minLowerBound: number;
+  iterations: number;
+  /** Below this many matched units the paired test is not trusted; fall back (auto) or reject (paired). */
+  minUnits: number;
+  clusterBy?: string;
+  trim: number;
+  /** Segment column (for example dataset) for per-stratum gates. */
+  segmentColumn?: string;
+  /** Segments whose own paired CI lower bound must also clear minLowerBound (the deciding splits). */
+  requireSegments?: string[];
+  /** Segments that must not show a CI-significant loss (upper bound < 0); unevaluated guards are reported, not blocking. */
+  guardSegments?: string[];
+}
+
+export interface SegmentEvidence {
+  segment: string;
+  role: "require" | "guard";
+  paired?: import("./unit-scores.js").PairedBootstrapResult;
+  passed: boolean | null;
+  note: string;
+}
+
+export const DEFAULT_RATCHET_POLICY: RatchetPolicy = { mode: "auto", confidence: 0.95, minLowerBound: 0, iterations: 2000, minUnits: 30, trim: 0 };
+
+export function resolveRatchetPolicy(config: Partial<RatchetPolicy> | undefined): RatchetPolicy {
+  return { ...DEFAULT_RATCHET_POLICY, ...Object.fromEntries(Object.entries(config ?? {}).filter(([, value]) => value !== undefined)) } as RatchetPolicy;
+}
+
+/**
+ * Verdicts follow the kernel-autoresearch convention: KEEP needs the paired CI
+ * above the bar; a CI that straddles it is NOISY rather than a win, so a lucky
+ * draw on one aggregate number cannot climb the ratchet.
+ */
+export type RatchetVerdict = "keep" | "no_gain" | "regressed" | "noisy" | "insufficient_units" | "over_budget";
+
+export interface RatchetDecision {
+  accept: boolean;
+  verdict: RatchetVerdict;
+  mode: "scalar" | "paired_bootstrap";
+  reason: string;
+  scalarImproved: boolean;
+  paired?: import("./unit-scores.js").PairedBootstrapResult;
+  segments?: SegmentEvidence[];
+}
+
+/** Judge per-segment evidence: required segments must clear the bar, guards must not lose significantly. */
+export function judgeSegments(perSegment: Record<string, import("./unit-scores.js").PairedBootstrapResult | undefined>, policy: RatchetPolicy): SegmentEvidence[] {
+  const evidence: SegmentEvidence[] = [];
+  for (const segment of policy.requireSegments ?? []) {
+    const paired = perSegment[segment];
+    if (!paired || paired.matched < policy.minUnits) evidence.push({ segment, role: "require", ...(paired ? { paired } : {}), passed: false, note: `required segment ${segment} has ${paired?.matched ?? 0} matched units` });
+    else evidence.push({ segment, role: "require", paired, passed: paired.lower > policy.minLowerBound, note: `${segment} CI [${paired.lower.toPrecision(3)}, ${paired.upper.toPrecision(3)}]` });
+  }
+  for (const segment of policy.guardSegments ?? []) {
+    const paired = perSegment[segment];
+    if (!paired || paired.matched < policy.minUnits) evidence.push({ segment, role: "guard", ...(paired ? { paired } : {}), passed: null, note: `guard ${segment} not evaluated` });
+    else evidence.push({ segment, role: "guard", paired, passed: paired.upper >= 0, note: `${segment} CI [${paired.lower.toPrecision(3)}, ${paired.upper.toPrecision(3)}]` });
+  }
+  return evidence;
+}
+
+/** Apply per-segment gates on top of an overall decision. */
+export function applySegmentGates(decision: RatchetDecision, segments: SegmentEvidence[]): RatchetDecision {
+  if (!segments.length) return decision;
+  const failedRequire = segments.filter((entry) => entry.role === "require" && entry.passed === false);
+  const failedGuard = segments.filter((entry) => entry.role === "guard" && entry.passed === false);
+  const unevaluated = segments.filter((entry) => entry.passed === null).map((entry) => entry.segment);
+  const suffix = `${unevaluated.length ? `; unevaluated guards: ${unevaluated.join(", ")}` : ""}`;
+  if (!decision.accept) return { ...decision, segments, reason: `${decision.reason}${suffix}` };
+  if (failedGuard.length) return { ...decision, accept: false, verdict: "regressed", segments, reason: `guard segment loss: ${failedGuard.map((entry) => entry.note).join("; ")}` };
+  if (failedRequire.length) return { ...decision, accept: false, verdict: "noisy", segments, reason: `required segments not resolved: ${failedRequire.map((entry) => entry.note).join("; ")}` };
+  return { ...decision, segments, reason: `${decision.reason}; all required segments clear: ${segments.filter((entry) => entry.role === "require").map((entry) => entry.note).join("; ")}${suffix}` };
+}
+
+/** Decide one ratchet step from the scalar comparison and, when available, per-unit paired evidence. */
+export function decideRatchet(input: { scalarImproved: boolean; scalarDelta: number | null; paired?: import("./unit-scores.js").PairedBootstrapResult; policy: RatchetPolicy }): RatchetDecision {
+  const { policy, paired, scalarImproved } = input;
+  const scalar = (reason: string): RatchetDecision => ({ accept: scalarImproved, verdict: scalarImproved ? "keep" : (input.scalarDelta ?? 0) < 0 ? "regressed" : "no_gain", mode: "scalar", reason, scalarImproved });
+  if (policy.mode === "scalar") return scalar("ratchet.mode is scalar");
+  if (!paired) {
+    if (policy.mode === "paired") return { accept: false, verdict: "insufficient_units", mode: "paired_bootstrap", reason: "ratchet.mode is paired but unit scores are missing for the candidate or the reference", scalarImproved };
+    return scalar("no per-unit scores for both runs; scalar comparison");
+  }
+  if (paired.matched < policy.minUnits) {
+    if (policy.mode === "paired") return { accept: false, verdict: "insufficient_units", mode: "paired_bootstrap", reason: `only ${paired.matched} matched units (< ${policy.minUnits})`, scalarImproved, paired };
+    return { ...scalar(`only ${paired.matched} matched units (< ${policy.minUnits}); scalar comparison`), paired };
+  }
+  const level = `${Math.round(paired.confidence * 100)}% CI [${paired.lower.toPrecision(4)}, ${paired.upper.toPrecision(4)}]`;
+  if (paired.lower > policy.minLowerBound && !scalarImproved) return { accept: false, verdict: "no_gain", mode: "paired_bootstrap", reason: `${level} clears ${policy.minLowerBound} but the aggregate metric did not improve; both must agree`, scalarImproved, paired };
+  if (paired.lower > policy.minLowerBound) return { accept: true, verdict: "keep", mode: "paired_bootstrap", reason: `${level} lower bound > ${policy.minLowerBound} over ${paired.matched} units`, scalarImproved, paired };
+  if (paired.upper < 0) return { accept: false, verdict: "regressed", mode: "paired_bootstrap", reason: `${level} is entirely below 0`, scalarImproved, paired };
+  if (paired.upper <= policy.minLowerBound) return { accept: false, verdict: "no_gain", mode: "paired_bootstrap", reason: `${level} cannot clear ${policy.minLowerBound}`, scalarImproved, paired };
+  return { accept: false, verdict: "noisy", mode: "paired_bootstrap", reason: `${level} straddles ${policy.minLowerBound}; the difference is not resolved by these units`, scalarImproved, paired };
+}
