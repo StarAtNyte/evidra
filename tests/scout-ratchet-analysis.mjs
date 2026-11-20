@@ -50,6 +50,7 @@ test("a class screened without a gain cools down until other classes are tried, 
   const later = [...ledger, { experimentId: "x2", techniqueClass: "neural_net", family: "mlp", title: "m", stage: "screen", improvement: -0.01, valid: true }, { experimentId: "x3", techniqueClass: "tree_ensemble", family: "gbdt", title: "g", stage: "screen", improvement: -0.01, valid: true }];
   const summary = summarizeScoutLedger(later, policy).find((entry) => entry.techniqueClass === "symbolic_rules");
   assert.equal(summary.coolingDown, false, "cooldown expires after `cooldown` other classes");
+  assert.equal(summarizeScoutLedger([{ ...ledger[0], valid: false, improvement: null }], policy)[0].coolingDown, false, "an infrastructure-failed screen does not cool a class down");
   const productive = summarizeScoutLedger([{ ...ledger[0], improvement: 0.002 }], policy)[0];
   assert.equal(productive.coolingDown, false, "a class that gained is never on cooldown");
   const brief = scoutBrief(later, policy);

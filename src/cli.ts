@@ -469,8 +469,10 @@ function judgeScoutScreens(resultStore: ResearchStore, config: ReturnType<typeof
 /** Tried technique classes this campaign: scout screens plus every other attempt, oldest first. */
 function campaignScoutLedger(store: ResearchStore, metric: { name: string; direction: "maximize" | "minimize" }): ReturnType<typeof scoutLedgerFromEvents> {
   const since = activeCampaignStart(store);
-  const scoutEntries = scoutLedgerFromEvents(store.eventsByType("research.scout.recorded").filter((event) => !since || !event.createdAt || Date.parse(event.createdAt) >= Date.parse(since)));
-  const covered = new Set(scoutEntries.map((entry) => entry.experimentId));
+  const scoutEntriesAll = scoutLedgerFromEvents(store.eventsByType("research.scout.recorded").filter((event) => !since || !event.createdAt || Date.parse(event.createdAt) >= Date.parse(since)));
+  const abandoned = new Set(store.experiments().filter((entry) => (entry.payload as { status?: unknown }).status === "abandoned").map((entry) => entry.id));
+  const scoutEntries = scoutEntriesAll.filter((entry) => !abandoned.has(entry.experimentId));
+  const covered = new Set(scoutEntriesAll.map((entry) => entry.experimentId));
   const attempts = campaignSearchState(store, metric).experimentLog
     .filter((entry) => !covered.has(entry.experimentId) && (entry.status === "completed" || entry.status === "failed" || entry.status === "rejected" || entry.status === "screened"))
     .map((entry) => ({ experimentId: entry.experimentId, techniqueClass: classifyTechnique({ family: entry.family, title: entry.idea }), family: entry.family, title: entry.idea, stage: "full" as const, improvement: null, valid: entry.status === "completed", accepted: entry.kept }));
@@ -7917,6 +7919,26 @@ experiment.command("gate")
     }
     store.close();
     console.log(`Experiment ${experimentId} gates\n  leakage audit: ${gates.leakageAuditPassed ? "approved" : "pending"}\n  reviewer: ${gates.reviewerApproved ? "approved" : "pending"}`);
+  });
+experiment.command("abandon")
+  .argument("<ids...>", "experiment identifiers")
+  .requiredOption("--reason <reason>", "why the run was stopped (kept on record)")
+  .description("Mark interrupted or superseded local experiments as abandoned so they are not counted as attempts or recovered as stale")
+  .action((ids: string[], options: { reason: string }) => {
+    const store = new ResearchStore(statePath);
+    try {
+      for (const id of ids) {
+        const entry = store.experiments().find((candidate) => candidate.id === id);
+        if (!entry) { console.log(`${id}: not found`); continue; }
+        const status = (entry.payload as { status?: unknown }).status;
+        if (status === "completed") { console.log(`${id}: completed; left unchanged`); continue; }
+        store.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "abandoned", abandonedReason: options.reason, abandonedAt: new Date().toISOString(), previousStatus: status ?? null } });
+        store.appendEvent("experiment.abandoned", { experimentId: id, reason: options.reason, previousStatus: status ?? null });
+        console.log(`${id}: abandoned (was ${String(status)})`);
+      }
+    } finally {
+      store.close();
+    }
   });
 experiment.command("reconcile")
   .argument("<id>", "experiment identifier")

@@ -131,19 +131,21 @@ export interface ScoutClassSummary {
 
 /** Summarize the tried-classes ledger. Entries are oldest first. */
 export function summarizeScoutLedger(entries: readonly ScoutLedgerEntry[], policy: Pick<ScoutPolicy, "cooldown">): ScoutClassSummary[] {
-  const byClass = new Map<string, ScoutClassSummary & { lastIndex: number }>();
+  const byClass = new Map<string, ScoutClassSummary & { lastIndex: number; validEntries: number }>();
   entries.forEach((entry, index) => {
-    const summary = byClass.get(entry.techniqueClass) ?? { techniqueClass: entry.techniqueClass, label: techniqueLabel(entry.techniqueClass), screens: 0, fulls: 0, bestImprovement: null, accepted: 0, othersSinceLast: 0, coolingDown: false, lastIndex: index };
+    const summary = byClass.get(entry.techniqueClass) ?? { techniqueClass: entry.techniqueClass, label: techniqueLabel(entry.techniqueClass), screens: 0, fulls: 0, bestImprovement: null, accepted: 0, othersSinceLast: 0, coolingDown: false, lastIndex: index, validEntries: 0 };
+    if (entry.valid) summary.validEntries += 1;
     if (entry.stage === "screen") summary.screens += 1; else summary.fulls += 1;
     if (entry.accepted) summary.accepted += 1;
     if (entry.valid && entry.improvement !== null && (summary.bestImprovement === null || entry.improvement > summary.bestImprovement)) summary.bestImprovement = entry.improvement;
     summary.lastIndex = index;
     byClass.set(entry.techniqueClass, summary);
   });
-  return [...byClass.values()].map(({ lastIndex, ...summary }) => {
+  return [...byClass.values()].map(({ lastIndex, validEntries, ...summary }) => {
     const later = new Set(entries.slice(lastIndex + 1).map((entry) => entry.techniqueClass).filter((id) => id !== summary.techniqueClass));
     const productive = summary.accepted > 0 || (summary.bestImprovement !== null && summary.bestImprovement > 0);
-    return { ...summary, othersSinceLast: later.size, coolingDown: !productive && later.size < policy.cooldown };
+    // Only measured failures cool a class down; a crashed or infrastructure-failed screen is not evidence against it.
+    return { ...summary, othersSinceLast: later.size, coolingDown: validEntries > 0 && !productive && later.size < policy.cooldown };
   }).sort((left, right) => (right.bestImprovement ?? -Infinity) - (left.bestImprovement ?? -Infinity) || left.techniqueClass.localeCompare(right.techniqueClass));
 }
 
