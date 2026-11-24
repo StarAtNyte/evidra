@@ -23,3 +23,9 @@ __pycache__/
 reports/*.md
 reports/*.jsonl
 .vercel
+
+# local data and stray clones
+competitions/whestbench/starterkit/.whest-data/
+/Raven/
+/claude-paint/
+/snapshots/
