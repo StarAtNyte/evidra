@@ -1,3 +1,4 @@
+import { ComplianceConfigSchema } from "./compliance.js";
 import { z } from "zod";
 
 /** Allow complete multi-module implementations while keeping provider payloads bounded. */
@@ -71,7 +72,108 @@ export const CompetitionConfigSchema = z.object({
     /** Optional evaluator on data the agents never see. A run becomes the champion only if
      * it improves the primary metric and does not regress on this holdout. */
     holdoutCommand: z.array(z.string()).min(1).optional(),
+    /** Optional per-unit score file the evaluator writes (relative to the evaluator cwd): one row per
+     * evaluation unit with an id, a score, and optional segment columns. Enables the paired ratchet
+     * and loss decomposition. CSV/TSV/JSONL/JSON, or Parquet/Feather when Python pandas is available. */
+    unitScores: z.object({
+      path: z.string().min(1),
+      idColumn: z.string().min(1).optional(),
+      scoreColumn: z.string().min(1).optional(),
+      segmentColumns: z.array(z.string().min(1)).optional(),
+      /** Whether higher unit scores are better; defaults to the primary metric direction. */
+      direction: z.enum(["minimize", "maximize"]).optional(),
+      /** Python interpreter used for Parquet/Feather; defaults to the evaluator's interpreter when it is Python. */
+      python: z.string().min(1).optional(),
+      /** Raw outcome log-prob, a fallback predictor's log-prob (e.g. the crowd marginal), and the scale
+       * (score = logp / scale): enables cross-fitted shrink-toward-fallback calibration headroom. */
+      logpColumn: z.string().min(1).optional(),
+      fallbackColumn: z.string().min(1).optional(),
+      scaleColumn: z.string().min(1).optional(),
+      /** Cluster column for cross-fitting folds (e.g. respondent), so routing/calibration estimates are honest. */
+      foldBy: z.string().min(1).optional(),
+    }).optional(),
   }),
+  /** How a completed run earns the champion slot. */
+  ratchet: z.object({
+    mode: z.enum(["auto", "scalar", "paired"]).default("auto"),
+    confidence: z.number().min(0.5).max(0.999).default(0.95),
+    minLowerBound: z.number().finite().default(0),
+    iterations: z.number().int().min(100).max(20_000).default(2000),
+    minUnits: z.number().int().min(2).default(30),
+    /** Resample whole clusters (a segment column such as respondent id) instead of single units. */
+    clusterBy: z.string().min(1).optional(),
+    trim: z.number().min(0).max(0.45).default(0),
+    /** Per-stratum gates: a unit-score segment column (e.g. dataset), the deciding segments, and guard segments. */
+    segmentColumn: z.string().min(1).optional(),
+    requireSegments: z.array(z.string().min(1)).optional(),
+    guardSegments: z.array(z.string().min(1)).optional(),
+    /** Gate full evaluation on a paired screen (CI lower bound above minLowerBound). Default: on in paired mode. */
+    screenGate: z.boolean().optional(),
+  }).optional(),
+  /** Launch-path safety: preflight, infra-vs-experiment failures, readiness gating, env contract. */
+  launch: z.object({
+    /** No-op payload through the exact launch chain (same wrapper, env, cgroup, lock path). Exit 0 = healthy. */
+    preflightCommand: z.array(z.string()).min(1).optional(),
+    preflightTtlMinutes: z.number().min(0).max(24 * 60).optional(),
+    infraExitCodes: z.array(z.number().int()).optional(),
+    infraPatterns: z.array(z.string()).optional(),
+    systemicFailures: z.number().int().min(2).max(50).optional(),
+    systemicWindowMinutes: z.number().min(1).max(24 * 60).optional(),
+    quickFailureSeconds: z.number().min(0).optional(),
+    /** Self-repair: failures go to a repair agent instead of stopping the campaign. */
+    repair: z.object({
+      enabled: z.boolean().default(true),
+      /** External repairer (reads the evidence pack at $EVIDRA_REPAIR_PACK, prints a JSON action). */
+      agentCommand: z.array(z.string()).min(1).optional(),
+      /** LLM repairer; defaults to the campaign's executor provider. */
+      provider: z.enum(["codex", "claude", "local"]).optional(),
+      model: z.string().optional(),
+      maxAttempts: z.number().int().min(1).max(10).default(3),
+      forbiddenEnv: z.array(z.string()).optional(),
+      /** Extra writable roots besides the experiment worktree and the workspace. */
+      writableRoots: z.array(z.string()).default([]),
+    }).optional(),
+    readiness: z.object({
+      defaultMarker: z.string().min(1).default("READY"),
+      envPaths: z.record(z.string(), z.string()).default({}),
+      trusted: z.array(z.string()).default([]),
+    }).optional(),
+    contract: z.object({
+      requiredEnv: z.array(z.string()).default([]),
+      devices: z.array(z.string()).default([]),
+      timeFile: z.string().optional(),
+      localMemoryCapGb: z.number().positive().optional(),
+      localCores: z.number().int().positive().optional(),
+      hosted: z.object({ memoryGb: z.number().positive().optional(), cpus: z.number().int().positive().optional(), gpu: z.string().optional(), wallSeconds: z.number().positive().optional() }).optional(),
+      memorySafetyFraction: z.number().gt(0).max(1).default(0.85),
+      wallSafetyFraction: z.number().gt(0).max(1).default(0.85),
+      wallScale: z.number().positive().default(1),
+      /** Informational: a measured hosted/local wall ratio and where it came from. Recorded, never used to accept. */
+      measuredWallRatio: z.object({ value: z.number().positive(), source: z.string().optional() }).optional(),
+    }).optional(),
+  }).optional(),
+  /** Broad exploration: screen several technique classes per round, promote only the best screens. */
+  scout: z.object({
+    enabled: z.boolean().default(true),
+    width: z.number().int().min(2).max(5).default(4),
+    promoteTop: z.number().int().min(1).max(5).default(1),
+    cooldown: z.number().int().min(0).max(20).default(4),
+    minScreenDelta: z.number().finite().default(0),
+    maxKnobsPerRound: z.number().int().min(0).max(5).default(1),
+    referenceScreenMetric: z.number().finite().optional(),
+  }).optional(),
+  /** Hard rules every idea is reviewed against before it can be screened (see core/compliance.ts). */
+  compliance: ComplianceConfigSchema.optional(),
+  /** Theory-card ideation: every hypothesis carries its math; a reserved quota screens wild cards. */
+  ideation: z.object({
+    theoryCards: z.boolean().default(true),
+    /** Screens per round (defaults to the scout width). */
+    screens: z.number().int().min(1).max(8).optional(),
+    /** Share of each round's screens reserved for wild cards. */
+    wildQuota: z.number().min(0).max(1).default(0.2),
+    /** A wild card must be a screen at most this costly (1 = one reduced screen). */
+    wildMaxCost: z.number().positive().default(1),
+  }).optional(),
   workspacePath: z.string().optional(),
   baselineCommand: z.array(z.string()).optional(),
   experimentCommand: z.array(z.string()).optional(),
@@ -167,6 +269,8 @@ export type Hypothesis = z.infer<typeof HypothesisSchema>;
 export const ResearchHypothesisSchema = z.object({
   title: z.string().min(1),
   formulationFamily: z.string().min(1).max(80).default("unspecified"),
+  /** Theory card (see core/theory-cards.ts); validated before compute when ideation.theoryCards is on. */
+  theoryCard: z.unknown().optional(),
   /** Self-declared design contrast, used for exploration scheduling, never proof. */
   architectureChange: z.object({
     baseline: z.object({ representation: z.string().trim().min(1).max(500), predictionMechanism: z.string().trim().min(1).max(500), learningObjective: z.string().trim().min(1).max(500), generalizationAssumption: z.string().trim().min(1).max(500) }),

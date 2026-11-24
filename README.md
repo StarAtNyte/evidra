@@ -45,6 +45,26 @@ locked evaluator, keep it if it beats the best result so far, and otherwise disc
 - **Any workspace, any goal.** Without a real evaluator (the `local-research` default is `true`), the director
   is told to build a scorer as its first experiment, or to produce the deliverable (a design, report, or
   dataset) as a verified artifact, instead of auditing while it waits for a metric.
+- **Scout rounds explore across techniques, not knobs.** With `--scout N` (or a `scout` block in
+  `competition.json`) the director proposes N hypotheses from different technique classes. Evidra keeps one per
+  class, caps knob changes, puts classes that were screened without a gain on cooldown, screens everything on the
+  reduced evaluator, and fully evaluates only screens that beat the champion. `evidra scout run variants.json`
+  runs one such round without an LLM (for example, env-switch variants of a submission). See also
+  `evidra scout ledger|classes|classify|judge`.
+- **Per-unit scores make the ratchet paired and the analysis local.** If the evaluator writes a per-unit score
+  file (`evaluator.unitScores`: id, score, segment columns), a run is kept only when the aggregate improves *and*
+  the paired bootstrap CI over units (optionally clustered, e.g. by respondent) clears `ratchet.minLowerBound`.
+  You can require that per-split gates (`ratchet.requireSegments`) clear the bar and that guards
+  (`ratchet.guardSegments`) do not lose. Before each ideation, the director receives a loss analysis:
+  - a gap table by segment;
+  - the noise floor;
+  - cross-fitted routing and calibration headroom;
+  - falsifiable data hypotheses.
+
+  Run the same analysis yourself with `evidra analyze loss|campaign|paired`.
+- **Every ratchet step is on record.** Accepted and rejected steps go to `.sota/IMPROVEMENTS.md` and
+  `improvements.json`. The files are hash-chained, written atomically, and idempotent across resumes. Use
+  `evidra improvements [--verify]`.
 - **The director sees the results log.** Each cycle it receives the champion and the recent attempts (idea,
   method family, metric, kept or not), so it can refine what works and switch families when one stalls.
 

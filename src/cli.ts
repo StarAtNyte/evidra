@@ -5,10 +5,10 @@ import { formatHarnessFeedback, parseHarnessFeedbackRole, projectHarnessFailureF
 import { workspaceBackupDestination } from "./core/backup-path.js";
 import { reconcileRemoteExperiment } from "./core/remote-reconciliation.js";
 import { Command } from "commander";
-import { appendFileSync, copyFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync, realpathSync } from "node:fs";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { appendFileSync, copyFileSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync, realpathSync, openSync, closeSync } from "node:fs";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { externalActionNeedsReconciliation, ResearchStore, queueEffectivePriority, routineRetryDelaySeconds } from "./core/store.js";
@@ -57,7 +57,7 @@ import { persistExecutionStageResult } from "./core/stage-executor.js";
 import { availableResearchTools, executeResearchTool } from "./core/tools.js";
 import { externalToolStatus, loadExternalResearchTools, recordExternalToolHealth, setExternalToolStatus } from "./core/external-tools.js";
 import { projectVerifiedSubtaskState } from "./core/subtask-state.js";
-import { classifyProcessFailure, executorFor, mergeEvaluatorResult, parseMetricOutput, prepareExperimentEnvironment, prepareWorkerHome, safeWorkerEnvironment, validateRunMetrics } from "./core/executors.js";
+import { classifyProcessFailure, executorFor, mergeEvaluatorResult, parseMetricOutput, prepareExperimentEnvironment, prepareWorkerHome, safeWorkerEnvironment, sessionBusEnvironment, validateRunMetrics } from "./core/executors.js";
 import { rankFinalCandidates, runCampaignFinalize, type FinalCandidate } from "./core/finalize.js";
 import { packEvidence } from "./core/evidence-pack.js";
 import { sha256File } from "./core/evidence.js";
@@ -133,7 +133,20 @@ import { loadScientificTaskDirectory, runScientificTaskSuite, writeScientificTas
 import { runSafetyBenchmark } from "./core/safety-bench.js";
 import { runOrchestrationBenchmark } from "./core/orchestration-bench.js";
 import { runGovernanceBenchmark } from "./core/governance-bench.js";
-import { championExperimentIds, explorationHypothesis, holdoutAllows, holdoutReference, implementationOf, isAgentVisibleEvent, normalizeFamily, parentExperimentId, searchState, selectRatchetReference } from "./core/ratchet.js";
+import { championExperimentIds, explorationHypothesis, holdoutAllows, holdoutReference, implementationOf, isAgentVisibleEvent, normalizeFamily, parentExperimentId, searchState, selectRatchetReference, decideRatchet, resolveRatchetPolicy, applySegmentGates, judgeSegments }  from "./core/ratchet.js";
+import { campaignLossAnalysis, loadRunUnitScores, pairedRatchetEvidence, unitScoreDirection, unitScoreFiles, unitScoresArtifactPath } from "./core/campaign-analysis.js";
+import type { CompetitionConfig, ExperimentManifest } from "./core/types.js";
+import type { AgentProvider } from "./agents/codex-exec.js";
+import { DEFAULT_FORBIDDEN_ENV, environmentSnapshot, extractTraceback, knownRepair, parseRepairAction, rememberRepair, rememberedEnvironment, REPAIR_INSTRUCTIONS, repairPolicyViolations, runRepairCommand, tail, writeEscalation, type EvidencePack, type RepairAction } from "./core/self-repair.js";
+import { planSupervisorTick, type LiveWorker, type QueuedExperiment, type SupervisorPolicy } from "./core/supervisor.js";
+import { failureSignature, candidateDependencies, checkResources, classifyLaunchFailure, dependencyStatus, detectSystemicFailure, missingEnvironment, parseTimeVerbose, resolveEnvContract, resolveLaunchPolicy, resourcesFromOutput, type Dependency, type DependencyStatus, type LaunchClassification, type RecordedFailure, type ResourceVerdict } from "./core/launch-guard.js";
+import { escalateCompliance, reviewCompliance, ComplianceConfigSchema, type ComplianceConfig } from "./core/compliance.js";
+import { loadCardFile, rankTheoryCards, cardStatus, analysisNumbersFromBrief, ideationBrief, isWild, planIdeationRound, readTheoryLedger, recordTheoryVerdict, completeTheoryWriteup, validateTheoryCard, type AnalysisNumbers, type AnyCard } from "./core/theory-cards.js";
+import { appendImprovement, effectiveImprovements, ledgerPaths, readImprovementLedger, renderImprovementLedger, verifyImprovementLedger } from "./core/improvement-ledger.js";
+import { classifyTechnique, planScoutRound, promoteScoutScreens, resolveScoutPolicy, scoutBrief, scoutLedgerFromEvents, summarizeScoutLedger, techniqueLabel, TECHNIQUE_CLASSES, type ScoutPolicy } from "./core/scout.js";
+import { analyzeUnitLoss, renderLossAnalysis } from "./core/loss-analysis.js";
+import { unitScoresFromPredictionRows } from "./core/error-analysis.js";
+import { loadUnitScores, pairedBootstrap } from "./core/unit-scores.js";
 import { rankReplayPolicies, type ReplayPolicy } from "./core/replay-simulator.js";
 import { approvalInbox } from "./core/approvals.js";
 import { loadProjectGuidance } from "./core/project-guidance.js";
@@ -388,6 +401,181 @@ async function holdoutMetricFor(cwd: string, command: string[], environment: Nod
   if (result.exitCode !== 0) return undefined;
   const metric = parseMetricOutput(result.stdout, metricName).metrics[metricName];
   return typeof metric === "number" && Number.isFinite(metric) ? metric : undefined;
+}
+
+/**
+ * Scout policy for the active campaign: the competition manifest's scout block,
+ * overridden by --scout. The flag is recorded once per campaign so a resume
+ * keeps scout mode without repeating it.
+ */
+/**
+ * Compliance review of a hypothesis's card. needs_human_ruling is escalated (once) and never screened
+ * automatically; rejected cards are closed. Returns undefined when compliant or no rules are set.
+ */
+function complianceHold(stateDirectory: string, store: ResearchStore, config: ReturnType<typeof activeCompetition>["config"], card: unknown, title: string | undefined, context: string): { status: "needs_human_ruling" | "rejected"; reason: string } | undefined {
+  if (!config.compliance || card === undefined || card === null || typeof card !== "object") return undefined;
+  const review = reviewCompliance(card as Record<string, unknown>, config.compliance);
+  store.appendEvent("research.compliance.reviewed", { context, ...review });
+  if (review.status === "compliant") return undefined;
+  if (review.status === "needs_human_ruling") escalateCompliance(stateDirectory, review, { title });
+  return { status: review.status, reason: `compliance ${review.status === "rejected" ? "rejected" : "needs a human ruling (escalated; not screened)"}: ${review.reasons.join("; ")}` };
+}
+
+/** Latest loss-analysis numbers per state directory, used to check theory-card arithmetic. */
+const ideationAnalysis = new Map<string, AnalysisNumbers>();
+
+/**
+ * Write a ratchet or screen verdict back onto the hypothesis's theory card (confirmed/falsified),
+ * flag predicted-vs-observed disagreements, and refresh the loss decomposition.
+ */
+function recordCardVerdict(stateDirectory: string, store: ResearchStore, config: ReturnType<typeof activeCompetition>["config"], hypothesis: unknown, experimentId: string, outcome: { ratchetVerdict: string; observedGain: number | null; ci?: { lower: number; upper: number }; segments?: Array<{ segment: string; paired?: { meanImprovement: number; lower: number; upper: number } }> }): void {
+  const raw = (hypothesis as { theoryCard?: unknown } | undefined)?.theoryCard;
+  if (raw === undefined || raw === null) return;
+  try {
+    const { card } = validateTheoryCard(raw);
+    if (!card) return;
+    const target = card.prediction?.segment ?? (!isWild(card) ? card.expectedGain.inputs.segment : undefined);
+    const matched = target ? outcome.segments?.find((entry) => entry.paired && (entry.segment === target || target.endsWith(`=${entry.segment}`))) : undefined;
+    const verdict = recordTheoryVerdict(stateDirectory, card, { experimentId, ratchetVerdict: outcome.ratchetVerdict, observedGain: outcome.observedGain, ...(outcome.ci ? { ci: { lower: outcome.ci.lower, upper: outcome.ci.upper } } : {}), ...(matched?.paired ? { segmentObserved: { segment: matched.segment, meanImprovement: matched.paired.meanImprovement, lower: matched.paired.lower, upper: matched.paired.upper } } : {}) });
+    store.appendEvent("research.theory.verdict", { ...verdict });
+    if (verdict.mechanismMismatch) store.appendEvent("research.theory.mismatch", { cardId: verdict.cardId, experimentId, mismatch: verdict.mechanismMismatch, predictedGain: verdict.predictedGain, observedGain: verdict.observedGain });
+    const refreshed = campaignLossAnalysis(store, config, campaignSearchState(store, config.metric).champion?.experimentId);
+    if (refreshed && "brief" in refreshed) {
+      ideationAnalysis.set(stateDirectory, analysisNumbersFromBrief(refreshed.brief));
+      store.appendEvent("research.loss_analysis.refreshed", { afterExperimentId: experimentId, cardId: verdict.cardId, gapTable: (refreshed.brief as { gapTable?: unknown[] }).gapTable?.slice(0, 5) ?? [] });
+    }
+  } catch (error) {
+    store.appendEvent("research.theory.verdict_failed", { experimentId, error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+/**
+ * Theory-card gate for one director round: cards without their math are sent back (deferred) before
+ * any compute; the valid ones are planned with a wild-card quota, gain x probability / cost ranking,
+ * and one technique class per round. Returns a deferral reason per hypothesis (undefined = proceed).
+ */
+function ideationGate(stateDirectory: string, store: ResearchStore, config: ReturnType<typeof activeCompetition>["config"], cycle: number, hypotheses: ReadonlyArray<{ title: string; theoryCard?: unknown }>, already: ReadonlyArray<string | undefined>, defaultScreens: number): Array<string | undefined> {
+  const settings = config.ideation;
+  if (!settings || settings.theoryCards === false) return hypotheses.map(() => undefined);
+  const analysis = ideationAnalysis.get(stateDirectory) ?? {};
+  const reasons: Array<string | undefined> = hypotheses.map(() => undefined);
+  const valid: Array<{ index: number; card: AnyCard }> = [];
+  const sentBack: Array<{ title: string; issues: string[] }> = [];
+  for (const [index, hypothesis] of hypotheses.entries()) {
+    if (already[index]) continue;
+    if (hypothesis.theoryCard === undefined || hypothesis.theoryCard === null) { reasons[index] = "theory card missing: sent back to the director"; sentBack.push({ title: hypothesis.title, issues: ["no theoryCard"] }); continue; }
+    const checked = validateTheoryCard(hypothesis.theoryCard, analysis, { wildMaxCost: settings.wildMaxCost });
+    if (!checked.card || checked.issues.length) {
+      const issues = checked.issues.map((issue) => `${issue.field}: ${issue.message}`);
+      reasons[index] = `theory card sent back: ${issues.join("; ")}`;
+      sentBack.push({ title: hypothesis.title, issues });
+      continue;
+    }
+    const hold = complianceHold(stateDirectory, store, config, hypothesis.theoryCard, hypothesis.title, `cycle ${cycle}`);
+    if (hold) { reasons[index] = hold.reason; sentBack.push({ title: hypothesis.title, issues: [hold.reason] }); continue; }
+    if (!isWild(checked.card)) for (const pending of readTheoryLedger(stateDirectory).filter((entry) => entry.theoryPending && entry.cardId === (checked.card!.id ?? checked.card!.title))) completeTheoryWriteup(stateDirectory, pending.cardId, checked.card);
+    valid.push({ index, card: { ...checked.card, id: checked.card.id ?? hypothesis.title } });
+  }
+  if (sentBack.length) store.appendEvent("research.ideation.sent_back", { cycle, cards: sentBack });
+  const tried: Record<string, number> = {};
+  for (const entry of readImprovementLedger(stateDirectory)) if (entry.techniqueClass) tried[entry.techniqueClass] = (tried[entry.techniqueClass] ?? 0) + 1;
+  const plan = planIdeationRound(valid.map((entry) => entry.card), readTheoryLedger(stateDirectory), { screens: settings.screens ?? defaultScreens, wildQuota: settings.wildQuota, triedClasses: tried, ...(analysis.noiseFloor !== undefined ? { defaultSpread: analysis.noiseFloor } : {}) });
+  for (const { card, reason } of plan.deferred) {
+    const entry = valid.find((candidate) => candidate.card === card);
+    if (entry) reasons[entry.index] = `ideation: not selected this round (${reason})`;
+  }
+  const citations = valid.flatMap(({ card }) => (!isWild(card) ? card.citations : []).map((citation) => ({ card: card.title, ...citation })));
+  store.appendEvent("research.ideation.planned", { cycle, wildSlots: plan.wildSlots, breadthIssues: plan.breadthIssues, citations, selected: plan.selected.map((entry) => ({ title: entry.card.title, origin: entry.card.origin, techniqueClass: entry.techniqueClass, slot: entry.slot, score: entry.score, reason: entry.reason, ...(entry.card.origin === "new_theory" ? { status: "new/unproven" } : {}) })) });
+  if (plan.breadthIssues.length) store.appendEvent("research.ideation.sent_back", { cycle, round: plan.breadthIssues });
+  return reasons;
+}
+
+function campaignIdeationContext(stateDirectory: string, store: ResearchStore, config: ReturnType<typeof activeCompetition>["config"]): Record<string, unknown> | null {
+  const settings = config.ideation;
+  if (!settings || settings.theoryCards === false) return null;
+  const sentBack = store.eventsByType("research.ideation.sent_back").slice(-2).flatMap((event) => {
+    const payload = event.payload as { cards?: Array<{ title: string; issues: string[] }>; round?: string[] };
+    return [...(payload.cards ?? []), ...(payload.round ? [{ title: "round", issues: payload.round }] : [])];
+  });
+  return ideationBrief(readTheoryLedger(stateDirectory), { wildQuota: settings.wildQuota, wildMaxCost: settings.wildMaxCost, sentBack, rules: config.compliance?.rules.map((rule) => ({ id: rule.id, description: rule.description })), allowedData: config.compliance?.allowedData });
+}
+
+function campaignScoutPolicy(store: ResearchStore, config: ReturnType<typeof activeCompetition>["config"], cliWidth?: string): ScoutPolicy {
+  const since = activeCampaignStart(store);
+  const requested = cliWidth !== undefined ? Number(cliWidth) : undefined;
+  if (requested !== undefined && (!Number.isInteger(requested) || requested < 2 || requested > 5)) throw new Error("--scout expects a width between 2 and 5.");
+  const recorded = store.eventsByType("research.scout.enabled").filter((event) => !since || !event.createdAt || Date.parse(event.createdAt) >= Date.parse(since)).at(-1)?.payload as { width?: unknown } | undefined;
+  if (requested !== undefined && recorded?.width !== requested) store.appendEvent("research.scout.enabled", { width: requested, campaignStartedAt: since ?? null });
+  const width = requested ?? (typeof recorded?.width === "number" ? recorded.width : undefined);
+  return resolveScoutPolicy(config.scout, width);
+}
+
+/** The reduced-evaluator metric a scout screen must beat: configured, else the champion's own screen. */
+function scoutReferenceScreen(store: ResearchStore, policy: ScoutPolicy): number | undefined {
+  if (policy.referenceScreenMetric !== undefined) return policy.referenceScreenMetric;
+  const championId = championExperimentIds(store, activeCampaignStart(store)).at(-1);
+  if (!championId) return undefined;
+  const screen = store.eventsByType("experiment.stage.reduced_validation.completed").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === championId)?.payload as { metric?: unknown } | undefined;
+  return typeof screen?.metric === "number" && Number.isFinite(screen.metric) ? screen.metric : undefined;
+}
+
+/**
+ * Screen evidence for scout promotion. With unit scores on both sides, a
+ * screen is paired against the champion (or baseline) on the units the screen
+ * covered, so a one-split screen is compared with the same split of the
+ * reference rather than with a differently-scoped aggregate.
+ */
+function scoutScreenEvidence(store: ResearchStore, config: ReturnType<typeof activeCompetition>["config"], experimentIds: string[]): Array<{ experimentId: string; runId?: string; valid: boolean; metric?: number; improvement: number | null; mode: string; referenceId?: string; ci?: { lower: number; upper: number; confidence: number; matched: number; probabilityImproved: number }; note?: string }> {
+  const championId = championExperimentIds(store, activeCampaignStart(store)).at(-1);
+  const championRunId = championId ? (store.experiments().find((entry) => entry.id === championId)?.payload as { runId?: unknown } | undefined)?.runId : undefined;
+  const championPath = typeof championRunId === "string" ? unitScoresArtifactPath((store.runs().find((run) => run.id === championRunId)?.payload as { artifacts?: unknown } | undefined)?.artifacts) : undefined;
+  const baseline = store.eventsByType("baseline.completed").at(-1)?.payload as { runId?: unknown; artifactPaths?: unknown } | undefined;
+  const referencePath = championPath ?? unitScoresArtifactPath(baseline?.artifactPaths);
+  const referenceId = championPath ? championId : typeof baseline?.runId === "string" ? baseline.runId : undefined;
+  const referenceScreen = scoutReferenceScreen(store, resolveScoutPolicy(config.scout, undefined));
+  const policy = resolveRatchetPolicy(config.ratchet);
+  return experimentIds.map((experimentId) => {
+    const screen = store.eventsByType("experiment.screening.completed").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === experimentId)?.payload as { runId?: unknown; metric?: unknown; unitScoresPath?: unknown } | undefined;
+    const metric = typeof screen?.metric === "number" && Number.isFinite(screen.metric) ? screen.metric : undefined;
+    const runId = typeof screen?.runId === "string" ? screen.runId : undefined;
+    if (!screen || metric === undefined) return { experimentId, runId, valid: false, improvement: null, mode: "reduced_screen", note: "screen failed or reported no metric" };
+    const candidatePath = typeof screen.unitScoresPath === "string" ? screen.unitScoresPath : undefined;
+    const evidence = pairedRatchetEvidence(config, referencePath, candidatePath, policy);
+    if (evidence.paired && evidence.paired.matched >= policy.minUnits) {
+      const paired = evidence.paired;
+      return { experimentId, runId, valid: true, metric, improvement: paired.meanImprovement, mode: "paired_screen", referenceId, ci: { lower: paired.lower, upper: paired.upper, confidence: paired.confidence, matched: paired.matched, probabilityImproved: paired.probabilityImproved } };
+    }
+    const sign = config.metric.direction === "maximize" ? 1 : -1;
+    return { experimentId, runId, valid: true, metric, improvement: referenceScreen === undefined ? null : sign * (metric - referenceScreen), mode: "reduced_screen", note: evidence.note ?? (referenceScreen === undefined ? "no reference screen" : undefined) };
+  });
+}
+
+/** Pair each screen against the champion, promote the best, and record both ledgers. Safe to re-run (crash recovery). */
+function judgeScoutScreens(resultStore: ResearchStore, config: ReturnType<typeof activeCompetition>["config"], policy: ScoutPolicy, experimentIds: string[], describe: (experimentId: string) => { techniqueClass: string; family: string; title: string }): { promoted: string[] } {
+  const adapter = { config };
+      const screens = scoutScreenEvidence(resultStore, adapter.config, experimentIds);
+      const promotion = promoteScoutScreens(screens.map((screen) => ({ experimentId: screen.experimentId, metric: screen.improvement ?? undefined, valid: screen.valid && screen.improvement !== null, ...(screen.ci ? { rank: screen.ci.lower } : {}) })), policy, "maximize", 0);
+      for (const decision of promotion.decisions) {
+        const screen = screens.find((entry) => entry.experimentId === decision.experimentId)!;
+        const described = describe(decision.experimentId);
+        resultStore.appendEvent("research.scout.recorded", { experimentId: decision.experimentId, stage: "screen", improvement: screen.improvement, valid: screen.valid, promoted: decision.promoted, reason: decision.reason, mode: screen.mode, metric: screen.metric ?? null, ...described });
+        appendImprovement(stateDirectory, { campaignStartedAt: activeCampaignStart(resultStore), experimentId: decision.experimentId, runId: screen.runId, stage: "screen", title: described.title, family: described.family, techniqueClass: described.techniqueClass, metricName: adapter.config.metric.name, direction: adapter.config.metric.direction, referenceId: screen.referenceId, candidateMetric: screen.metric ?? null, improvement: screen.improvement, accepted: decision.promoted, verdict: decision.promoted ? "promoted" : screen.valid ? "screened_out" : "screen_failed", mode: screen.mode, reason: `${decision.reason}${screen.note ? `; ${screen.note}` : ""}`, ...(screen.ci ? { ci: screen.ci } : {}) });
+        console.log(`${decision.promoted ? "PROMOTE" : "drop   "} ${described.title} [${described.techniqueClass}] improvement ${screen.improvement ?? "n/a"} (${screen.mode}${screen.ci ? ` CI [${screen.ci.lower.toPrecision(3)}, ${screen.ci.upper.toPrecision(3)}]` : ""}) - ${decision.reason}`);
+      }
+  return promotion;
+}
+
+/** Tried technique classes this campaign: scout screens plus every other attempt, oldest first. */
+function campaignScoutLedger(store: ResearchStore, metric: { name: string; direction: "maximize" | "minimize" }): ReturnType<typeof scoutLedgerFromEvents> {
+  const since = activeCampaignStart(store);
+  const scoutEntriesAll = scoutLedgerFromEvents(store.eventsByType("research.scout.recorded").filter((event) => !since || !event.createdAt || Date.parse(event.createdAt) >= Date.parse(since)));
+  const abandoned = new Set(store.experiments().filter((entry) => (entry.payload as { status?: unknown }).status === "abandoned").map((entry) => entry.id));
+  const scoutEntries = scoutEntriesAll.filter((entry) => !abandoned.has(entry.experimentId));
+  const covered = new Set(scoutEntriesAll.map((entry) => entry.experimentId));
+  const attempts = campaignSearchState(store, metric).experimentLog
+    .filter((entry) => !covered.has(entry.experimentId) && (entry.status === "completed" || entry.status === "failed" || entry.status === "rejected" || entry.status === "screened"))
+    .map((entry) => ({ experimentId: entry.experimentId, techniqueClass: classifyTechnique({ family: entry.family, title: entry.idea }), family: entry.family, title: entry.idea, stage: "full" as const, improvement: null, valid: entry.status === "completed", accepted: entry.kept }));
+  return [...attempts, ...scoutEntries];
 }
 
 /** The champion, the per-family archive, recent attempts, and whether this cycle must explore. */
@@ -2816,6 +3004,319 @@ evidence.command("analyze").argument("<file>", "JSON array, {predictions: [...]}
 });
 program.addCommand(evidence);
 
+program.command("improvements")
+  .description("Show the improvements ledger: every ratchet step, accepted or rejected")
+  .option("--json", "emit the ledger as JSON")
+  .option("--verify", "verify the ledger hash chain and exit non-zero when broken")
+  .action((options: { json?: boolean; verify?: boolean }) => {
+    const entries = readImprovementLedger(stateDirectory);
+    const chain = verifyImprovementLedger(entries);
+    if (options.verify) {
+      console.log(chain.valid ? `Improvements ledger intact (${entries.length} entries).` : `Improvements ledger BROKEN at entry #${chain.brokenAt}.`);
+      if (!chain.valid) process.exitCode = 1;
+      return;
+    }
+    if (options.json) { console.log(JSON.stringify({ path: ledgerPaths(stateDirectory).json, chain, entries }, null, 2)); return; }
+    console.log(entries.length ? renderImprovementLedger(entries) : `No ratchet steps recorded yet (${ledgerPaths(stateDirectory).markdown}).`);
+  });
+
+program.command("improvements-rescore")
+  .description("Re-score ledger entries with the current paired estimator; append correction entries where the CI or verdict changed (the hash chain is never rewritten)")
+  .option("--dry-run", "show what would change without appending")
+  .action((options: { dryRun?: boolean }) => {
+    const adapter = activeCompetition();
+    const store = new ResearchStore(statePath);
+    try {
+      const entries = readImprovementLedger(stateDirectory);
+      const policy = resolveRatchetPolicy(adapter.config.ratchet);
+      const baseline = store.eventsByType("baseline.completed").at(-1)?.payload as { runId?: unknown; artifactPaths?: unknown } | undefined;
+      const runArtifacts = (runId: string | undefined) => {
+        if (!runId) return undefined;
+        if (runId === baseline?.runId || runId.startsWith("baseline")) return unitScoresArtifactPath(baseline?.artifactPaths);
+        return unitScoresArtifactPath((store.runs().find((run) => run.id === runId)?.payload as { artifacts?: unknown } | undefined)?.artifacts);
+      };
+      let changed = 0;
+      for (const entry of effectiveImprovements(entries)) {
+        if (!entry.ci || entry.stage !== "full") continue;
+        const original = entry.correctionOf ?? entry.seq;
+        const checked = store.eventsByType("experiment.ratchet.checked").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === entry.experimentId)?.payload as { referenceRunId?: string; comparison?: { direction?: string; delta?: number | null } } | undefined;
+        const referencePath = runArtifacts(checked?.referenceRunId ?? entry.referenceId);
+        const candidatePath = runArtifacts(entry.runId);
+        if (!referencePath || !candidatePath) { console.log(`#${original} ${entry.experimentId}: unit scores not resolvable; skipped`); continue; }
+        const evidence = pairedRatchetEvidence(adapter.config, referencePath, candidatePath, policy);
+        if (!evidence.paired) { console.log(`#${original}: ${evidence.note}`); continue; }
+        const scalarImproved = typeof entry.improvement === "number" ? entry.improvement > 0 : checked?.comparison?.direction === "improved";
+        const decision = applySegmentGates(decideRatchet({ scalarImproved, scalarDelta: entry.improvement ?? null, paired: evidence.paired, policy }), judgeSegments(evidence.perSegment ?? {}, policy));
+        const paired = evidence.paired;
+        const same = Math.abs(paired.lower - entry.ci.lower) < 1e-9 && Math.abs(paired.upper - entry.ci.upper) < 1e-9 && decision.verdict === entry.verdict;
+        console.log(`#${original} ${entry.experimentId}: ${entry.verdict} CI [${entry.ci.lower.toPrecision(4)}, ${entry.ci.upper.toPrecision(4)}] -> ${decision.verdict} CI [${paired.lower.toPrecision(4)}, ${paired.upper.toPrecision(4)}] (${paired.clusters} clusters)${same ? " unchanged" : ""}`);
+        for (const segment of decision.segments ?? []) console.log(`    ${segment.role} ${segment.segment}: ${segment.passed ? "pass" : "FAIL"}${segment.paired ? ` [${segment.paired.lower.toPrecision(4)}, ${segment.paired.upper.toPrecision(4)}]` : ""}`);
+        if (same || options.dryRun) continue;
+        const { seq: _seq, recordedAt: _recordedAt, prev: _prev, sha: _sha, ...rest } = entry;
+        appendImprovement(stateDirectory, { ...rest, correctionOf: original, accepted: decision.accept, verdict: decision.verdict, mode: decision.mode, reason: `re-scored with the respondent-cluster ratio estimator (${paired.clusters} clusters): ${decision.reason}`, ci: { lower: paired.lower, upper: paired.upper, confidence: paired.confidence, matched: paired.matched, probabilityImproved: paired.probabilityImproved }, ...(decision.segments?.length ? { segments: decision.segments.map((segment) => ({ segment: segment.segment, role: segment.role, passed: segment.passed, ...(segment.paired ? { lower: segment.paired.lower, upper: segment.paired.upper, meanImprovement: segment.paired.meanImprovement, matched: segment.paired.matched } : {}) })) } : {}) });
+        changed += 1;
+      }
+      console.log(options.dryRun ? "Dry run; nothing appended." : `${changed} correction(s) appended; chain ${verifyImprovementLedger(readImprovementLedger(stateDirectory)).valid ? "intact" : "BROKEN"}.`);
+      if (!options.dryRun && changed && entries.some((entry) => entry.accepted) ) store.appendEvent("improvements.rescored", { corrections: changed });
+    } finally {
+      store.close();
+    }
+  });
+
+const analyze = new Command("analyze").description("Data analysis: localize loss and estimate headroom from per-unit evaluator scores");
+analyze.command("loss")
+  .argument("<files...>", "unit-score files (CSV/TSV/JSONL/JSON/Parquet) or prediction artifacts; the first is the primary run")
+  .option("--direction <direction>", "maximize when higher unit scores are better, minimize for losses")
+  .option("--labels <labels>", "comma-separated run labels, in file order")
+  .option("--id-column <name>", "unit id column")
+  .option("--score-column <name>", "unit score column")
+  .option("--segments <columns>", "comma-separated segment columns (default: inferred)")
+  .option("--predictions", "treat files as prediction artifacts (actual/predicted rows) and score 0/1 or absolute error")
+  .option("--python <path>", "Python interpreter for Parquet/Feather")
+  .option("--logp-column <name>", "raw outcome log-prob column (with --fallback-column: calibration headroom)")
+  .option("--fallback-column <name>", "fallback predictor's outcome log-prob column, e.g. the crowd marginal")
+  .option("--scale-column <name>", "score = logp / scale (e.g. the dataset's reference R)")
+  .option("--fold-by <column>", "cross-fitting fold cluster, e.g. respondent id")
+  .option("--json", "emit the full report as JSON")
+  .action((files: string[], options: { direction?: string; labels?: string; idColumn?: string; scoreColumn?: string; segments?: string; predictions?: boolean; python?: string; logpColumn?: string; fallbackColumn?: string; scaleColumn?: string; foldBy?: string; json?: boolean }) => {
+    const labels = options.labels?.split(",").map((label) => label.trim()) ?? [];
+    const direction = options.predictions ? "minimize" : options.direction === "minimize" || options.direction === "maximize" ? options.direction : undefined;
+    if (!direction) throw new Error("--direction maximize|minimize is required for unit-score files.");
+    const runs = files.map((file, index) => ({
+      id: labels[index] || basename(file),
+      table: options.predictions
+        ? unitScoresFromPredictionRows(parsePredictionRows(file.endsWith(".jsonl") ? readFileSync(file, "utf8") : JSON.parse(readFileSync(file, "utf8")) as unknown))
+        : loadUnitScores(file, { idColumn: options.idColumn, scoreColumn: options.scoreColumn, segmentColumns: options.segments?.split(",").map((column) => column.trim()).filter(Boolean), python: options.python, logpColumn: options.logpColumn, fallbackColumn: options.fallbackColumn, scaleColumn: options.scaleColumn }),
+    }));
+    const report = analyzeUnitLoss(runs, { direction, foldBy: options.foldBy });
+    console.log(options.json ? JSON.stringify(report, null, 2) : renderLossAnalysis(report));
+  });
+analyze.command("campaign")
+  .description("Loss analysis over the champion, baseline and recent runs that wrote evaluator.unitScores")
+  .option("--json", "emit the full report as JSON")
+  .action((options: { json?: boolean }) => {
+    const adapter = activeCompetition();
+    if (!adapter.config.evaluator.unitScores) throw new Error("Set evaluator.unitScores in competition.json so the evaluator's per-unit scores are recorded with each run.");
+    const store = new ResearchStore(statePath);
+    try {
+      const champion = championExperimentIds(store, activeCampaignStart(store)).at(-1);
+      const analysis = campaignLossAnalysis(store, adapter.config, champion);
+      if (!analysis) { console.log("No recorded run has unit scores yet; run the baseline or an experiment first."); return; }
+      if ("error" in analysis) throw new Error(analysis.error);
+      console.log(options.json ? JSON.stringify(analysis.report, null, 2) : renderLossAnalysis(analysis.report));
+    } finally {
+      store.close();
+    }
+  });
+analyze.command("paired")
+  .argument("<reference>", "reference unit-score file")
+  .argument("<candidate>", "candidate unit-score file")
+  .option("--direction <direction>", "maximize or minimize", "maximize")
+  .option("--cluster-by <column>", "resample whole clusters of units")
+  .option("--confidence <level>", "two-sided confidence level", "0.95")
+  .option("--min-lower-bound <value>", "acceptance bar for the CI lower bound", "0")
+  .option("--id-column <name>", "unit id column")
+  .option("--score-column <name>", "unit score column")
+  .description("Paired bootstrap CI between two runs' unit scores, with the ratchet's verdict")
+  .action((reference: string, candidate: string, options: { direction: string; clusterBy?: string; confidence: string; minLowerBound: string; idColumn?: string; scoreColumn?: string }) => {
+    const direction = options.direction === "minimize" ? "minimize" : "maximize";
+    const load = (file: string) => loadUnitScores(file, { idColumn: options.idColumn, scoreColumn: options.scoreColumn });
+    const policy = resolveRatchetPolicy({ mode: "paired", confidence: Number(options.confidence), minLowerBound: Number(options.minLowerBound), clusterBy: options.clusterBy });
+    const paired = pairedBootstrap(load(reference).units, load(candidate).units, { direction, confidence: policy.confidence, clusterBy: policy.clusterBy, iterations: policy.iterations });
+    console.log(JSON.stringify({ paired, decision: decideRatchet({ scalarImproved: paired.meanImprovement > 0, scalarDelta: paired.meanImprovement, paired, policy }) }, null, 2));
+  });
+program.addCommand(analyze);
+
+const scout = new Command("scout").description("Broad exploration: technique classes, the tried-classes ledger, and classification");
+scout.command("ledger")
+  .option("--json", "emit JSON")
+  .description("Show which technique classes this campaign has tried, their best result, and which are cooling down")
+  .action((options: { json?: boolean }) => {
+    const adapter = activeCompetition();
+    const store = new ResearchStore(statePath);
+    try {
+      const policy = resolveScoutPolicy(adapter.config.scout, undefined);
+      const ledger = campaignScoutLedger(store, adapter.config.metric);
+      const brief = scoutBrief(ledger, policy);
+      if (options.json) { console.log(JSON.stringify({ policy, ledger, brief }, null, 2)); return; }
+      const summaries = summarizeScoutLedger(ledger, policy);
+      console.log(["| class | screens | fulls | best improvement | accepted | status |", "|---|---|---|---|---|---|", ...summaries.map((summary) => `| ${summary.label} | ${summary.screens} | ${summary.fulls} | ${summary.bestImprovement ?? "-"} | ${summary.accepted} | ${summary.coolingDown ? `cooldown (${summary.othersSinceLast}/${policy.cooldown})` : "open"} |`), "", `Untried: ${(brief.untriedClasses as Array<{ label: string }>).map((entry) => entry.label).join("; ")}`].join("\n"));
+    } finally {
+      store.close();
+    }
+  });
+scout.command("classes").description("List the technique classes scout rounds draw from").action(() => {
+  for (const entry of TECHNIQUE_CLASSES) console.log(`${entry.id}${entry.knob ? " (knob)" : ""}: ${entry.label} - e.g. ${entry.examples.join("; ")}`);
+});
+scout.command("classify").argument("<text...>", "a method family or hypothesis title").description("Show which technique class a family name maps to").action((text: string[]) => {
+  const id = classifyTechnique({ family: text.join(" ") });
+  console.log(`${id}: ${techniqueLabel(id)}`);
+});
+scout.command("run")
+  .argument("<variants>", "JSON file: [{title, family, mechanism?, env: {NAME: value}}] - one complete variant per entry")
+  .option("--width <n>", "candidates per round (2-5); defaults to scout.width")
+  .option("--promote-top <n>", "screens promoted to full evaluation")
+  .option("--screen-only", "stop after screening; promotion is recorded but not run")
+  .option("--parallel <n>", "screens launched at once (the evaluator may still serialize, e.g. on a GPU lock)", "4")
+  .option("--timeout-minutes <minutes>", "per-experiment budget", "240")
+  .description("Run one deterministic scout round without an LLM director: diversity-filter the variants, screen them, promote the best")
+  .action(async (file: string, options: { width?: string; promoteTop?: string; screenOnly?: boolean; parallel: string; timeoutMinutes: string }) => {
+    const adapter = activeCompetition();
+    const variants = JSON.parse(readFileSync(file, "utf8")) as Array<{ title?: unknown; family?: unknown; mechanism?: unknown; env?: unknown; dependsOn?: unknown }>;
+    if (!Array.isArray(variants) || !variants.length) throw new Error("Variants file must be a non-empty JSON array.");
+    const policy = resolveScoutPolicy({ ...adapter.config.scout, enabled: true, ...(options.promoteTop ? { promoteTop: Number(options.promoteTop) } : {}) }, options.width ? Number(options.width) : undefined);
+    const store = new ResearchStore(statePath);
+    const stamp = Date.now();
+    const candidates = variants.map((variant, index) => {
+      if (typeof variant.title !== "string" || !variant.title.trim()) throw new Error(`Variant ${index} needs a title.`);
+      const env = variant.env && typeof variant.env === "object" ? Object.entries(variant.env as Record<string, unknown>).map(([name, value]) => ({ name, value: String(value) })) : [];
+      const id = `hyp_scout_${stamp}_${index}_${variant.title.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 32)}`;
+      const family = typeof variant.family === "string" ? variant.family : variant.title;
+      const mechanism = typeof variant.mechanism === "string" ? variant.mechanism : `scout variant ${env.map((entry) => `${entry.name}=${entry.value}`).join(" ")}`;
+      store.saveHypothesis({ id, payload: { id, title: variant.title, formulationFamily: family, mechanism, outcomeType: "metric", implementationMode: "modify", proposedChange: env.map((entry) => `${entry.name}=${entry.value}`).join(" ") || "none", falsificationTest: "screen does not beat the champion on paired units", expectedMetricDelta: { low: 0, median: 0, high: 0 }, experimentEnvironment: env, ...(Array.isArray(variant.dependsOn) ? { dependsOn: variant.dependsOn } : {}) } });
+      return { id, title: variant.title, family, mechanism, payload: { experimentEnvironment: env, dependsOn: Array.isArray(variant.dependsOn) ? variant.dependsOn : undefined } };
+    });
+    // Readiness gate: a variant whose dependency (e.g. a submission another agent is still building) is not ready waits.
+    const waiting = candidates.flatMap((candidate) => { const reason = unreadyReason(adapter.config, candidate.payload); return reason ? [{ id: candidate.id, reason }] : []; });
+    for (const entry of waiting) { console.log(`wait ${entry.id}: ${entry.reason}`); store.appendEvent("research.portfolio.candidate_deferred", { hypothesisId: entry.id, reason: entry.reason }); }
+    const readyCandidates = candidates.filter((candidate) => !waiting.some((entry) => entry.id === candidate.id));
+    if (!readyCandidates.length) { store.close(); process.exitCode = 75; console.log("No variant is ready; nothing launched."); return; }
+    const round = planScoutRound(readyCandidates, campaignScoutLedger(store, adapter.config.metric), policy);
+    store.appendEvent("research.scout.planned", { source: "scout run", policy, selected: round.selected, rejected: round.rejected });
+    for (const rejected of round.rejected) console.log(`skip ${rejected.id}: ${rejected.reason}`);
+    store.close();
+    const script = process.argv[1];
+    const cli = (args: string[]) => runProcess([process.execPath, script, ...args], root, 7 * 24 * 60 * 60_000, (stream, chunk) => (stream === "stderr" ? process.stderr : process.stdout).write(chunk));
+    const experiments: Array<{ hypothesisId: string; experimentId: string; techniqueClass: string }> = [];
+    for (const selected of round.selected) {
+      const proposed = await cli(["experiment", "propose", selected.id, "--timeout-minutes", options.timeoutMinutes]);
+      if (proposed.exitCode !== 0) { console.log(`propose failed for ${selected.id}`); continue; }
+      const lookup = new ResearchStore(statePath);
+      const experimentId = lookup.experiments().find((entry) => (entry.payload as { hypothesisId?: unknown }).hypothesisId === selected.id)?.id;
+      lookup.close();
+      if (experimentId) experiments.push({ hypothesisId: selected.id, experimentId, techniqueClass: selected.techniqueClass });
+    }
+    const hasReduced = Boolean(adapter.config.execution?.reducedValidationCommand);
+    const queue = [...experiments];
+    const runs = new Map<string, number>();
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(Number(options.parallel) || 1, queue.length)) }, async (_, worker) => {
+      // Stagger worker start so their store migrations do not contend for the SQLite write lock.
+      await new Promise((resolve) => setTimeout(resolve, worker * 5_000));
+      for (let next = queue.shift(); next; next = queue.shift()) {
+        runs.set(next.experimentId, (await cli(["experiment", "run", next.experimentId, ...(hasReduced ? ["--reduced-only"] : [])])).exitCode);
+      }
+    }));
+    const resultStore = new ResearchStore(statePath);
+    try {
+      const describe = (experimentId: string) => {
+        const entry = experiments.find((item) => item.experimentId === experimentId)!;
+        const candidate = candidates.find((item) => item.id === entry.hypothesisId)!;
+        return { techniqueClass: entry.techniqueClass, family: candidate.family, title: candidate.title };
+      };
+      if (!hasReduced) {
+        const champions = new Set(championExperimentIds(resultStore, activeCampaignStart(resultStore)));
+        for (const { experimentId } of experiments) resultStore.appendEvent("research.scout.recorded", { experimentId, stage: "full", improvement: null, valid: runs.get(experimentId) === 0, accepted: champions.has(experimentId), ...describe(experimentId) });
+        console.log("No execution.reducedValidationCommand: variants were run at full evaluation and judged by the ratchet (see evidra improvements).");
+        return;
+      }
+      const promotion = judgeScoutScreens(resultStore, adapter.config, policy, experiments.map((entry) => entry.experimentId), describe);
+      if (options.screenOnly) { if (promotion.promoted.length) console.log(`Promoted but not run (--screen-only): ${promotion.promoted.join(", ")}. Run: evidra experiment run <id> --skip-reduced`); return; }
+      resultStore.close();
+      for (const experimentId of promotion.promoted) await cli(["experiment", "run", experimentId, "--skip-reduced"]);
+      const finalStore = new ResearchStore(statePath);
+      const champions = new Set(championExperimentIds(finalStore, activeCampaignStart(finalStore)));
+      for (const experimentId of promotion.promoted) finalStore.appendEvent("research.scout.recorded", { experimentId, stage: "full", improvement: null, valid: true, accepted: champions.has(experimentId), ...describe(experimentId) });
+      finalStore.close();
+    } finally {
+      try { resultStore.close(); } catch { /* already closed */ }
+    }
+  });
+scout.command("judge")
+  .argument("[experiments...]", "screened experiment ids; default: every screened experiment without a scout verdict")
+  .option("--promote-top <n>", "screens promoted")
+  .description("(Re)judge completed screens: paired promotion and ledgers; recovers a scout round interrupted after screening")
+  .action((ids: string[], options: { promoteTop?: string }) => {
+    const adapter = activeCompetition();
+    const policy = resolveScoutPolicy({ ...adapter.config.scout, enabled: true, ...(options.promoteTop ? { promoteTop: Number(options.promoteTop) } : {}) }, undefined);
+    const store = new ResearchStore(statePath);
+    try {
+      const judged = new Set(store.eventsByType("research.scout.recorded").filter((event) => (event.payload as { stage?: unknown; valid?: unknown }).stage === "screen" && (event.payload as { valid?: unknown }).valid === true).map((event) => (event.payload as { experimentId: string }).experimentId));
+      const targets = ids.length ? ids : store.experiments().filter((entry) => (entry.payload as { status?: unknown }).status === "screened" && !judged.has(entry.id)).map((entry) => entry.id);
+      if (!targets.length) { console.log("No unjudged screens."); return; }
+      const hypotheses = new Map(store.hypotheses().map((entry) => [entry.id, entry.payload as { title?: unknown; formulationFamily?: unknown; mechanism?: unknown }]));
+      const describe = (experimentId: string) => {
+        const hypothesisId = (store.experiments().find((entry) => entry.id === experimentId)?.payload as { hypothesisId?: unknown } | undefined)?.hypothesisId;
+        const hypothesis = typeof hypothesisId === "string" ? hypotheses.get(hypothesisId) : undefined;
+        const title = typeof hypothesis?.title === "string" ? hypothesis.title : experimentId;
+        const family = typeof hypothesis?.formulationFamily === "string" ? hypothesis.formulationFamily : "unspecified";
+        return { techniqueClass: classifyTechnique({ family, title, mechanism: typeof hypothesis?.mechanism === "string" ? hypothesis.mechanism : undefined }), family, title };
+      };
+      const promotion = judgeScoutScreens(store, adapter.config, policy, targets, describe);
+      if (promotion.promoted.length) console.log(`Promote: ${promotion.promoted.join(", ")} (run: evidra experiment run <id> --skip-reduced)`);
+    } finally {
+      store.close();
+    }
+  });
+program.addCommand(scout);
+
+const theory = new Command("theory").description("Theory cards: check a card's math, rank cards, show the theory ledger");
+theory.command("check")
+  .argument("<files...>", "theory card JSON files")
+  .description("Validate cards (math, citations, arithmetic against the loss analysis, selection-noise risk) and rank the valid ones")
+  .option("--json", "print JSON")
+  .option("--compliance <file>", "compliance rules JSON ({allowedData, rules, rulings}); defaults to the competition's compliance block")
+  .option("--analysis <file>", "loss-analysis numbers JSON ({noiseFloor, headroom, share}, or a lossAnalysis brief) to check the arithmetic against")
+  .action((files: string[], options: { json?: boolean; analysis?: string; compliance?: string }) => {
+    const ledger = readTheoryLedger(stateDirectory);
+    const suppliedAnalysis = options.analysis ? JSON.parse(readFileSync(resolve(options.analysis), "utf8")) as Record<string, unknown> : undefined;
+    const analysis: AnalysisNumbers = suppliedAnalysis ? ("gapTable" in suppliedAnalysis ? analysisNumbersFromBrief(suppliedAnalysis) : (suppliedAnalysis.analysis ?? suppliedAnalysis) as AnalysisNumbers) : ideationAnalysis.get(stateDirectory) ?? {};
+    const compliancePolicy: ComplianceConfig | undefined = options.compliance ? ComplianceConfigSchema.parse(((raw) => raw.compliance ?? raw)(JSON.parse(readFileSync(resolve(options.compliance), "utf8")) as Record<string, unknown>)) : activeCompetition().config.compliance;
+    const results = files.map((file) => { const raw = loadCardFile(resolve(file)); return { file, ...validateTheoryCard(raw, analysis, { wildMaxCost: activeCompetition().config.ideation?.wildMaxCost ?? 1 }), compliance: reviewCompliance(raw as Record<string, unknown>, compliancePolicy) }; });
+    const valid = results.filter((entry) => entry.card && !entry.issues.length && entry.compliance.status === "compliant").map((entry) => entry.card!);
+    const ranked = rankTheoryCards(valid, ledger);
+    if (results.some((entry) => entry.issues.length || entry.compliance.status !== "compliant")) process.exitCode = 1;
+    if (options.json) { console.log(JSON.stringify({ results: results.map((entry) => ({ file: entry.file, issues: entry.issues, risk: entry.risk, compliance: entry.compliance })), ranked: ranked.map((entry) => ({ title: entry.card.title, score: entry.score, reason: entry.reason })) }, null, 2)); return; }
+    for (const entry of results) console.log(`${entry.file}: ${entry.issues.length ? `sent back\n  ${entry.issues.map((issue) => `${issue.field}: ${issue.message}`).join("\n  ")}` : `ok (${cardStatus(entry.card!, ledger)})`}; compliance ${entry.compliance.status}${entry.compliance.status === "compliant" ? "" : `\n  ${entry.compliance.reasons.join("\n  ")}`}`);
+    for (const entry of ranked) console.log(`  ${entry.score.toExponential(2)}  ${entry.card.title}  ${entry.reason}`);
+  });
+theory.command("ledger")
+  .description("Show recorded theory verdicts (confirmed/falsified), mechanism mismatches and pending write-ups")
+  .action(() => {
+    const ledger = readTheoryLedger(stateDirectory);
+    if (!ledger.length) { console.log("No theory verdicts yet."); return; }
+    for (const entry of ledger) console.log(`${entry.verdict.padEnd(12)} ${entry.origin.padEnd(11)} ${entry.techniqueClass.padEnd(22)} predicted ${entry.predictedGain.toExponential(2)} observed ${entry.observedGain === null ? "n/a" : entry.observedGain.toExponential(2)}  ${entry.title}${entry.theoryPending ? "  [promoted; theory write-up pending]" : ""}${entry.mechanismMismatch ? `\n    mechanism: ${entry.mechanismMismatch}` : ""}`);
+  });
+program.addCommand(theory);
+
+program.command("hypothesis")
+  .description("Record a hand-written hypothesis (no LLM) so it can be proposed and run as an experiment")
+  .requiredOption("--title <title>", "short name")
+  .option("--family <family>", "method family (classified into a technique class)")
+  .option("--mechanism <text>", "why it should work")
+  .option("--env <assignments...>", "experiment environment overrides NAME=value")
+  .option("--paired-reference <path>", "unit-score file the screen and ratchet should pair against (e.g. the parent's), instead of the champion")
+  .option("--depends-on <paths...>", "artifacts this candidate needs; each must carry the readiness marker (path or path:markerFile)")
+  .option("--mode <mode>", "modify or verify", "modify")
+  .option("--theory-card <file>", "theory card JSON (see evidra theory check); rejected cards are not recorded")
+  .action((options: { title: string; family?: string; mechanism?: string; env?: string[]; dependsOn?: string[]; pairedReference?: string; mode: string; theoryCard?: string }) => {
+    let theoryCard: unknown;
+    if (options.theoryCard) {
+      theoryCard = loadCardFile(resolve(options.theoryCard));
+      const checked = validateTheoryCard(theoryCard, ideationAnalysis.get(stateDirectory) ?? {}, { wildMaxCost: activeCompetition().config.ideation?.wildMaxCost ?? 1 });
+      if (checked.issues.length) { for (const issue of checked.issues) console.error(`${issue.field}: ${issue.message}`); throw new Error("theory card rejected; fix it before any compute is spent"); }
+      const review = reviewCompliance(theoryCard as Record<string, unknown>, activeCompetition().config.compliance);
+      if (review.status === "rejected") { for (const reason of review.reasons) console.error(reason); throw new Error("theory card rejected by the compliance review"); }
+      if (review.status === "needs_human_ruling") { escalateCompliance(stateDirectory, review, { title: options.title }); console.log(`Compliance: needs a human ruling (escalated to ESCALATIONS.md); it will not be screened until compliance.rulings allows it.\n  ${review.reasons.join("\n  ")}`); }
+    }
+    const dependsOn = (options.dependsOn ?? []).map((entry) => { const [path, file] = entry.split(":"); return { path, ...(file ? { readyWhen: { file } } : {}) }; });
+    const env = (options.env ?? []).map((assignment) => { const index = assignment.indexOf("="); if (index < 1) throw new Error(`--env expects NAME=value, got ${assignment}`); return { name: assignment.slice(0, index), value: assignment.slice(index + 1) }; });
+    const id = `hyp_${Date.now()}_${options.title.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 32)}`;
+    const store = new ResearchStore(statePath);
+    store.saveHypothesis({ id, payload: { id, title: options.title, formulationFamily: options.family ?? options.title, mechanism: options.mechanism ?? "", outcomeType: "metric", implementationMode: options.mode === "verify" ? "verify" : "modify", proposedChange: env.map((entry) => `${entry.name}=${entry.value}`).join(" ") || options.title, falsificationTest: "paired ratchet does not keep it", expectedMetricDelta: { low: 0, median: 0, high: 0 }, experimentEnvironment: env, ...(dependsOn.length ? { dependsOn } : {}), ...(options.pairedReference ? { pairedReference: options.pairedReference } : {}), ...(theoryCard !== undefined ? { theoryCard } : {}) } });
+    store.close();
+    console.log(`${id}  [${classifyTechnique({ family: options.family ?? options.title, title: options.title })}]\nNext: evidra experiment propose ${id} && evidra experiment run <experiment id>`);
+  });
+
 const memory = new Command("memory").description("Search durable research claims, hypotheses, and sources");
 memory.command("search").argument("<query>").action((query: string) => {
   const store = new ResearchStore(statePath);
@@ -4985,7 +5486,7 @@ challenge.command("baseline").description("Run the canonical baseline").action(a
   const store = new ResearchStore(statePath);
   const parsed = parseMetricOutput(result.stdout, adapter.config.metric.name);
   const metric = parsed.metrics[adapter.config.metric.name] ?? null;
-  recordBaselineEvidence(store, root, result, metric, parsed.metrics, parsed.metricsByFold);
+  recordBaselineEvidence(store, root, result, metric, parsed.metrics, parsed.metricsByFold, unitScoreFiles(adapter.config, result.cwd));
   store.close();
   if (result.exitCode !== 0) process.exitCode = result.exitCode;
 });
@@ -5009,14 +5510,16 @@ challenge.command("start")
   .option("--executor <executor>", "experiment execution target: local, container, modal, or slurm", "local")
   .option("--resume", "resume the saved challenge campaign")
   .option("--resume-run <started-at>", "resume a specific retained campaign run by its startedAt timestamp")
+  .option("--scout <width>", "scout mode: screen N (2-5) different technique classes per round and promote only the best screens")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; agentTokenBudget: string; roleTokenBudgets?: string; autonomy?: string; limitPolicy: string; executor: string; resume?: boolean; resumeRun?: string; skipBaseline?: boolean }) => {
+  .action(async (options: { goal: string; budget: string; gpuBudget: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; agentTokenBudget: string; roleTokenBudgets?: string; autonomy?: string; limitPolicy: string; executor: string; resume?: boolean; resumeRun?: string; skipBaseline?: boolean; scout?: string }) => {
     const script = process.argv[1];
     if (!script) throw new Error("Unable to locate the Evidra CLI entrypoint.");
     const args = ["research", "--mode", "challenge", "--goal", options.goal, "--budget", options.budget, "--gpu-budget", options.gpuBudget, "--agent-token-budget", options.agentTokenBudget, ...(options.roleTokenBudgets ? ["--role-token-budgets", options.roleTokenBudgets] : []), "--stop", options.stop, "--provider", options.provider, "--model", options.model, "--fallback-model", options.fallbackModel, "--thinking", options.thinking, "--lanes", options.lanes, ...(options.laneBudget ? ["--lane-budget", options.laneBudget] : []), ...(options.autonomy ? ["--autonomy", options.autonomy] : []), "--limit-policy", options.limitPolicy, "--executor", options.executor];
     if (options.resume || options.resumeRun) args.push("--resume");
     if (options.resumeRun) args.push("--resume-run", options.resumeRun);
     if (options.skipBaseline) args.push("--skip-baseline");
+    if (options.scout) args.push("--scout", options.scout);
     const result = await runProcess([process.execPath, script, ...args], root, 7 * 24 * 60 * 60_000, (stream, chunk) => {
       (stream === "stderr" ? process.stderr : process.stdout).write(chunk);
     });
@@ -5198,8 +5701,9 @@ research
   .option("--routine-id <id>", "internal durable routine identity for queue lineage")
   .option("--resume", "resume the latest durable non-completed research campaign")
   .option("--resume-run <started-at>", "resume a specific retained campaign run by its startedAt timestamp")
+  .option("--scout <width>", "scout mode: screen N (2-5) different technique classes per round and promote only the best screens")
   .option("--skip-baseline", "reuse the latest recorded baseline observation")
-  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; agentTokenBudget: string; roleTokenBudgets?: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy?: string; limitPolicy: string; executor: string; triggerContext?: string; routineId?: string; resume?: boolean; resumeRun?: string; skipBaseline?: boolean }) => {
+  .action(async (options: { mode: string; goal: string; budget: string; gpuBudget: string; agentTokenBudget: string; roleTokenBudgets?: string; stop: string; provider: string; model: string; fallbackModel: string; thinking: string; lanes: string; laneBudget?: string; autonomy?: string; limitPolicy: string; executor: string; triggerContext?: string; routineId?: string; resume?: boolean; resumeRun?: string; skipBaseline?: boolean; scout?: string }) => {
     const requestedAutonomy = options.autonomy;
     const savedStore = new ResearchStore(statePath);
     type SavedCampaign = { goal?: string; goalSetId?: string; budgetMinutes?: number; gpuBudgetHours?: number; stopCondition?: string; startedAt?: string; status?: "setup" | "running" | "paused" | "completed"; pausedAt?: string; pausedDurationMinutes?: number; triggerContext?: { eventType: string; eventCreatedAt: string }; routineId?: string; runtime?: unknown; runtimeFingerprint?: string; autoExecuteExperiments?: boolean };
@@ -6078,7 +6582,7 @@ research
       if (mode === "challenge" && baseline && !reusePriorBaseline) {
         const parsed = parseMetricOutput(baseline.stdout, adapter.config.metric.name);
         const metric = parsed.metrics[adapter.config.metric.name] ?? null;
-        recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold);
+        recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold, unitScoreFiles(adapter.config, baseline.cwd));
       }
       const observation = { gitStatus: gitStatus.stdout.trim().split("\n").filter(Boolean).slice(0, 40), repositoryFiles: files.stdout.trim().split("\n").filter(Boolean).slice(0, 120), dataAudit: dataAuditSummary, ...(baseline ? { baseline: { exitCode: baseline.exitCode, durationMs: baseline.durationMs, stdout: redactSecrets(baseline.stdout.slice(-4000)), stderr: redactSecrets(baseline.stderr.slice(-4000)) } } : {}) };
       const observationId = recordWorkspaceObservation(store, observation);
@@ -6298,8 +6802,20 @@ research
           const verifiedStateStore = new ResearchStore(statePath);
           const verifiedState = phaseGoal ? projectVerifiedSubtaskState(verifiedStateStore.latestSubtaskAudit(phaseGoal.id)?.payload) : projectVerifiedSubtaskState(undefined);
           const experimentHistory = campaignSearchState(verifiedStateStore, adapter.config.metric);
+          // Scout mode and the loss analysis are what keep the director off a single path:
+          // the brief names untried technique classes, the analysis says where the loss is.
+          const directorScoutPolicy = campaignScoutPolicy(verifiedStateStore, adapter.config, options.scout);
+          const scoutContext = directorScoutPolicy.enabled ? scoutBrief(campaignScoutLedger(verifiedStateStore, adapter.config.metric), directorScoutPolicy) : null;
+          const lossAnalysis = campaignLossAnalysis(verifiedStateStore, adapter.config, experimentHistory.champion?.experimentId);
+          if (lossAnalysis && "brief" in lossAnalysis) ideationAnalysis.set(stateDirectory, analysisNumbersFromBrief(lossAnalysis.brief));
+          const ideationContext = campaignIdeationContext(stateDirectory, verifiedStateStore, adapter.config);
+          if (lossAnalysis && "report" in lossAnalysis) {
+            verifiedStateStore.appendEvent("research.loss_analysis.completed", { cycle, primaryRunId: lossAnalysis.report.primaryRunId, units: lossAnalysis.report.units, standardError: lossAnalysis.report.standardError, gapTable: lossAnalysis.report.gapTable.slice(0, 5), routing: lossAnalysis.report.routing.slice(0, 3), oracle: lossAnalysis.report.oracle ?? null, hypotheses: lossAnalysis.report.hypotheses.map((entry) => ({ title: entry.title, techniqueClass: entry.techniqueClass, expectedGain: entry.expectedGain })) });
+          } else if (lossAnalysis && "error" in lossAnalysis) {
+            verifiedStateStore.appendEvent("research.loss_analysis.failed", { cycle, error: lossAnalysis.error });
+          }
           verifiedStateStore.close();
-          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, ...experimentHistory, constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, authoritativeEvidence: researchMemory.authoritativeObservations, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, laneToolResults: laneToolObservationContext(laneReports), crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness, goalProgress, triggerContext: campaign.triggerContext ? { eventType: campaign.triggerContext.eventType, eventCreatedAt: campaign.triggerContext.eventCreatedAt, trust: "external_wakeup_signal" } : null }, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, taskId: cycleTaskId, goalId: phaseGoal?.id ?? null, parentTaskId: cycleTaskId, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, onToolBudgetExhausted: (details) => {
+          decision = await runResearchDirector(agentObjective, { project: activeProject, competition: adapter.config, ...experimentHistory, ...(scoutContext ? { scout: scoutContext } : {}), ...(lossAnalysis && "brief" in lossAnalysis ? { lossAnalysis: lossAnalysis.brief } : {}), ...(ideationContext ? { ideation: ideationContext } : {}), constraints: { research_agents_no_file_edits: true, no_submission: true, controller_executes_isolated_experiments: autonomyPolicy(autonomy).canRunIsolatedExperiments }, recentEvents, researchSources, observation, authoritativeEvidence: researchMemory.authoritativeObservations, ultimateGoal: campaign.goal, phaseGoal: phaseGoal ?? null, verifiedState, allocation, evidenceConflicts, laneReports, laneToolResults: laneToolObservationContext(laneReports), crossPollination, agentRoleReviews, researchMemory, experienceReplay: replayContext, literatureFrontier, harnessBenchmarkEvidence, harnessEvolutionPlan, harnessAdaptationAgenda: harnessAdaptationAgenda ?? null, openCriticConstraint, adaptiveHarnessPolicy: adaptiveHarness, goalProgress, triggerContext: campaign.triggerContext ? { eventType: campaign.triggerContext.eventType, eventCreatedAt: campaign.triggerContext.eventCreatedAt, trust: "external_wakeup_signal" } : null }, { provider: options.provider as "codex" | "claude" | "local", model: selectedModel, modelPool: researchModelPool, reasoningEffort: options.thinking, timeoutMs: agentTimeoutMs, limitPolicy: options.limitPolicy as "auto" | "wait" | "fallback" | "stop", fallbackLocalModel: options.limitPolicy === "fallback" || options.limitPolicy === "auto" ? options.fallbackModel : undefined, cwd: root, taskId: cycleTaskId, goalId: phaseGoal?.id ?? null, parentTaskId: cycleTaskId, executeTool: researchToolExecutor(adapter, autonomy), maxToolRounds: adaptiveHarness.maxToolRounds, maxToolAttempts: adaptiveHarness.maxToolAttempts, maxAgentAttempts: adaptiveHarness.maxToolAttempts, onToolCall: toolTrace.onToolCall, onToolResult: toolTrace.onToolResult, onActivity: toolTrace.onActivity, onAssistant: toolTrace.onAssistant, onUsage: recordAgentUsage, onToolBudgetExhausted: (details) => {
             const exhaustedStore = new ResearchStore(statePath);
             exhaustedStore.appendEvent("research.director.tool_budget.exhausted", { cycle, goalId: phaseGoal?.id ?? null, ...details });
             exhaustedStore.close();
@@ -6594,10 +7110,25 @@ research
         return [{ operator: payload.operator, actualMinutes: payload.durationSeconds / 60, status: payload.valid === true ? "completed" : "failed", context: { executor: typeof (payload as { executor?: unknown }).executor === "string" ? (payload as { executor: string }).executor : undefined, gpu: typeof (payload as { gpu?: unknown }).gpu === "string" ? (payload as { gpu: string }).gpu : undefined, provider: typeof (payload as { provider?: unknown }).provider === "string" ? (payload as { provider: string }).provider : undefined, model: typeof (payload as { model?: unknown }).model === "string" ? (payload as { model: string }).model : undefined } }];
       });
       const falsificationByHypothesisId = new Map(researchMemory.falsificationAgenda.map((item) => [item.hypothesisId, item]));
-      const incompleteVerificationReasons = decision.hypotheses.map(incompleteVerificationProposal);
+      const verificationReasons = decision.hypotheses.map((hypothesis) => incompleteVerificationProposal(hypothesis) ?? unreadyReason(adapter.config, hypothesis));
+      const ideationReasons = ideationGate(stateDirectory, decisionStore, adapter.config, cycle, decision.hypotheses, verificationReasons, campaignScoutPolicy(decisionStore, adapter.config, options.scout).width);
+      const incompleteVerificationReasons = verificationReasons.map((reason, index) => reason ?? ideationReasons[index]);
       for (const [index, reason] of incompleteVerificationReasons.entries()) {
         if (reason) decisionStore.appendEvent("research.portfolio.candidate_deferred", { cycle, hypothesisId: materialized.hypothesisIds[index], title: decision.hypotheses[index]?.title, reason });
       }
+      // Scout mode: one candidate per technique class, cooled-down classes rejected, knobs capped.
+      const cycleScoutPolicy = campaignScoutPolicy(decisionStore, adapter.config, options.scout);
+      const scoutRound = cycleScoutPolicy.enabled
+        ? planScoutRound(decision.hypotheses.flatMap((hypothesis, index) => incompleteVerificationReasons[index] ? [] : [{ id: materialized.hypothesisIds[index] ?? `hypothesis-${index}`, title: hypothesis.title, family: hypothesis.formulationFamily, mechanism: hypothesis.mechanism, proposedChange: hypothesis.proposedChange }]), campaignScoutLedger(decisionStore, adapter.config.metric), cycleScoutPolicy)
+        : undefined;
+      if (scoutRound) decisionStore.appendEvent("research.scout.planned", { cycle, policy: cycleScoutPolicy, selected: scoutRound.selected, rejected: scoutRound.rejected, fallback: scoutRound.selected.length === 0 });
+      const scoutSelected = scoutRound && scoutRound.selected.length ? new Map(scoutRound.selected.map((entry) => [entry.id, entry.techniqueClass])) : undefined;
+      const scoutCandidateDescription = (experimentId: string): { techniqueClass: string; family: string; title: string } => {
+        const candidateId = executedPortfolioExperiments.find((entry) => entry.experimentId === experimentId)?.candidateId;
+        const index = candidateId ? materialized.hypothesisIds.indexOf(candidateId) : -1;
+        const described = index >= 0 ? decision.hypotheses[index] : undefined;
+        return { techniqueClass: (candidateId ? scoutSelected?.get(candidateId) : undefined) ?? classifyTechnique({ family: described?.formulationFamily, title: described?.title }), family: described?.formulationFamily ?? "unspecified", title: described?.title ?? experimentId };
+      };
       const portfolioPlan = planPortfolio(decision.hypotheses.map((hypothesis, index) => ({
         id: materialized.hypothesisIds[index] ?? `hypothesis-${index}`,
         title: hypothesis.title,
@@ -6617,11 +7148,11 @@ research
         novelty: architectureNovelty(hypothesis.architectureChange),
         informationValue: hypothesis.outcomeType !== "metric" ? 1 : Math.min(1, Math.max(0, (hypothesis.expectedMetricDelta.high - hypothesis.expectedMetricDelta.low) / (Math.abs(hypothesis.expectedMetricDelta.high) + Math.abs(hypothesis.expectedMetricDelta.low) + 0.01))),
         risk: hypothesis.implementationRisk === "high" ? 1 : hypothesis.implementationRisk === "medium" ? 0.5 : 0.1,
-        family: hypothesis.formulationFamily,
+        family: scoutSelected?.get(materialized.hypothesisIds[index] ?? `hypothesis-${index}`) ?? hypothesis.formulationFamily,
         architectureChange: hypothesis.architectureChange,
         quality: hypothesisQuality[index]?.score,
-      })).filter((_, index) => !incompleteVerificationReasons[index]), {
-        maxCandidates: autonomy === "yolo" ? 3 : autonomy === "fast" ? 2 : 1,
+      })).filter((candidate, index) => !incompleteVerificationReasons[index] && (!scoutSelected || scoutSelected.has(candidate.id))), {
+        maxCandidates: scoutSelected ? cycleScoutPolicy.width : autonomy === "yolo" ? 3 : autonomy === "fast" ? 2 : 1,
         preferredCandidateId: materialized.hypothesisIds[decision.hypotheses.findIndex((hypothesis) => hypothesis.title === decision.selectedHypothesis)],
         exploreArchitecture: goalProgress.pivotRequired,
         maxParallel: experimentParallelism,
@@ -6630,6 +7161,7 @@ research
         costHistory,
         executionContext: { executor: options.executor },
       });
+      if (scoutSelected && portfolioPlan.halving.stages.length > 1) portfolioPlan.halving.stages[0].retainCount = Math.min(cycleScoutPolicy.promoteTop, portfolioPlan.halving.stages[0].candidateIds.length);
       decisionStore.appendEvent("research.portfolio.planned", {
         cycle,
         selected: portfolioPlan.selected,
@@ -7019,7 +7551,7 @@ research
         const screeningStage = portfolioPlan.halving.stages[0];
         const objectiveDefinitions = [{ name: adapter.config.metric.name, direction: adapter.config.metric.direction }, ...(adapter.config.secondaryMetrics ?? [])];
         const objectiveNames = objectiveDefinitions.length > 1 ? objectiveDefinitions.map((objective) => objective.name) : [];
-        const promoted = promoteHalvingStage(screeningStage, screenedCandidates.map((candidate) => ({
+        let promoted = promoteHalvingStage(screeningStage, screenedCandidates.map((candidate) => ({
           id: candidate.experimentId,
           metric: candidate.metric,
           valid: candidate.valid,
@@ -7029,13 +7561,41 @@ research
           })) } : {}),
         })), adapter.config.metric.direction, objectiveNames);
         const promotionStore = new ResearchStore(statePath);
-        promotionStore.appendEvent("research.portfolio.screening_promoted", { cycle, stage: screeningStage.index, candidates: screenedCandidates, promoted, retainCount: screeningStage.retainCount, direction: adapter.config.metric.direction });
+        if (scoutSelected) {
+          // A screen earns full evaluation only by beating the reference screen, not just by ranking first.
+          const referenceScreen = scoutReferenceScreen(promotionStore, cycleScoutPolicy);
+          const scoutPromotion = promoteScoutScreens(screenedCandidates, cycleScoutPolicy, adapter.config.metric.direction, referenceScreen);
+          promoted = scoutPromotion.promoted;
+          for (const screenDecision of scoutPromotion.decisions) {
+            const described = scoutCandidateDescription(screenDecision.experimentId);
+            const screened = screenedCandidates.find((entry) => entry.experimentId === screenDecision.experimentId);
+            promotionStore.appendEvent("research.scout.recorded", { cycle, experimentId: screenDecision.experimentId, stage: "screen", improvement: screenDecision.improvement, valid: screened?.valid === true, promoted: screenDecision.promoted, reason: screenDecision.reason, referenceScreen: referenceScreen ?? null, metric: screened?.metric ?? null, ...described });
+            try {
+              appendImprovement(stateDirectory, { campaignStartedAt: campaign.startedAt, experimentId: screenDecision.experimentId, stage: "screen", title: described.title, family: described.family, techniqueClass: described.techniqueClass, metricName: adapter.config.metric.name, direction: adapter.config.metric.direction, referenceId: referenceScreen === undefined ? undefined : "reference-screen", referenceMetric: referenceScreen ?? null, candidateMetric: screened?.metric ?? null, improvement: screenDecision.improvement, accepted: screenDecision.promoted, verdict: screenDecision.promoted ? "promoted" : screened?.valid ? "screened_out" : "screen_failed", mode: "reduced_screen", reason: screenDecision.reason });
+            } catch (error) {
+              promotionStore.appendEvent("experiment.improvement_ledger.failed", { experimentId: screenDecision.experimentId, error: error instanceof Error ? error.message : String(error) });
+            }
+          }
+        }
+        promotionStore.appendEvent("research.portfolio.screening_promoted", { cycle, stage: screeningStage.index, candidates: screenedCandidates, promoted, retainCount: screeningStage.retainCount, direction: adapter.config.metric.direction, ...(scoutSelected ? { policy: "scout" } : {}) });
         promotionStore.close();
         for (const candidate of screenedCandidates.filter((entry) => promoted.includes(entry.experimentId))) {
           const fullRun = await runCampaignExperiment(root, candidate.experimentId, "full-after-screen", campaignRemainingMs(campaign));
           await finalizeAutonomousRun(candidate.experimentId, fullRun);
           if (fullRun.exitCode === 0) await executeQueuedHarnessRetest(candidate.experimentId);
         }
+      }
+      if (scoutSelected && executedPortfolioExperiments.length) {
+        const outcomeStore = new ResearchStore(statePath);
+        const champions = new Set(championExperimentIds(outcomeStore, campaign.startedAt));
+        for (const { experimentId } of executedPortfolioExperiments) {
+          const status = (outcomeStore.experiments().find((entry) => entry.id === experimentId)?.payload as { status?: unknown } | undefined)?.status;
+          if (status !== "completed" && status !== "failed") continue;
+          const check = outcomeStore.eventsByType("experiment.ratchet.checked").reverse().find((event) => (event.payload as { experimentId?: unknown }).experimentId === experimentId)?.payload as { comparison?: { delta?: unknown } } | undefined;
+          const delta = typeof check?.comparison?.delta === "number" && Number.isFinite(check.comparison.delta) ? (adapter.config.metric.direction === "minimize" ? -check.comparison.delta : check.comparison.delta) : null;
+          outcomeStore.appendEvent("research.scout.recorded", { cycle, experimentId, stage: "full", improvement: delta, valid: status === "completed", accepted: champions.has(experimentId), ...scoutCandidateDescription(experimentId) });
+        }
+        outcomeStore.close();
       }
       if (portfolioPlan.evolution.enabled && executedPortfolioExperiments.length) {
         const evolutionEvents = decisionStore.eventsByType("experiment.comparison.completed");
@@ -7319,7 +7879,7 @@ research.command("propose")
     if (baseline) {
       const parsed = parseMetricOutput(baseline.stdout, adapter.config.metric.name);
       const metric = parsed.metrics[adapter.config.metric.name] ?? null;
-      recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold);
+      recordBaselineEvidence(store, root, baseline, metric, parsed.metrics, parsed.metricsByFold, unitScoreFiles(adapter.config, baseline.cwd));
     } else if (reusedBaseline) {
       console.log(`· Reused successful baseline observation ${String(reusedBaseline.runId ?? "(unknown run)")}.`);
     } else {
@@ -7425,7 +7985,7 @@ program.command("baseline")
     const store = new ResearchStore(statePath);
     const parsed = parseMetricOutput(result.stdout, adapter.config.metric.name);
     const metric = parsed.metrics[adapter.config.metric.name] ?? null;
-    recordBaselineEvidence(store, root, result, metric, parsed.metrics, parsed.metricsByFold);
+    recordBaselineEvidence(store, root, result, metric, parsed.metrics, parsed.metricsByFold, unitScoreFiles(adapter.config, result.cwd));
     store.close();
     if (result.exitCode !== 0) process.exitCode = result.exitCode;
   });
@@ -7555,6 +8115,407 @@ experiment.command("gate")
     store.close();
     console.log(`Experiment ${experimentId} gates\n  leakage audit: ${gates.leakageAuditPassed ? "approved" : "pending"}\n  reviewer: ${gates.reviewerApproved ? "approved" : "pending"}`);
   });
+// ---- Launch-path safety: halts, readiness, preflight, infra-vs-experiment failures ----
+function launchHaltPath(): string { return join(stateDirectory, "repair-mode.json"); }
+/** Lane-level repair mode (entered on systemic failure): the next launch repairs the launch path first. */
+function launchHalt(): { reason: string; signature?: string; experiments?: string[]; at: string } | undefined {
+  try { return JSON.parse(readFileSync(launchHaltPath(), "utf8")); } catch { return undefined; }
+}
+function haltLaunches(store: ResearchStore, diagnosis: { reason: string; signature?: string; experiments?: string[] }): void {
+  const mode = { ...diagnosis, at: new Date().toISOString() };
+  mkdirSync(stateDirectory, { recursive: true });
+  writeFileSync(launchHaltPath(), `${JSON.stringify(mode, null, 2)}\n`);
+  store.appendEvent("launch.repair_mode.entered", mode);
+  console.error(`REPAIR MODE: ${diagnosis.reason}${diagnosis.experiments?.length ? ` (${diagnosis.experiments.join(", ")})` : ""}. The next launch repairs the launch path before spending quota; other work continues.`);
+}
+function leaveRepairMode(store: ResearchStore, reason: string): void {
+  if (!launchHalt()) return;
+  rmSync(launchHaltPath(), { force: true });
+  store.appendEvent("launch.repair_mode.left", { reason, at: new Date().toISOString() });
+}
+function hypothesisEnvironmentOf(payload: unknown): Record<string, string> {
+  const entries = (payload as { experimentEnvironment?: Array<{ name: string; value: string }> } | undefined)?.experimentEnvironment ?? [];
+  return Object.fromEntries(entries.map(({ name, value }) => [name, value]));
+}
+function launchReadiness(config: CompetitionConfig, payload: unknown, environment: Record<string, string> = hypothesisEnvironmentOf(payload)): DependencyStatus {
+  const readiness = config.launch?.readiness;
+  const declared = (payload as { dependsOn?: Dependency[] } | undefined)?.dependsOn;
+  const base = config.workspacePath ? resolve(root, config.workspacePath) : root;
+  const dependencies = candidateDependencies(declared, environment, readiness).map((dependency) => ({ ...dependency, path: resolve(base, dependency.path), ...(dependency.readyWhen?.file ? { readyWhen: { ...dependency.readyWhen, file: resolve(base, dependency.readyWhen.file) } } : {}) }));
+  return dependencyStatus(dependencies, readiness ? { ...readiness, trusted: readiness.trusted.map((path: string) => resolve(base, path)) } : undefined, {
+    run: (command) => spawnSync(command[0], command.slice(1), { cwd: base, stdio: "ignore", timeout: 120_000 }).status === 0,
+  });
+}
+function unreadyReason(config: CompetitionConfig, payload: unknown): string | undefined {
+  const status = launchReadiness(config, payload);
+  return status.ready ? undefined : `dependency not ready: ${status.pending.map((entry) => `${entry.path} (${entry.waitingFor})`).join("; ")}`;
+}
+/** Dry-run the exact launch chain with a no-op payload; cached for preflightTtlMinutes per environment. */
+async function runLaunchPreflight(config: CompetitionConfig, environment: NodeJS.ProcessEnv, cwd: string): Promise<{ ok: boolean; reason: string; output: string; cached?: boolean }> {
+  const policy = resolveLaunchPolicy(config.launch);
+  const contract = resolveEnvContract(config.launch?.contract);
+  const missing = missingEnvironment(contract?.requiredEnv ?? [], environment);
+  if (missing.length) {
+    // Re-derive the session variables a detached controller can lose before declaring the launch path broken.
+    Object.assign(environment, sessionBusEnvironment(environment));
+    const stillMissing = missingEnvironment(contract?.requiredEnv ?? [], environment);
+    if (stillMissing.length) return { ok: false, reason: `required environment missing: ${stillMissing.join(", ")}`, output: "" };
+  }
+  if (!policy.preflightCommand) return { ok: true, reason: "no preflight configured", output: "" };
+  const fingerprint = createHash("sha256").update(JSON.stringify([policy.preflightCommand, ...(contract?.requiredEnv ?? []).map((name) => environment[name] ?? "")])).digest("hex").slice(0, 16);
+  const store = new ResearchStore(statePath);
+  try {
+    const last = store.eventsByType("launch.preflight.completed").at(-1)?.payload as { fingerprint?: string; at?: string } | undefined;
+    if (last?.fingerprint === fingerprint && last.at && Date.now() - Date.parse(last.at) < policy.preflightTtlMinutes * 60_000) return { ok: true, reason: "preflight passed recently", output: "", cached: true };
+    let outcome = await runProcess(policy.preflightCommand, cwd, 10 * 60_000, undefined, undefined, environment).catch((error) => processFailureResult(policy.preflightCommand!, cwd, error));
+    if (outcome.exitCode !== 0) {
+      store.appendEvent("launch.preflight.retry", { exitCode: outcome.exitCode, output: `${outcome.stderr}\n${outcome.stdout}`.slice(-2000) });
+      Object.assign(environment, sessionBusEnvironment({ ...environment, XDG_RUNTIME_DIR: undefined, DBUS_SESSION_BUS_ADDRESS: undefined }));
+      outcome = await runProcess(policy.preflightCommand, cwd, 10 * 60_000, undefined, undefined, environment).catch((error) => processFailureResult(policy.preflightCommand!, cwd, error));
+    }
+    const output = `${outcome.stderr}\n${outcome.stdout}`.slice(-4000);
+    if (outcome.exitCode === 0) {
+      store.appendEvent("launch.preflight.completed", { fingerprint, at: new Date().toISOString(), command: policy.preflightCommand });
+      return { ok: true, reason: "preflight passed", output };
+    }
+    const classification = classifyLaunchFailure({ exitCode: outcome.exitCode, output }, policy);
+    store.appendEvent("launch.preflight.failed", { fingerprint, exitCode: outcome.exitCode, classification, output });
+    return { ok: false, reason: `preflight failed (exit ${outcome.exitCode}): ${classification.reason}`, output };
+  } finally {
+    store.close();
+  }
+}
+async function gitChangedPaths(cwd: string): Promise<Map<string, string>> {
+  const status = await runProcess(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd, 60_000).catch(() => undefined);
+  const result = new Map<string, string>();
+  for (const entry of (status?.stdout ?? "").split("\0").filter(Boolean)) {
+    const path = resolve(cwd, entry.slice(3).split(" -> ").at(-1) ?? entry.slice(3));
+    if (/(^|\/)(\.sota|__pycache__|\.git)(\/|$)/.test(path)) continue;
+    let digest = "missing";
+    try { digest = createHash("sha256").update(readFileSync(path)).digest("hex"); } catch { /* deleted or a directory */ }
+    result.set(path, digest);
+  }
+  return result;
+}
+interface RepairContext {
+  config: CompetitionConfig;
+  experimentId: string;
+  cwd: string;
+  environment: NodeJS.ProcessEnv;
+  manifest: ExperimentManifest;
+}
+interface RepairOutcome { action?: RepairAction; source: "memory" | "agent" | "none"; violations: string[]; changedPaths: string[]; signature: string }
+/** One repair turn: a remembered fix for this signature, else the repair agent on the evidence pack, then the policy check. */
+async function repairOnce(context: RepairContext, stage: string, kind: "infra" | "experiment", attempt: number, outcome: { exitCode: number | null; stdout: string; stderr: string; reason: string }, previous: EvidencePack["previousAttempts"], preflight?: EvidencePack["preflight"]): Promise<RepairOutcome> {
+  const repair = context.config.launch?.repair;
+  const signature = failureSignature(`${outcome.stderr}\n${outcome.stdout}`);
+  if (kind === "infra") {
+    const known = knownRepair(stateDirectory, signature);
+    if (known && attempt === 1) return { action: { kind: "env", env: known.env, summary: `remembered fix (${known.successes} prior successes): ${known.summary ?? ""}` }, source: "memory", violations: [], changedPaths: [], signature };
+  }
+  const workspace = activeCompetition().workspacePath(root);
+  const protectedFiles = Object.keys(captureProtectedFiles(context.cwd, [context.config.evaluator.command], [], [context.config.evaluator.estimatorPath]).files).map((path) => resolve(context.cwd, path));
+  const writableRoots = [context.cwd, ...(kind === "infra" ? [workspace] : []), ...(repair?.writableRoots ?? []).map((path) => resolve(workspace, path))];
+  const forbiddenEnv = repair?.forbiddenEnv ?? DEFAULT_FORBIDDEN_ENV;
+  const diff = await runProcess(["git", "diff", "--stat", "HEAD"], context.cwd, 30_000).catch(() => undefined);
+  const pack: EvidencePack = {
+    experimentId: context.experimentId, stage, kind, attempt, exitCode: outcome.exitCode, signature, reason: outcome.reason,
+    stderrTail: tail(outcome.stderr, 60), stdoutTail: tail(outcome.stdout, 30), traceback: extractTraceback(`${outcome.stderr}\n${outcome.stdout}`),
+    environment: environmentSnapshot(context.environment), ...(preflight ? { preflight } : {}), recentDiff: diff?.stdout.slice(0, 8000),
+    cwd: context.cwd, workspace, previousAttempts: previous,
+    policy: { writableRoots, protectedFiles: protectedFiles.map((path) => relative(context.cwd, path)), forbiddenEnv, contract: context.config.launch?.contract },
+  };
+  const before = await gitChangedPaths(context.cwd);
+  const beforeWorkspace = kind === "infra" && workspace !== context.cwd ? await gitChangedPaths(workspace) : new Map<string, string>();
+  let action: RepairAction | undefined;
+  let source: RepairOutcome["source"] = "none";
+  const packPath = join(stateDirectory, "repairs", `${context.experimentId}-${stage}-${attempt}.json`);
+  if (repair?.agentCommand) {
+    action = runRepairCommand(repair.agentCommand, pack, packPath, context.environment);
+    source = "agent";
+  } else {
+    const store = new ResearchStore(statePath);
+    const runtime = (store.campaign() as { runtime?: { provider?: unknown; model?: unknown } } | undefined)?.runtime;
+    store.close();
+    const provider = repair?.provider ?? (isAgentProvider(runtime?.provider) ? runtime!.provider as AgentProvider : undefined);
+    if (provider && isToolCapableProvider(provider)) {
+      try {
+        const result = await runWithLocalFallback({ role: "repair engineer", objective: REPAIR_INSTRUCTIONS, context: { evidencePack: pack } }, { provider, model: repair?.model ?? (typeof runtime?.model === "string" ? runtime.model : provider === "claude" ? DEFAULT_CLAUDE_MODEL : DEFAULT_CODEX_MODEL), cwd: context.cwd, sandbox: "workspace-write", limitPolicy: "stop", reasoningEffort: "high" }, undefined, (message) => console.log(`${context.experimentId} repair · ${message}`));
+        action = parseRepairAction(result.output);
+        source = "agent";
+      } catch (error) {
+        console.log(`${context.experimentId}: repair agent unavailable (${error instanceof Error ? error.message : String(error)})`);
+      }
+    }
+  }
+  const changed = (after: Map<string, string>, prior: Map<string, string>) => [...after].filter(([path, digest]) => prior.get(path) !== digest).map(([path]) => path);
+  const changedPaths = [...changed(await gitChangedPaths(context.cwd), before), ...(kind === "infra" && workspace !== context.cwd ? changed(await gitChangedPaths(workspace), beforeWorkspace) : [])];
+  const violations = action ? repairPolicyViolations(action, changedPaths, { writableRoots, protectedFiles, forbiddenEnv }) : [];
+  if (violations.length && changedPaths.length) {
+    // Out-of-policy edits are rolled back; the proposal goes to the escalation note instead.
+    for (const path of changedPaths) await runProcess(["git", "checkout", "--", path], dirname(path), 30_000).catch(() => undefined);
+  }
+  const store = new ResearchStore(statePath);
+  store.appendEvent("repair.attempted", { experimentId: context.experimentId, stage, kind, attempt, signature, source, action: action ?? null, violations, changedPaths: changedPaths.map((path) => relative(root, path)), packPath: relative(root, packPath) });
+  store.close();
+  return { action, source, violations, changedPaths, signature };
+}
+function applyRepairEnvironment(context: RepairContext, env: Record<string, string>): void {
+  Object.assign(context.environment, env);
+  context.manifest.resources.environment = { ...(context.manifest.resources.environment ?? {}), ...env };
+}
+function escalate(context: RepairContext, stage: string, outcome: { exitCode: number | null; stderr: string; reason: string }, repair: RepairOutcome, why: string): string {
+  const path = writeEscalation(stateDirectory, { experimentId: context.experimentId, stage, reason: why, violations: repair.violations, evidence: { signature: repair.signature, reason: outcome.reason, exitCode: outcome.exitCode, stderrTail: outcome.stderr }, proposed: repair.action });
+  const store = new ResearchStore(statePath);
+  store.appendEvent("repair.escalated", { experimentId: context.experimentId, stage, reason: why, violations: repair.violations, note: relative(root, path) });
+  store.close();
+  console.error(`${context.experimentId}: escalated to a human (${why}); see ${relative(root, path)}. Other work continues.`);
+  return why;
+}
+type StageResult = { status: string; exitCode?: number | null; stdout?: string; stderr?: string; failureClass?: string | null };
+/**
+ * Run a stage; on failure, repair and re-run instead of giving up. Infra failures: remembered fix,
+ * else the repair agent fixes env or workspace, then the stage re-runs (the fix is remembered on
+ * success). Candidate-code failures: the agent patches the candidate, the quick check (smoke or
+ * reduced) must pass, then the stage re-runs. Bounded by repair.maxAttempts; out-of-policy fixes escalate.
+ */
+async function runStageWithRepair<T extends StageResult>(context: RepairContext, stage: string, run: () => Promise<T>, quickCheck?: () => Promise<StageResult>): Promise<{ result: T; escalated?: string; diagnosis?: string; repairs: number }> {
+  let result = await run();
+  const policy = resolveLaunchPolicy(context.config.launch);
+  const repairConfig = context.config.launch?.repair;
+  if (repairConfig?.enabled === false) return { result, repairs: 0 };
+  const maxAttempts = repairConfig?.maxAttempts ?? 3;
+  const previous: EvidencePack["previousAttempts"] = [];
+  let failure: StageResult = result;
+  for (let attempt = 1; result.status !== "completed" && attempt <= maxAttempts; attempt += 1) {
+    const output = { exitCode: failure.exitCode ?? null, stdout: failure.stdout ?? "", stderr: failure.stderr ?? "" };
+    const classification = classifyLaunchFailure({ exitCode: output.exitCode, output: `${output.stderr}\n${output.stdout}` }, policy);
+    const kind = classification.kind === "infra" ? "infra" : "experiment";
+    // Timeouts and resource exhaustion are measurements of the idea, not code to debug.
+    if (kind === "experiment" && /timeout|oom|memory/i.test(String(failure.failureClass ?? ""))) break;
+    console.log(`${context.experimentId}: ${stage} failed (${kind}: ${classification.reason}); repair attempt ${attempt}/${maxAttempts}.`);
+    const repair = await repairOnce(context, stage, kind, attempt, { ...output, reason: classification.reason }, previous);
+    if (repair.violations.length) return { result, escalated: escalate(context, stage, { ...output, reason: classification.reason }, repair, repair.action?.kind === "escalate" ? repair.action.reason : "the fix is outside policy"), repairs: attempt };
+    if (!repair.action || repair.action.kind === "give_up") {
+      previous.push({ action: repair.action?.kind ?? "none", outcome: repair.action?.kind === "give_up" ? repair.action.reason : "no repair agent answer" });
+      if (!repair.action && kind === "infra") return { result, escalated: escalate(context, stage, { ...output, reason: classification.reason }, repair, "no automatic fix is available for this launch-path failure"), repairs: attempt };
+      if (!repair.action) break;
+      continue;
+    }
+    if (repair.action.kind === "env") applyRepairEnvironment(context, repair.action.env);
+    if (kind === "experiment" && repair.changedPaths.length) {
+      const pinned = await gitChangedPaths(context.cwd);
+      const snapshot = captureImplementationSnapshot(context.cwd, [...pinned.keys()].filter((path) => existsSync(path)).map((path) => relative(context.cwd, path)));
+      const pinStore = new ResearchStore(statePath);
+      pinStore.appendEvent("experiment.implementation.completed", { experimentId: context.experimentId, ...snapshot, repairedBy: "repair-agent", stage, attempt });
+      pinStore.close();
+    }
+    if (kind === "experiment" && quickCheck) {
+      const checked = await quickCheck();
+      if (checked.status !== "completed") {
+        previous.push({ action: repair.action.kind, summary: "summary" in repair.action ? repair.action.summary : undefined, outcome: `quick check still fails: ${tail(checked.stderr || checked.stdout, 5)}` });
+        failure = checked;
+        continue;
+      }
+    }
+    result = await run();
+    failure = result;
+    previous.push({ action: repair.action.kind, summary: "summary" in repair.action ? repair.action.summary : undefined, outcome: result.status === "completed" ? "fixed" : `still failing: ${tail(result.stderr || result.stdout, 5)}` });
+    const store = new ResearchStore(statePath);
+    if (result.status === "completed") {
+      if (kind === "infra") {
+        rememberRepair(stateDirectory, { signature: repair.signature, kind, env: repair.action.kind === "env" ? repair.action.env : {}, summary: "summary" in repair.action ? repair.action.summary : undefined });
+        leaveRepairMode(store, `${stage} repaired`);
+      }
+      store.appendEvent("repair.succeeded", { experimentId: context.experimentId, stage, kind, attempt, source: repair.source, signature: repair.signature });
+      console.log(`${context.experimentId}: ${stage} repaired (${repair.source}, attempt ${attempt}); resuming.`);
+    }
+    store.close();
+  }
+  const diagnosis = result.status === "completed" ? undefined : previous.length ? `repair exhausted after ${previous.length} attempt(s): ${previous.map((entry) => `${entry.action}: ${entry.outcome}`).join(" | ").slice(0, 800)}` : undefined;
+  return { result, repairs: previous.length, ...(diagnosis ? { diagnosis } : {}) };
+}
+/**
+ * Record a stage failure. Infra failures are not experiment results: the experiment returns to
+ * "proposed" (no attempt, no quota). Identical fast failures across experiments halt launches.
+ */
+function recordLaunchFailure(store: ResearchStore, config: CompetitionConfig, experimentId: string, stage: string, outcome: { exitCode: number | null; output: string; durationSeconds?: number }): LaunchClassification {
+  const policy = resolveLaunchPolicy(config.launch);
+  const classification = classifyLaunchFailure(outcome, policy);
+  store.appendEvent("experiment.launch.failure", { experimentId, stage, kind: classification.kind, reason: classification.reason, signature: classification.signature, durationSeconds: outcome.durationSeconds ?? null, at: new Date().toISOString() });
+  const failures = store.eventsByType("experiment.launch.failure").map((event) => event.payload as RecordedFailure);
+  const systemic = detectSystemicFailure(failures, policy);
+  if (systemic.systemic && !launchHalt()) haltLaunches(store, { reason: `${systemic.experiments.length} experiments failed identically: ${systemic.signature}`, signature: systemic.signature, experiments: systemic.experiments });
+  return classification;
+}
+/** Measured resources of a run (evaluator stdout, else the contract's time file) checked against hosted limits. */
+function runResourceVerdict(config: CompetitionConfig, stdout: string | undefined, cwd: string, options: { ignoreWall?: boolean } = {}): (ResourceVerdict & { peakRssMb?: number; wallSeconds?: number }) | undefined {
+  const contract = resolveEnvContract(config.launch?.contract);
+  if (!contract) return undefined;
+  let resources = resourcesFromOutput(stdout ?? "");
+  if (!resources && contract.timeFile) {
+    try { resources = parseTimeVerbose(readFileSync(resolve(cwd, contract.timeFile), "utf8")); } catch { /* no time file */ }
+  }
+  if (!resources) return undefined;
+  const checked = checkResources(resources, options.ignoreWall && contract.hosted ? { ...contract, hosted: { ...contract.hosted, wallSeconds: undefined } } : contract);
+  return { ...checked, ...resources };
+}
+const launch = new Command("launch").description("Launch-path safety: preflight the exact launch chain, show or clear a systemic halt, check candidate readiness");
+launch.command("preflight").description("Run the configured no-op preflight through the launch chain now (ignores the cache)").action(async () => {
+  const adapter = activeCompetition();
+  const store = new ResearchStore(statePath);
+  store.appendEvent("launch.preflight.invalidated", { at: new Date(0).toISOString() });
+  store.close();
+  const environment = safeWorkerEnvironment({ ...(adapter.config.execution?.environment ?? {}) });
+  const result = await runLaunchPreflight({ ...adapter.config, launch: { ...adapter.config.launch, preflightTtlMinutes: 0 } }, environment, adapter.workspacePath(root));
+  console.log(`${result.ok ? "OK" : "FAILED"}: ${result.reason}`);
+  if (result.output.trim()) console.log(result.output.trim());
+  if (!result.ok) process.exitCode = 1;
+});
+launch.command("status").description("Show halt state, recent launch failures and candidate readiness").option("--json", "machine-readable").action((options: { json?: boolean }) => {
+  const adapter = activeCompetition();
+  const store = new ResearchStore(statePath);
+  try {
+    const halt = launchHalt();
+    const failures = store.eventsByType("experiment.launch.failure").slice(-10).map((event) => event.payload as RecordedFailure & { stage?: string; reason?: string });
+    const waiting = store.experiments().filter((entry) => ["proposed", "waiting"].includes(String((entry.payload as { status?: unknown }).status))).map((entry) => {
+      const hypothesisId = (entry.payload as { hypothesisId?: unknown }).hypothesisId;
+      const hypothesis = store.hypotheses().find((candidate) => candidate.id === hypothesisId)?.payload;
+      return { experimentId: entry.id, readiness: launchReadiness(adapter.config, hypothesis) };
+    });
+    if (options.json) { console.log(JSON.stringify({ halt: halt ?? null, failures, waiting }, null, 2)); return; }
+    console.log(halt ? `HALTED since ${halt.at}: ${halt.reason}` : "Launches enabled.");
+    for (const failure of failures) console.log(`  ${failure.at} ${failure.experimentId} ${failure.kind}: ${failure.reason ?? failure.signature}`);
+    for (const entry of waiting) console.log(`  ${entry.experimentId}: ${entry.readiness.ready ? "ready" : `waiting for ${entry.readiness.pending.map((item) => item.waitingFor).join("; ")}`}`);
+  } finally {
+    store.close();
+  }
+});
+launch.command("clear").description("Lift a systemic launch halt after fixing the launch path").action(() => {
+  rmSync(launchHaltPath(), { force: true });
+  const store = new ResearchStore(statePath);
+  store.appendEvent("launch.halt.cleared", { at: new Date().toISOString() });
+  store.close();
+  console.log("Launch halt cleared.");
+});
+program.addCommand(launch);
+program.command("supervise")
+  .description("Long-lived supervisor over all lanes: launches ready work, restarts stuck workers from their checkpoint, parks and retries exit-75 work, and rebalances toward lanes with ratchet wins while keeping technique families diverse")
+  .option("--workers <n>", "concurrent experiment workers", "2")
+  .option("--stall-minutes <minutes>", "no heartbeat for this long means a worker is stuck", "30")
+  .option("--max-restarts <n>", "restarts per worker before it is retired and escalated", "2")
+  .option("--interval-seconds <seconds>", "tick interval", "30")
+  .option("--parked-backoff-minutes <minutes>", "wait before retrying parked work", "10")
+  .option("--exit-when-idle", "stop once nothing is queued, parked-ready or running")
+  .option("--max-minutes <minutes>", "stop after this long (workers are left to finish)")
+  .action(async (options: { workers: string; stallMinutes: string; maxRestarts: string; intervalSeconds: string; parkedBackoffMinutes: string; exitWhenIdle?: boolean; maxMinutes?: string }) => {
+    const adapter = activeCompetition();
+    const policy: Partial<SupervisorPolicy> = { workers: Math.max(1, Number(options.workers) || 1), stallMinutes: Number(options.stallMinutes), maxRestarts: Number(options.maxRestarts), parkedBackoffMinutes: Number(options.parkedBackoffMinutes), wildQuota: adapter.config.ideation?.wildQuota ?? 0.2 };
+    const logDir = join(stateDirectory, "supervisor");
+    mkdirSync(logDir, { recursive: true });
+    const workers = new Map<string, { child: ReturnType<typeof spawn>; worker: LiveWorker; settled: Promise<number | null> }>();
+    const finished = new Set<string>();
+    const started = Date.now();
+    const record = (type: string, payload: Record<string, unknown>) => { const store = new ResearchStore(statePath); store.appendEvent(type, payload); store.close(); };
+    const wildExperiments = new Set<string>();
+    const launchWorker = (experimentId: string, lane: string, restarts: number, reason: string) => {
+      const store = new ResearchStore(statePath);
+      const status = (store.experiments().find((entry) => entry.id === experimentId)?.payload as { status?: unknown; reducedRunId?: unknown } | undefined);
+      store.close();
+      // Checkpoint: a completed screen resumes at the full stage instead of re-screening.
+      const args = ["experiment", "run", experimentId, ...(status?.status === "screened" && typeof status.reducedRunId === "string" ? ["--skip-reduced"] : [])];
+      const out = openSync(join(logDir, `${experimentId}.log`), "a");
+      const child = spawn(process.execPath, [process.argv[1], ...args], { cwd: root, detached: true, stdio: ["ignore", out, out], env: process.env });
+      closeSync(out);
+      const worker: LiveWorker = { experimentId, lane, startedAt: new Date().toISOString(), restarts };
+      const settled = new Promise<number | null>((resolveExit) => child.on("exit", (code) => { worker.exited = { code, at: new Date().toISOString() }; resolveExit(code); }));
+      workers.set(experimentId, { child, worker, settled });
+      record("supervisor.launched", { experimentId, lane, restarts, reason, pid: child.pid, args, wild: wildExperiments.has(experimentId) });
+      console.log(`launch ${experimentId} [${lane}] ${reason}`);
+    };
+    const stopWorker = async (experimentId: string) => {
+      const entry = workers.get(experimentId);
+      if (!entry || entry.worker.exited) return;
+      // Our own child's process group only.
+      try { process.kill(-entry.child.pid!, "SIGTERM"); } catch { /* already gone */ }
+      await Promise.race([entry.settled, new Promise((resolveWait) => setTimeout(resolveWait, 10_000))]);
+      if (!entry.worker.exited) try { process.kill(-entry.child.pid!, "SIGKILL"); } catch { /* gone */ }
+      await entry.settled;
+    };
+    const warned = new Set<string>();
+    while (true) {
+      // Settle exited workers: 0 done, 75 parked (retried after backoff), anything else failed after its own repair loop.
+      for (const [experimentId, entry] of [...workers]) {
+        if (!entry.worker.exited) continue;
+        const code = entry.worker.exited.code;
+        workers.delete(experimentId);
+        if (code === 75) record("supervisor.parked", { experimentId, at: entry.worker.exited.at });
+        else { finished.add(experimentId); record("supervisor.worker.exited", { experimentId, exitCode: code }); }
+        console.log(`${experimentId} exited ${code}${code === 75 ? " (parked; will retry)" : ""}`);
+      }
+      const store = new ResearchStore(statePath);
+      const hypotheses = new Map(store.hypotheses().map((entry) => [entry.id, entry.payload]));
+      const parked = new Map<string, string>();
+      for (const event of store.eventsByTypes(["supervisor.parked", "experiment.dependency.waiting"])) parked.set(String((event.payload as { experimentId?: unknown }).experimentId), event.createdAt ?? new Date().toISOString());
+      const queue: QueuedExperiment[] = store.experiments().filter((entry) => (entry.payload as { status?: unknown }).status === "proposed" && !finished.has(entry.id)).map((entry) => {
+        const hypothesis = hypotheses.get(String((entry.payload as { hypothesisId?: unknown }).hypothesisId)) as { title?: string; formulationFamily?: string; mechanism?: string; theoryCard?: { origin?: unknown } } | undefined;
+        const wild = hypothesis?.theoryCard?.origin === "wild";
+        if (wild) wildExperiments.add(entry.id);
+        return { experimentId: entry.id, wild, lane: classifyTechnique({ family: hypothesis?.formulationFamily, title: hypothesis?.title, mechanism: hypothesis?.mechanism }), ready: launchReadiness(adapter.config, hypothesis).ready, ...(parked.has(entry.id) ? { parkedAt: parked.get(entry.id) } : {}) };
+      });
+      const heartbeats = new Map<string, string>();
+      for (const event of store.eventsByType("run.heartbeat")) { const payload = event.payload as { experimentId?: string; heartbeatAt?: string }; if (payload.experimentId && payload.heartbeatAt) heartbeats.set(payload.experimentId, payload.heartbeatAt); }
+      const history = store.eventsByType("supervisor.launched").map((event) => ({ experimentId: String((event.payload as { experimentId?: unknown }).experimentId), lane: String((event.payload as { lane?: unknown }).lane), at: event.createdAt ?? "", wild: (event.payload as { wild?: unknown }).wild === true }));
+      store.close();
+      const live = [...workers.values()].map(({ worker }) => ({ ...worker, ...(heartbeats.has(worker.experimentId) ? { lastHeartbeatAt: heartbeats.get(worker.experimentId) } : {}) }));
+      const decision = planSupervisorTick({ queue, workers: live, ledger: readImprovementLedger(stateDirectory), history, now: Date.now(), policy });
+      for (const warning of decision.warnings) if (!warned.has(warning)) { warned.add(warning); record("supervisor.diversity.warning", { warning, ...(decision.wild ? { wild: decision.wild } : {}) }); console.log(warning); }
+      for (const { experimentId, reason } of decision.restart) {
+        const entry = workers.get(experimentId)!;
+        await stopWorker(experimentId);
+        workers.delete(experimentId);
+        record("supervisor.restarted", { experimentId, reason, restarts: entry.worker.restarts + 1 });
+        launchWorker(experimentId, entry.worker.lane, entry.worker.restarts + 1, `restart: ${reason}`);
+      }
+      for (const { experimentId, reason } of decision.retire) {
+        await stopWorker(experimentId);
+        workers.delete(experimentId);
+        finished.add(experimentId);
+        const retireStore = new ResearchStore(statePath);
+        const entry = retireStore.experiments().find((candidate) => candidate.id === experimentId);
+        if (entry) retireStore.saveExperiment({ id: experimentId, payload: { ...(entry.payload as Record<string, unknown>), status: "proposed", escalated: reason } });
+        retireStore.close();
+        writeEscalation(stateDirectory, { experimentId, stage: "supervisor", reason, violations: [], evidence: { signature: "stuck-worker", reason, exitCode: null, stderrTail: tail(existsSync(join(logDir, `${experimentId}.log`)) ? readFileSync(join(logDir, `${experimentId}.log`), "utf8") : "", 20) } });
+        record("supervisor.retired", { experimentId, reason });
+        console.log(`retire ${experimentId}: ${reason} (escalated)`);
+      }
+      for (const { experimentId, lane, reason } of decision.launch) launchWorker(experimentId, lane, 0, reason);
+      const idle = workers.size === 0 && !queue.some((entry) => entry.ready && !finished.has(entry.experimentId));
+      if (options.exitWhenIdle && idle) { console.log("Supervisor idle; exiting."); break; }
+      if (options.maxMinutes && Date.now() - started > Number(options.maxMinutes) * 60_000) { console.log("Supervisor time budget reached; leaving workers to finish."); break; }
+      await new Promise((resolveTick) => setTimeout(resolveTick, Math.max(1, Number(options.intervalSeconds)) * 1000));
+    }
+  });
+experiment.command("abandon")
+  .argument("<ids...>", "experiment identifiers")
+  .requiredOption("--reason <reason>", "why the run was stopped (kept on record)")
+  .description("Mark interrupted or superseded local experiments as abandoned so they are not counted as attempts or recovered as stale")
+  .action((ids: string[], options: { reason: string }) => {
+    const store = new ResearchStore(statePath);
+    try {
+      for (const id of ids) {
+        const entry = store.experiments().find((candidate) => candidate.id === id);
+        if (!entry) { console.log(`${id}: not found`); continue; }
+        const status = (entry.payload as { status?: unknown }).status;
+        if (status === "completed") { console.log(`${id}: completed; left unchanged`); continue; }
+        store.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "abandoned", abandonedReason: options.reason, abandonedAt: new Date().toISOString(), previousStatus: status ?? null } });
+        store.appendEvent("experiment.abandoned", { experimentId: id, reason: options.reason, previousStatus: status ?? null });
+        console.log(`${id}: abandoned (was ${String(status)})`);
+      }
+    } finally {
+      store.close();
+    }
+  });
 experiment.command("reconcile")
   .argument("<id>", "experiment identifier")
   .description("Release a remote quarantine only when every allocation has durable termination evidence")
@@ -7679,12 +8640,47 @@ experiment.command("run")
       }
       pinnedWorktree = snapshot.worktree;
     }
+    // Remembered launch-path fixes apply to every launch, so a repaired lane stays repaired.
+    const rememberedFixes = rememberedEnvironment(stateDirectory);
+    if (Object.keys(rememberedFixes).length) (manifest.resources as { environment?: Record<string, string> }).environment = { ...rememberedFixes, ...(manifest.resources.environment ?? {}) };
+    const compliance = complianceHold(stateDirectory, store, adapter.config, (hypothesis?.payload as { theoryCard?: unknown } | undefined)?.theoryCard, (hypothesis?.payload as { title?: string } | undefined)?.title, `experiment ${id}`);
+    if (compliance) {
+      if (compliance.status === "rejected") store.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "rejected", rejection: compliance.reason } });
+      store.close();
+      process.exitCode = compliance.status === "rejected" ? 1 : 75;
+      console.log(`Experiment ${id} not started: ${compliance.reason}`);
+      return;
+    }
+    const readiness = launchReadiness(adapter.config, hypothesis?.payload, manifest.resources.environment ?? {});
+    if (!readiness.ready) {
+      store.appendEvent("experiment.dependency.waiting", { experimentId: id, pending: readiness.pending });
+      store.close();
+      process.exitCode = 75;
+      console.log(`Experiment ${id} is waiting: ${readiness.pending.map((entry) => `${entry.path} (${entry.waitingFor})`).join("; ")}. Not started; no attempt counted.`);
+      return;
+    }
     store.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "running" } });
     store.close();
     const worktreePath = pinnedWorktree ?? await ensureWorktree(root, root, id);
     stageDeclaredExperimentData(worktreePath, adapter.config.execution?.dataPaths ?? [], adapter.workspacePath(root), adapter.config.execution?.supportFiles ?? []);
     const experimentCwd = join(worktreePath, relative(root, adapter.workspacePath(root)));
     const experimentEnvironment = prepareExperimentEnvironment(manifest, experimentCwd);
+    const repairContext: RepairContext = { config: adapter.config, experimentId: id, cwd: experimentCwd, environment: experimentEnvironment, manifest };
+    // In repair mode (systemic failure seen) the preflight is re-run, not trusted from cache.
+    const preflightConfig = launchHalt() ? { ...adapter.config, launch: { ...adapter.config.launch, preflightTtlMinutes: 0 } } : adapter.config;
+    const preflightStage = await runStageWithRepair(repairContext, "preflight", async () => {
+      const checked = await runLaunchPreflight(preflightConfig, experimentEnvironment, experimentCwd);
+      // A failing preflight is a launch-path failure by definition.
+      return { status: checked.ok ? "completed" : "failed", exitCode: checked.ok ? 0 : 75, stdout: "", stderr: `preflight: ${checked.reason}\n${checked.output}` };
+    });
+    if (preflightStage.result.status !== "completed") {
+      const preflightStore = new ResearchStore(statePath);
+      preflightStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "proposed", launchBlocked: preflightStage.escalated ?? preflightStage.diagnosis ?? "preflight failed" } });
+      preflightStore.close();
+      process.exitCode = 75;
+      throw new Error(`Launch preflight failed before ${id} spent any quota and could not be repaired automatically: ${preflightStage.escalated ?? preflightStage.diagnosis ?? preflightStage.result.stderr}`);
+    }
+    if (launchHalt() && adapter.config.launch?.preflightCommand) { const modeStore = new ResearchStore(statePath); leaveRepairMode(modeStore, "preflight passed"); modeStore.close(); }
     const protectedReference = captureProtectedFiles(adapter.workspacePath(root), [adapter.config.evaluator.command], [], [adapter.config.evaluator.estimatorPath]);
     const changedProtected = changedProtectedFiles(protectedReference, experimentCwd);
     if (changedProtected.length) {
@@ -7770,20 +8766,77 @@ experiment.command("run")
         failedStore.close();
         throw new Error(`Reduced validation feasibility check failed:\n${reducedContract.reasons.map((reason) => `- ${reason}`).join("\n")}`);
       }
-      const reducedResult = await withExecutionHeartbeat(
+      const reducedStage = await runStageWithRepair(repairContext, "reduced_validation", () => withExecutionHeartbeat(
         () => runReducedValidation(executor, manifest, experimentCwd, reducedCommand, primaryMetricName),
         { storePath: statePath, experimentId: id, stage: "reduced_validation", executor: manifest.resources.executor },
-      );
+      ));
+      const reducedResult = reducedStage.result;
       const reducedEnvironment = await captureEnvironment(root, experimentCwd, reducedResult.command ?? reducedCommand, manifest.resources.executor, manifest.resources.gpu);
       const reducedEvidenceStore = new ResearchStore(statePath);
       const reduced = persistExecutionStageResult({ store: reducedEvidenceStore, experimentId: id, stage: "reduced_validation", result: reducedResult, primaryMetricName, command: reducedCommand, cwd: experimentCwd, executor: manifest.resources.executor, artifactRoot: join(root, ".sota", "artifacts"), environment: reducedEnvironment });
+      // Keep the screen's per-unit scores so scout promotion can pair it against the champion.
+      let reducedUnitScores: string | undefined;
+      if (reduced.status === "completed") {
+        for (const [name, source] of Object.entries(unitScoreFiles(adapter.config, reducedResult.cwd ?? experimentCwd))) {
+          const screenDir = join(root, ".sota", "artifacts", reduced.runId);
+          mkdirSync(screenDir, { recursive: true });
+          reducedUnitScores = join(screenDir, name);
+          copyFileSync(source, reducedUnitScores);
+          rmSync(source, { force: true });
+        }
+      }
       reducedEvidenceStore.close();
       executionPlan = advanceExecutionStage(executionPlan, "reduced_validation", reduced.status === "completed" ? "completed" : "failed");
       const reducedStore = new ResearchStore(statePath);
       reducedStore.appendEvent(reduced.status === "completed" ? "experiment.stage.reduced_validation.completed" : "experiment.stage.reduced_validation.failed", { experimentId: id, runId: reduced.runId, metricEligible: reduced.status === "completed", metric: reduced.status === "completed" ? reduced.metrics[primaryMetricName] ?? null : null, reportedMetric: reduced.metrics[primaryMetricName] ?? null, exitCode: reduced.exitCode, failureClass: reduced.failureClass ?? null, command: reducedCommand });
-      if (reduced.status !== "completed") reducedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "failed", executionPlan } });
+      if (reduced.status !== "completed") {
+        const launchFailure = recordLaunchFailure(reducedStore, adapter.config, id, "reduced_validation", { exitCode: reduced.exitCode ?? null, output: `${reduced.stderr ?? ""}\n${reduced.stdout ?? ""}`, durationSeconds: reducedResult.durationSeconds });
+        const infra = launchFailure.kind === "infra";
+        const parked = infra || Boolean(reducedStage.escalated);
+        reducedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: parked ? "proposed" : "failed", ...(infra ? { infraFailure: launchFailure.reason } : {}), ...(reducedStage.escalated ? { escalated: reducedStage.escalated } : {}), ...(reducedStage.diagnosis ? { repairDiagnosis: reducedStage.diagnosis } : {}), executionPlan } });
+        reducedStore.close();
+        if (parked) process.exitCode = 75;
+        throw new Error(`${reducedStage.escalated ? `Escalated (${reducedStage.escalated}); not counted as a result` : infra ? "Launch-path failure (not an experiment result; no attempt counted)" : "Reduced validation failed"} (${reduced.exitCode}): ${infra ? launchFailure.reason : reducedStage.diagnosis ?? (reduced.stderr || reduced.stdout)}`);
+      }
+      leaveRepairMode(reducedStore, "a reduced stage completed");
+      const reducedResources = runResourceVerdict(adapter.config, reducedResult.stdout, reducedResult.cwd ?? experimentCwd, { ignoreWall: true });
+      if (reducedResources) reducedStore.appendEvent("experiment.resources.checked", { experimentId: id, stage: "reduced_validation", runId: reduced.runId, ...reducedResources });
+      if (reducedResources && !reducedResources.ok) {
+        reducedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "rejected", rejection: `over hosted limits: ${reducedResources.reasons.join("; ")}`, executionPlan } });
+        reducedStore.close();
+        throw new Error(`Experiment ${id} rejected at screening: ${reducedResources.reasons.join("; ")}`);
+      }
       reducedStore.close();
-      if (reduced.status !== "completed") throw new Error(`Reduced validation failed (${reduced.exitCode}): ${reduced.stderr || reduced.stdout}`);
+      // Paired screen gate: a screen must beat its reference on the units it covered (CI lower bound
+      // above the ratchet bar) before a full evaluation is spent on it.
+      const screenRatchet = resolveRatchetPolicy(adapter.config.ratchet);
+      if (reducedUnitScores && !options.reducedOnly && adapter.config.ratchet?.screenGate !== false && (adapter.config.ratchet?.screenGate === true || screenRatchet.mode === "paired")) {
+        const gateStore = new ResearchStore(statePath);
+        const declaredReference = (hypothesis?.payload as { pairedReference?: unknown } | undefined)?.pairedReference;
+        const championId = championExperimentIds(gateStore, activeCampaignStart(gateStore)).at(-1);
+        const championRunId = championId ? (gateStore.experiments().find((candidate) => candidate.id === championId)?.payload as { runId?: unknown } | undefined)?.runId : undefined;
+        const championScores = typeof championRunId === "string" ? unitScoresArtifactPath((gateStore.runs().find((run) => run.id === championRunId)?.payload as { artifacts?: unknown } | undefined)?.artifacts) : undefined;
+        const baselineScores = unitScoresArtifactPath((gateStore.eventsByType("baseline.completed").at(-1)?.payload as { artifactPaths?: unknown } | undefined)?.artifactPaths);
+        const referenceScores = typeof declaredReference === "string" ? resolve(adapter.workspacePath(root), declaredReference) : championScores ?? baselineScores;
+        const referenceLabel = typeof declaredReference === "string" ? `declared ${declaredReference}` : championScores ? `champion ${championId}` : "baseline";
+        const gate = pairedRatchetEvidence(adapter.config, referenceScores, reducedUnitScores, screenRatchet);
+        const paired = gate.paired && gate.paired.matched >= screenRatchet.minUnits ? gate.paired : undefined;
+        gateStore.appendEvent("experiment.screen.paired_gate", { experimentId: id, runId: reduced.runId, reference: referenceLabel, ...(paired ? { meanImprovement: paired.meanImprovement, lower: paired.lower, upper: paired.upper, matched: paired.matched, passed: paired.lower > screenRatchet.minLowerBound } : { note: gate.note ?? "too few matched units; gate skipped" }) });
+        if (paired && !(paired.lower > screenRatchet.minLowerBound)) {
+          const verdict = paired.upper < 0 ? "regressed" : paired.meanImprovement <= 0 ? "no_gain" : "noisy";
+          const reason = `paired screen vs ${referenceLabel}: ${paired.meanImprovement.toExponential(2)} [${paired.lower.toExponential(2)}, ${paired.upper.toExponential(2)}] over ${paired.matched} units; lower bound not above ${screenRatchet.minLowerBound}`;
+          executionPlan = advanceExecutionStage(executionPlan, "full_validation", "skipped");
+          gateStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "rejected", rejection: reason, reducedRunId: reduced.runId, executionPlan } });
+          try {
+            const ledgerHypothesis = hypothesis?.payload as { title?: string; formulationFamily?: string; mechanism?: string } | undefined;
+            appendImprovement(stateDirectory, { experimentId: id, runId: reduced.runId, stage: "screen", title: ledgerHypothesis?.title, family: ledgerHypothesis?.formulationFamily, techniqueClass: classifyTechnique({ family: ledgerHypothesis?.formulationFamily, title: ledgerHypothesis?.title, mechanism: ledgerHypothesis?.mechanism }), metricName: primaryMetricName, direction: primaryMetricDirection, referenceId: referenceLabel, referenceMetric: null, candidateMetric: reduced.metrics[primaryMetricName] ?? null, improvement: paired.meanImprovement, accepted: false, verdict, mode: "paired", reason, ci: { lower: paired.lower, upper: paired.upper, confidence: paired.confidence, matched: paired.matched, probabilityImproved: paired.probabilityImproved }, ...(reducedResources ? { resources: { ...(reducedResources.peakRssMb !== undefined ? { peakRssMb: reducedResources.peakRssMb } : {}), ...(reducedResources.wallSeconds !== undefined ? { wallSeconds: reducedResources.wallSeconds } : {}), ok: reducedResources.ok, reasons: reducedResources.reasons } } : {}) });
+          } catch (error) { gateStore.appendEvent("experiment.improvement_ledger.failed", { experimentId: id, error: error instanceof Error ? error.message : String(error) }); }
+          recordCardVerdict(stateDirectory, gateStore, adapter.config, hypothesis?.payload, id, { ratchetVerdict: `screen_${verdict}`, observedGain: paired.meanImprovement, ci: { lower: paired.lower, upper: paired.upper } });
+          gateStore.close();
+          throw new Error(`Experiment ${id} did not earn a full evaluation (${verdict}): ${reason}`);
+        }
+        gateStore.close();
+      }
       const promotionPolicy = adapter.config.execution?.reducedPromotion;
       if (promotionPolicy?.enabled && manifest.outcomeType === "metric") {
         const promotionStore = new ResearchStore(statePath);
@@ -7804,7 +8857,7 @@ experiment.command("run")
       if (options.reducedOnly) {
         const screenedStore = new ResearchStore(statePath);
         screenedStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "screened", reducedRunId: reduced.runId, reducedMetric: reduced.metrics[primaryMetricName] ?? null, executionPlan } });
-        screenedStore.appendEvent("experiment.screening.completed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[primaryMetricName] ?? null, metrics: reduced.metrics, command: reducedCommand });
+        screenedStore.appendEvent("experiment.screening.completed", { experimentId: id, runId: reduced.runId, metric: reduced.metrics[primaryMetricName] ?? null, metrics: reduced.metrics, command: reducedCommand, ...(reducedUnitScores ? { unitScoresPath: reducedUnitScores } : {}) });
         screenedStore.close();
         console.log(`Experiment ${id}: reduced screening completed`);
         console.log(`Run: ${reduced.runId}`);
@@ -7848,10 +8901,12 @@ experiment.command("run")
       attemptStore.close();
     };
     recordAttemptStarted(attempt);
-    let result = await withExecutionHeartbeat(
+    const fullStage = await runStageWithRepair(repairContext, "full_validation", () => withExecutionHeartbeat(
       () => executor.run(manifest, experimentCwd, command, undefined, primaryMetricName),
       { storePath: statePath, experimentId: id, attempt, stage: "full_validation", executor: manifest.resources.executor },
-    );
+    ), reducedCommand || smokeCommand ? () => runReducedValidation(executor, manifest, experimentCwd, (reducedCommand ?? smokeCommand)!, primaryMetricName) : undefined);
+    let result = fullStage.result;
+    if (result.status === "completed") { const modeStore = new ResearchStore(statePath); leaveRepairMode(modeStore, "a full stage completed"); modeStore.close(); }
     if (manifest.outcomeType === "metric") result = validateRunMetrics(result, [primaryMetricName]);
     recordAttempt(attempt, result);
     while (result.status !== "completed") {
@@ -7876,6 +8931,14 @@ experiment.command("run")
       const route = recoveryRouteDirective(result.failureClass);
       const routeStore = new ResearchStore(statePath);
       routeStore.appendEvent("experiment.recovery.route_changed", { experimentId: id, runId: result.runId, attempts: attempt, ...route });
+      const launchFailure = recordLaunchFailure(routeStore, adapter.config, id, "full_validation", { exitCode: result.exitCode ?? null, output: `${result.stderr ?? ""}\n${result.stdout ?? ""}`, durationSeconds: result.durationSeconds });
+      if (launchFailure.kind === "infra" || fullStage.escalated) {
+        routeStore.saveExperiment({ id, payload: { ...(entry.payload as Record<string, unknown>), status: "proposed", ...(launchFailure.kind === "infra" ? { infraFailure: launchFailure.reason } : {}), ...(fullStage.escalated ? { escalated: fullStage.escalated } : {}), executionPlan } });
+        routeStore.close();
+        process.exitCode = 75;
+        throw new Error(`${fullStage.escalated ? `Escalated (${fullStage.escalated})` : `Launch-path failure: ${launchFailure.reason}`}; not an experiment result, no attempt counted.`);
+      }
+      if (fullStage.diagnosis) routeStore.appendEvent("repair.exhausted", { experimentId: id, stage: "full_validation", diagnosis: fullStage.diagnosis });
       routeStore.close();
     }
     const usesStandaloneVerification = verificationPlan.standalone;
@@ -7977,6 +9040,13 @@ experiment.command("run")
       const path = join(artifactDir, name);
       writeFileSync(path, content);
       artifactPaths[name] = path;
+    }
+    if (result.status === "completed") {
+      for (const [name, source] of Object.entries(unitScoreFiles(adapter.config, result.cwd ?? experimentCwd))) {
+        const path = join(artifactDir, name);
+        copyFileSync(source, path);
+        artifactPaths[name] = path;
+      }
     }
     const recorded = {
       ...persistedResult,
@@ -8081,8 +9151,54 @@ experiment.command("run")
         );
         const ratchetBaselineRun = historicalRuns.find((entry) => entry.id === ratchet.sourceId)?.run ?? baselineRun;
         const ratchetComparison = ratchet.sourceId === baselineRun.runId ? comparison : compareRuns(ratchetBaselineRun, RunResultSchema.parse(recorded), metricName, primaryMetricDirection === "minimize");
-        resultStore.appendEvent("experiment.ratchet.checked", { experimentId: id, originalBaseline: baselineMetric, reference: ratchet, referenceRunId: ratchet.sourceId, referenceMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, comparison: ratchetComparison });
-        if (ratchetComparison.direction === "improved") {
+        const ratchetPolicy = resolveRatchetPolicy(adapter.config.ratchet);
+        const referenceUnitScores = ratchet.sourceId === baselineRun.runId
+          ? unitScoresArtifactPath((baselinePayload as { artifactPaths?: unknown } | undefined)?.artifactPaths)
+          : unitScoresArtifactPath((resultStore.runs().find((entry) => entry.id === ratchet.sourceId)?.payload as { artifacts?: unknown } | undefined)?.artifacts);
+        const pairedEvidence = pairedRatchetEvidence(adapter.config, referenceUnitScores, unitScoresArtifactPath(artifactPaths), ratchetPolicy);
+        const runResources = runResourceVerdict(adapter.config, `${evaluator?.stdout ?? ""}\n${result.stdout ?? ""}`, result.cwd ?? experimentCwd);
+        if (runResources) resultStore.appendEvent("experiment.resources.checked", { experimentId: id, stage: "full_validation", runId: result.runId, ...runResources });
+        const gatedDecision = applySegmentGates(decideRatchet({ scalarImproved: ratchetComparison.direction === "improved", scalarDelta: ratchetComparison.delta === null ? null : primaryMetricDirection === "minimize" ? -ratchetComparison.delta : ratchetComparison.delta, paired: pairedEvidence.paired, policy: ratchetPolicy }), judgeSegments(pairedEvidence.perSegment ?? {}, ratchetPolicy));
+        // A gain that cannot run on the hosted machine is not a gain.
+        const ratchetDecision = runResources && !runResources.ok ? { ...gatedDecision, accept: false, verdict: "over_budget" as const, reason: `over hosted limits: ${runResources.reasons.join("; ")}` } : gatedDecision;
+        resultStore.appendEvent("experiment.ratchet.checked", { experimentId: id, originalBaseline: baselineMetric, reference: ratchet, referenceRunId: ratchet.sourceId, referenceMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, comparison: ratchetComparison, decision: ratchetDecision, ...(pairedEvidence.note ? { unitScoreNote: pairedEvidence.note } : {}) });
+        const ledgerHypothesis = hypothesis?.payload as { title?: unknown; formulationFamily?: unknown; mechanism?: unknown; proposedChange?: unknown } | undefined;
+        const recordRatchetStep = (accepted: boolean, verdict: string, reason: string, stage: "full" | "holdout" = "full"): void => {
+          try {
+            const referenceMetric = ratchetBaselineRun.metrics[metricName] ?? baselineMetric;
+            const candidateMetric = recorded.metrics[metricName];
+            appendImprovement(stateDirectory, {
+              campaignStartedAt,
+              experimentId: id,
+              runId: result.runId,
+              stage,
+              title: typeof ledgerHypothesis?.title === "string" ? ledgerHypothesis.title : undefined,
+              family: typeof ledgerHypothesis?.formulationFamily === "string" ? ledgerHypothesis.formulationFamily : undefined,
+              techniqueClass: classifyTechnique({ family: typeof ledgerHypothesis?.formulationFamily === "string" ? ledgerHypothesis.formulationFamily : undefined, title: typeof ledgerHypothesis?.title === "string" ? ledgerHypothesis.title : undefined, mechanism: typeof ledgerHypothesis?.mechanism === "string" ? ledgerHypothesis.mechanism : undefined }),
+              metricName,
+              direction: primaryMetricDirection,
+              referenceId: ratchet.sourceId,
+              referenceMetric: typeof referenceMetric === "number" ? referenceMetric : null,
+              candidateMetric: typeof candidateMetric === "number" ? candidateMetric : null,
+              improvement: typeof candidateMetric === "number" && typeof referenceMetric === "number" ? (primaryMetricDirection === "minimize" ? referenceMetric - candidateMetric : candidateMetric - referenceMetric) : null,
+              accepted,
+              verdict,
+              mode: ratchetDecision.mode,
+              reason,
+              ...(ratchetDecision.paired ? { ci: { lower: ratchetDecision.paired.lower, upper: ratchetDecision.paired.upper, confidence: ratchetDecision.paired.confidence, matched: ratchetDecision.paired.matched, probabilityImproved: ratchetDecision.paired.probabilityImproved } } : {}),
+              ...(runResources ? { resources: { ...(runResources.peakRssMb !== undefined ? { peakRssMb: runResources.peakRssMb } : {}), ...(runResources.wallSeconds !== undefined ? { wallSeconds: runResources.wallSeconds } : {}), ...(runResources.predictedHostedWallSeconds !== undefined ? { predictedHostedWallSeconds: runResources.predictedHostedWallSeconds } : {}), ...(runResources.measuredHostedWallSeconds !== undefined ? { measuredHostedWallSeconds: runResources.measuredHostedWallSeconds } : {}), ok: runResources.ok, reasons: runResources.reasons } } : {}),
+              ...(ratchetDecision.segments?.length ? { segments: ratchetDecision.segments.map((entry) => ({ segment: entry.segment, role: entry.role, passed: entry.passed, ...(entry.paired ? { lower: entry.paired.lower, upper: entry.paired.upper, meanImprovement: entry.paired.meanImprovement, matched: entry.paired.matched } : {}) })) } : {}),
+            });
+            recordCardVerdict(stateDirectory, resultStore, adapter.config, ledgerHypothesis, id, { ratchetVerdict: verdict, observedGain: ratchetDecision.paired?.meanImprovement ?? (typeof candidateMetric === "number" && typeof referenceMetric === "number" ? (primaryMetricDirection === "minimize" ? referenceMetric - candidateMetric : candidateMetric - referenceMetric) : null), ...(ratchetDecision.paired ? { ci: { lower: ratchetDecision.paired.lower, upper: ratchetDecision.paired.upper } } : {}), ...(ratchetDecision.segments?.length ? { segments: ratchetDecision.segments.map((entry) => ({ segment: entry.segment, ...(entry.paired ? { paired: { meanImprovement: entry.paired.meanImprovement, lower: entry.paired.lower, upper: entry.paired.upper } } : {}) })) } : {}) });
+          } catch (error) {
+            resultStore.appendEvent("experiment.improvement_ledger.failed", { experimentId: id, error: error instanceof Error ? error.message : String(error) });
+          }
+        };
+        if (!ratchetDecision.accept) {
+          recordRatchetStep(false, ratchetDecision.verdict, ratchetDecision.reason);
+          if (ratchetComparison.direction === "improved") console.log(`${metricName} improved on the aggregate but the paired unit test did not confirm it (${ratchetDecision.verdict}: ${ratchetDecision.reason}); not kept.`);
+        }
+        if (ratchetDecision.accept) {
           const holdoutCommand = adapter.config.evaluator.holdoutCommand;
           let holdoutPassed = true;
           if (holdoutCommand) {
@@ -8096,10 +9212,12 @@ experiment.command("run")
             resultStore.appendEvent("experiment.holdout.completed", { experimentId: id, metric: candidateHoldout ?? null, reference: reference ?? null, kept: holdoutPassed });
           }
           if (holdoutPassed) {
-            resultStore.appendEvent("experiment.champion.updated", { experimentId: id, runId: result.runId, metric: recorded.metrics[metricName], previousRunId: ratchet.sourceId, previousMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, hypothesisId: manifest.hypothesisId });
+            resultStore.appendEvent("experiment.champion.updated", { experimentId: id, runId: result.runId, metric: recorded.metrics[metricName], previousRunId: ratchet.sourceId, previousMetric: ratchetBaselineRun.metrics[metricName] ?? baselineMetric, hypothesisId: manifest.hypothesisId, ratchetMode: ratchetDecision.mode });
+            recordRatchetStep(true, "keep", ratchetDecision.reason);
             console.log(`New champion: ${metricName} ${ratchetBaselineRun.metrics[metricName] ?? baselineMetric} → ${recorded.metrics[metricName]}; later experiments start from this implementation.`);
           } else {
             console.log(`${metricName} improved but the hidden holdout did not; not kept (likely overfitting the development split).`);
+            recordRatchetStep(false, "holdout_regressed", "primary improved but the hidden holdout regressed", "holdout");
           }
         }
         const operator = manifest.searchOperator ?? "ucb_portfolio";
@@ -8242,5 +9360,6 @@ try {
 } catch (error: unknown) {
   try { pauseCampaignAfterControllerError(error); } catch { /* Preserve the original controller error if recovery itself fails. */ }
   console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
+  // 75 (EX_TEMPFAIL) marks "not started: launch path or dependency"; callers retry later without counting an attempt.
+  process.exitCode = process.exitCode === 75 ? 75 : 1;
 }

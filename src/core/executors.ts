@@ -49,7 +49,24 @@ const WORKER_ENV_KEYS = new Set([
   "LANG", "LANGUAGE", "VIRTUAL_ENV", "CONDA_DEFAULT_ENV", "CONDA_PREFIX",
   "CUDA_HOME", "CUDA_PATH", "CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES",
   "NVIDIA_DRIVER_CAPABILITIES", "LD_LIBRARY_PATH", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+  // The user session bus: evaluators that wrap work in `systemd-run --user` (memory caps,
+  // CPU pinning) fail with "Failed to connect to bus: No medium found" without these.
+  "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS",
 ]);
+
+/**
+ * Session-bus variables for a worker. Pass the controller's values through; when the controller
+ * itself runs detached (nohup, cron, a service) they are often unset, so derive them from the
+ * standard per-user runtime directory when its bus socket exists.
+ */
+export function sessionBusEnvironment(env: NodeJS.ProcessEnv, uid: number | undefined = process.getuid?.(), exists: (path: string) => boolean = existsSync): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = {};
+  const runtimeDir = env.XDG_RUNTIME_DIR ?? (uid !== undefined && exists(`/run/user/${uid}`) ? `/run/user/${uid}` : undefined);
+  if (runtimeDir) result.XDG_RUNTIME_DIR = runtimeDir;
+  const bus = env.DBUS_SESSION_BUS_ADDRESS ?? (runtimeDir && exists(`${runtimeDir}/bus`) ? `unix:path=${runtimeDir}/bus` : undefined);
+  if (bus) result.DBUS_SESSION_BUS_ADDRESS = bus;
+  return result;
+}
 
 /**
  * Construct the environment visible to model-supplied experiment code.
@@ -57,7 +74,7 @@ const WORKER_ENV_KEYS = new Set([
  * Explicit experiment metadata is added below after this filter.
  */
 export function safeWorkerEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const merged = { ...process.env, ...overrides };
+  const merged = { ...sessionBusEnvironment(process.env), ...process.env, ...overrides };
   const explicitlyDeclared = new Set(Object.keys(overrides));
   const safe: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(merged)) {
